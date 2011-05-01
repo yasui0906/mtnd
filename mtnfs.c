@@ -52,8 +52,8 @@ void do_loop()
           if(cmd == MTNCMD_INFO){
             kinfo *info = &(data.data.info);
             buff += sizeof(kinfo);
-            info->free = 200; /* dummy */
-            info->host = buff - (uint64_t)info;
+            info->free = kopt.diskfree;
+            info->host = buff - (uintptr_t)info;
             strcpy(buff, kopt.host);
             buff += strlen(kopt.host) + 1;
           }
@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
 {
   int r;
   int daemonize = 1; 
-  struct option opt[7];
+  struct option opt[8];
   opt[0].name    = "help";
   opt[0].has_arg = 0;
   opt[0].flag    = NULL;
@@ -104,14 +104,25 @@ int main(int argc, char *argv[])
   opt[5].flag    = NULL;
   opt[5].val     = 'l';
 
-  opt[6].name    = NULL;
-  opt[6].has_arg = 0;
+  opt[6].name    = "export";
+  opt[6].has_arg = 1;
   opt[6].flag    = NULL;
-  opt[6].val     = 0;
+  opt[6].val     = 'e';
+
+  opt[7].name    = NULL;
+  opt[7].has_arg = 0;
+  opt[7].flag    = NULL;
+  opt[7].val     = 0;
 
   kinit_option();
-  strcpy(kopt.host, "TEST");
-  while((r = getopt_long(argc, argv, "hVn", opt, NULL)) != -1){
+  kopt.max_packet_size = 1024;
+
+  if(gethostname(kopt.host, sizeof(kopt.host)) == -1){
+    kopt.host[0] = 0;
+  }
+  kopt.diskfree = 0;
+
+  while((r = getopt_long(argc, argv, "hVne:", opt, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -125,11 +136,25 @@ int main(int argc, char *argv[])
         daemonize = 0;
         break;
 
+      case 'e':
+        if(chdir(optarg) == -1){
+          lprintf(0,"error: %s %s\n", strerror(errno), optarg);
+          exit(1);
+        }
+        break;
+
       case '?':
         usage();
         exit(1);
     }
   }
+
+  /* ディスクの空き容量などを取得する */
+  struct statvfs buff;
+  statvfs(".", &buff);
+  kopt.diskfree = buff.f_bfree * buff.f_bsize;
+  kopt.datasize = 0; 
+
   if(daemonize){
     do_daemon();
   }else{
@@ -137,3 +162,4 @@ int main(int argc, char *argv[])
   }
   return(0);
 }
+

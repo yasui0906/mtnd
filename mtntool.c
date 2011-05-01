@@ -61,8 +61,7 @@ void info()
     if(FD_ISSET(s, &fds)){
       if(recv_packet(s, &data, (struct sockaddr *)&addr) == 0){
         info->host += (uintptr_t)info;
-        printf("Host: %s\n", info->host);
-        printf("Free: %Ld\n", info->free);
+        printf("%s (%LuM Free)\n", info->host, info->free / 1024 / 1024);
       }
     }
   }

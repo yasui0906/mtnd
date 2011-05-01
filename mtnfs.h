@@ -34,7 +34,9 @@
 
 #define MTNCMD_INFO 1
 #define MTNCMD_LIST 2
+
 #define PROTOCOL_VERSION 1
+#define MAX_CONNECTION   8
 #define MAX_DATASIZE 32768
 
 typedef struct
@@ -61,14 +63,13 @@ typedef struct
 
 typedef struct
 {
-  uint16_t max_packet_size;  // 1パケットに格納する最大データサイズ
-  uint64_t datasize;         // 使用量
-  uint64_t diskfree;         // 空き容量
-  uint16_t mcast_port;       //
-  uint8_t  mcast_addr[16];   //
-  uint8_t  export[256];      //
-  uint8_t  host[64];         //
-  int      accept_socket[8]; //
+  uint16_t max_packet_size;               // 1パケットに格納する最大サイズ
+  uint64_t diskfree;                      // 空容量
+  uint64_t datasize;                      // 使用量
+  uint16_t mcast_port;                    //
+  uint8_t  mcast_addr[16];                //
+  uint8_t  host[64];                      //
+  int      accept_socket[MAX_CONNECTION]; //
 }__attribute__((packed)) koption;
 
 extern int is_loop;
