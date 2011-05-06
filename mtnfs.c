@@ -49,6 +49,8 @@ void do_loop()
           int ver = data.head.ver;
           int cmd = data.head.cmd; 
           printf("cmd=%d ver=%d from=%s:%d\n", cmd, ver, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+          if(cmd == MTNCMD_LIST){
+          }
           if(cmd == MTNCMD_INFO){
             kinfo *info = &(data.data.info);
             buff += sizeof(kinfo);

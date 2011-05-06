@@ -7,3 +7,7 @@ clean:
 
 sync:
 	rsync -av --exclude='*.swp' --exclude='.git' ../mtnfs adc:LOCAL/
+
+install:
+	rsync -a mtnfs   /usr/klab/sbin/mtnfs
+	rsync -a mtntool /usr/klab/sbin/mtntool
