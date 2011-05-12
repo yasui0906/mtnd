@@ -32,8 +32,14 @@
 #include <netinet/in.h>
 #include <netdb.h>
 
-#define MTNCMD_INFO 1
-#define MTNCMD_LIST 2
+#define MTNRES_SUCCESS 0
+#define MTNRES_ERROR   1
+#define MTNCMD_NONE    0
+#define MTNCMD_INFO    1
+#define MTNCMD_LIST    2
+#define MTNCMD_SAVE    3
+#define MTNCMD_LOAD    4
+#define MTNCMD_DATA    9
 
 #define PROTOCOL_VERSION 1
 #define MAX_CONNECTION   8
@@ -42,7 +48,7 @@
 typedef struct
 {
   uint8_t  ver;
-  uint8_t  cmd;
+  uint8_t  type;
   uint16_t size;
 }__attribute__((packed)) khead;
 
@@ -63,6 +69,19 @@ typedef struct
 
 typedef struct
 {
+  int fd;
+  int type;
+  int socket;
+  int h_size;
+  int d_size;
+  kdata data;
+  union {
+    uint8_t file_name[PATH_MAX];
+  } opt;
+}__attribute__((packed)) kstream;
+
+typedef struct
+{
   uint16_t max_packet_size;               // 1パケットに格納する最大サイズ
   uint64_t diskfree;                      // 空容量
   uint64_t datasize;                      // 使用量
@@ -74,11 +93,9 @@ typedef struct
 
 extern int is_loop;
 extern koption kopt;
-void kinit_option();
 void lprintf(int l, char *fmt, ...);
+void kinit_option();
 int send_readywait(int s);
-int send_packet(int s, kdata *data, struct sockaddr *addr);
-int recv_packet(int s, kdata *data, struct sockaddr *addr);
 int create_socket(int port, int mode);
 int create_lsocket(int port);
 int create_msocket(int port);

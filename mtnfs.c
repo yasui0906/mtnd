@@ -21,47 +21,185 @@ void usage()
   printf("\n");
 }
 
+void mtn_stream_init(kstream *stream)
+{
+  stream->type = stream->data.head.type;
+  if(stream->type == MTNCMD_SAVE){
+    strcpy(stream->opt.file_name, stream->data.data.data);
+    stream->fd = creat(stream->opt.file_name, 0644);
+    lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->opt.file_name);
+  }
+}
+
+void mtn_stream_cleanup(kstream *stream)
+{
+  if(stream->fd){
+    close(stream->fd);
+    stream->fd = 0;
+  }
+}
+
+int mtn_stream_exec(kstream *stream)
+{
+  if(stream->type == MTNCMD_SAVE){
+    lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->opt.file_name);
+    if(stream->data.head.size == 0){
+      return(1);
+    }
+    write(stream->fd, stream->data.data.data, stream->data.head.size);
+  }
+  return(0);
+}
+
+void mtn_stream_process(kstream *stream)
+{
+  stream->h_size = 0;
+  stream->d_size = 0;
+  if(stream->type == MTNCMD_NONE){
+    mtn_stream_init(stream);
+  }else{
+    if(mtn_stream_exec(stream)){
+      mtn_stream_cleanup(stream);
+    }
+  }
+}
+
+void mtn_tcp_process(kstream *stream, char *buff, int size)
+{
+  void *ptr;
+  int copy_size;
+  int need_size;
+  while(size){
+    need_size = sizeof(khead) - stream->h_size;
+    if(need_size > 0){
+      ptr = &(stream->data.head) + stream->h_size;
+      if(size > need_size){
+        copy_size = need_size;
+      }else{
+        copy_size = size;
+      }
+      if(copy_size > 0){
+        memcpy(ptr, buff, copy_size);
+        buff += copy_size;
+        size -= copy_size;
+        stream->h_size += copy_size;
+      }
+    }
+    need_size = stream->data.head.size - stream->d_size;
+    if(need_size > 0){
+      ptr = stream->data.data.data + stream->d_size;
+      if(size > need_size){
+        copy_size = need_size;
+      }else{
+        copy_size = size;
+      }
+      if(copy_size > 0){
+        memcpy(ptr, buff, copy_size);
+        buff += copy_size;
+        size -= copy_size;
+        stream->d_size += copy_size;
+        need_size -= copy_size;
+      }
+    }
+    if(need_size == 0){
+      mtn_stream_process(stream);
+    }
+  }
+}
+
 void do_loop()
 {
-  fd_set  fds;
-  kdata  data;
-  struct sockaddr_in addr;
+  int i;
+  int r;
+  int s;
+
+  fd_set    fds;
+  kdata     data;
+  socklen_t alen;
+  struct sockaddr_storage addr_storage;
+  struct sockaddr    *addr    = (struct sockaddr    *)&addr_storage;
+  struct sockaddr_in *addr_in = (struct sockaddr_in *)&addr_storage;
   struct timeval tv;
+  kstream stream[8];
 
   int msocket = create_msocket(6000);
   int lsocket = create_lsocket(6000);
+  
+  memset(stream, 0, sizeof(stream));
   if(listen(lsocket, 5) == -1){
     lprintf(0, "%s: listen error\n", __func__);
     exit(1);
   }
 
   while(is_loop){
-    FD_ZERO(&fds);
-    FD_SET(msocket, &fds);
     tv.tv_sec  = 1;
     tv.tv_usec = 0;
-    if(select(1024, &fds, NULL,  NULL, &tv) > 0){
-      if(FD_ISSET(lsocket, &fds)){
+    FD_ZERO(&fds);
+    FD_SET(lsocket, &fds);
+    FD_SET(msocket, &fds);
+    for(i=0;i<8;i++){
+      if(stream[i].socket){
+        FD_SET(stream[i].socket, &fds);
       }
-      if(FD_ISSET(msocket, &fds)){
-        if(recv_packet(msocket, &data, (struct sockaddr *)&addr) == 0){
-          uint8_t *buff = data.data.data;
-          int ver = data.head.ver;
-          int cmd = data.head.cmd; 
-          printf("cmd=%d ver=%d from=%s:%d\n", cmd, ver, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
-          if(cmd == MTNCMD_LIST){
-          }
-          if(cmd == MTNCMD_INFO){
-            kinfo *info = &(data.data.info);
-            buff += sizeof(kinfo);
-            info->free = kopt.diskfree;
-            info->host = buff - (uintptr_t)info;
-            strcpy(buff, kopt.host);
-            buff += strlen(kopt.host) + 1;
-          }
-          data.head.size = (uintptr_t)(buff - (uintptr_t)(data.data.data));
-          send_packet(msocket, &data, (struct sockaddr*)&addr);
+    }
+    r = select(1024, &fds, NULL,  NULL, &tv);
+    if(r == -1){
+      continue;
+    }
+    if(r == 0){
+      continue;
+    }
+    for(i=0;i<8;i++){
+      if(!FD_ISSET(stream[i].socket, &fds)){
+        continue;
+      }
+      char buff[32768];
+      r = recv(stream[i].socket, buff, sizeof(buff), 0);
+      if(r == -1){
+        lprintf(0,"error: %s client=%d\n", i, strerror(errno));
+        continue;
+      }
+      if(r == 0){
+        lprintf(0,"info: Connection Close client=%d\n", i);
+        close(stream[i].socket);
+        stream[i].socket = 0;
+        continue;
+      }
+      mtn_tcp_process(&stream[i], buff, r);
+    }
+    if(FD_ISSET(lsocket, &fds)){
+      alen = sizeof(addr);
+      s = accept(lsocket, addr, &alen);
+      for(i=0;i<8;i++){
+        if(stream[i].socket == 0){
+          stream[i].socket = s;
+          break;
         }
+      }
+      if(i==8){
+        close(s);
+        lprintf(0, "%s: accept error max connection\n", __func__);
+      }
+    }
+    if(FD_ISSET(msocket, &fds)){
+      alen = sizeof(addr_storage);
+      if(recv_dgram(msocket, &data, addr, &alen) == 0){
+        uint8_t *buff = data.data.data;
+        int ver  = data.head.ver;
+        int type = data.head.type; 
+        printf("type=%d ver=%d from=%s:%d\n", type, ver, inet_ntoa(addr_in->sin_addr), ntohs(addr_in->sin_port));
+        if(type == MTNCMD_LIST){
+        }
+        if(type == MTNCMD_INFO){
+          kinfo *info = &(data.data.info);
+          buff += sizeof(kinfo);
+          info->free = kopt.diskfree;
+          info->host = buff - (uintptr_t)info;
+          strcpy(buff, kopt.host);
+          buff += strlen(kopt.host) + 1;
+        }
+        data.head.size = (uintptr_t)(buff - (uintptr_t)(data.data.data));
+        send_dgram(msocket, &data, addr);
       }
     }
   }
