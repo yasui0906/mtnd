@@ -14,6 +14,30 @@ void kinit_option()
   kopt.mcast_port = 6000;
 }
 
+uint64_t get_dirsize(char *path)
+{
+  char full[PATH_MAX];
+  uint64_t size = 0;
+  DIR *d = opendir(path);
+  struct dirent *ent;
+  struct stat st;
+  while(ent = readdir(d)){
+    if(ent->d_name[0] == '.'){
+      continue;
+    }
+    sprintf(full, "%s/%s", path, ent->d_name);
+    if(ent->d_type == DT_DIR){
+      size += get_dirsize(full);
+      continue;
+    }
+    if(ent->d_type == DT_REG){
+      stat(full, &st);
+      size += st.st_size;
+    }
+  }
+  return(size);
+}
+
 int send_readywait(int s)
 {
   fd_set fds;
@@ -80,7 +104,10 @@ int recv_dgram(int s, kdata *data, struct sockaddr *addr, socklen_t *alen)
 int recv_stream(int s, uint8_t *buff, size_t size)
 {
   int r;
-  while(recv_readywait(s)){
+  while(size){
+    if(recv_readywait(s) == 0){
+      return(1);
+    }
     r = read(s, buff, size);
     if(r == -1){
       if(errno == EAGAIN){
@@ -98,11 +125,8 @@ int recv_stream(int s, uint8_t *buff, size_t size)
     }
     buff += r;
     size -= r;
-    if(size == 0){
-      return(0);
-    }
   }
-  return(1);
+  return(0);
 }
 
 int recv_stream_line(int s, uint8_t *buff, size_t size)

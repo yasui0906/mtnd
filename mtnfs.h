@@ -31,6 +31,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <dirent.h>
 
 #define MTNRES_SUCCESS 0
 #define MTNRES_ERROR   1
@@ -55,7 +56,7 @@ typedef struct
 typedef struct
 {
   uint8_t *host;
-  uint64_t free;
+  uint32_t free;
 }__attribute__((packed)) kinfo;
 
 typedef struct
@@ -75,19 +76,19 @@ typedef struct
   int h_size;
   int d_size;
   kdata data;
-  union {
-    uint8_t file_name[PATH_MAX];
-  } opt;
+  uint8_t file_name[PATH_MAX];
+  struct stat stat;
 }__attribute__((packed)) kstream;
 
 typedef struct
 {
   uint16_t max_packet_size;               // 1パケットに格納する最大サイズ
-  uint64_t diskfree;                      // 空容量
-  uint64_t datasize;                      // 使用量
+  uint32_t diskfree;                      // 空容量
+  uint32_t datasize;                      // 使用量
   uint16_t mcast_port;                    //
   uint8_t  mcast_addr[16];                //
   uint8_t  host[64];                      //
+  uint8_t *cwd;                           //
   int      accept_socket[MAX_CONNECTION]; //
 }__attribute__((packed)) koption;
 

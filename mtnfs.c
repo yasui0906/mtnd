@@ -6,7 +6,7 @@
 
 void version()
 {
-  printf("%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
+  lprintf(0, "%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
 }
 
 void usage()
@@ -15,25 +15,54 @@ void usage()
   printf("usage: %s [OPTION]\n", MODULE_NAME);
   printf("\n");
   printf("  OPTION\n");
-  printf("   -h  # help");
-  printf("   -v  # version");
-  printf("   -n  # no daemon");
+  printf("   -h      # help\n");
+  printf("   -v      # version\n");
+  printf("   -n      # no daemon\n");
+  printf("   -e dir  # export dir\n");
   printf("\n");
 }
 
-void mtn_stream_init(kstream *stream)
+int mtn_stream_init(kstream *stream)
 {
+  size_t size;
+  uint8_t  *p;
+  kdata  data;
   stream->type = stream->data.head.type;
   if(stream->type == MTNCMD_SAVE){
-    strcpy(stream->opt.file_name, stream->data.data.data);
-    stream->fd = creat(stream->opt.file_name, 0644);
-    lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->opt.file_name);
+    p = stream->data.data.data;
+    size = strlen(p) + 1;
+    memcpy(stream->file_name, p, size);
+    p += size;
+    size = sizeof(mode_t);
+    stream->stat.st_mode = ntohs(*(mode_t *)p);
+    p += size;
+    size = sizeof(time_t);
+    stream->stat.st_mtime = ntohl(*(time_t *)p);
+    p += size;
+    stream->fd = creat(stream->file_name, stream->stat.st_mode);
+    if(stream->fd == -1){
+      data.head.ver  = PROTOCOL_VERSION;
+      data.head.type = MTNRES_ERROR;
+      data.head.size = sizeof(errno);
+      memcpy(data.data.data, &errno, sizeof(errno));
+      send_stream(stream->socket, &data);
+      return(-1);
+    }
+    lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->file_name);
   }
+  return(0);
 }
 
-void mtn_stream_cleanup(kstream *stream)
+void mtn_stream_exit(kstream *stream)
 {
+  stream->type = MTNCMD_NONE;
   if(stream->fd){
+    struct timeval tv[2];
+    tv[0].tv_sec  = stream->stat.st_atime;
+    tv[0].tv_usec = 0;
+    tv[1].tv_sec  = stream->stat.st_mtime;
+    tv[1].tv_usec = 0;
+    futimes(stream->fd, tv);
     close(stream->fd);
     stream->fd = 0;
   }
@@ -41,12 +70,35 @@ void mtn_stream_cleanup(kstream *stream)
 
 int mtn_stream_exec(kstream *stream)
 {
+  int r;
+  uint8_t *p;
+  size_t   l;
+  kdata data;
   if(stream->type == MTNCMD_SAVE){
-    lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->opt.file_name);
+    lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->file_name);
     if(stream->data.head.size == 0){
+      data.head.ver  = PROTOCOL_VERSION;
+      data.head.type = MTNRES_SUCCESS;
+      data.head.size = 0;
+      send_stream(stream->socket, &data);
       return(1);
     }
-    write(stream->fd, stream->data.data.data, stream->data.head.size);
+    l = stream->data.head.size;
+    p = stream->data.data.data;
+    while(l){
+      r = write(stream->fd, p, l);
+      if(r == -1){
+        printf("error: %s\n", strerror(errno));
+        data.head.ver  = PROTOCOL_VERSION;
+        data.head.type = MTNRES_ERROR;
+        data.head.size = sizeof(errno);
+        memcpy(data.data.data, &errno, sizeof(errno));
+        send_stream(stream->socket, &data);
+        return(1);
+      }
+      p += r;
+      l -= r;
+    }
   }
   return(0);
 }
@@ -59,7 +111,7 @@ void mtn_stream_process(kstream *stream)
     mtn_stream_init(stream);
   }else{
     if(mtn_stream_exec(stream)){
-      mtn_stream_cleanup(stream);
+      mtn_stream_exit(stream);
     }
   }
 }
@@ -213,7 +265,7 @@ int main(int argc, char *argv[])
 {
   int r;
   int daemonize = 1; 
-  struct option opt[8];
+  struct option opt[4];
   opt[0].name    = "help";
   opt[0].has_arg = 0;
   opt[0].flag    = NULL;
@@ -222,37 +274,17 @@ int main(int argc, char *argv[])
   opt[1].name    = "version";
   opt[1].has_arg = 0;
   opt[1].flag    = NULL;
-  opt[1].val     = 'V';
+  opt[1].val     = 'v';
 
-  opt[2].name    = "status";
+  opt[2].name    = "export";
   opt[2].has_arg = 1;
   opt[2].flag    = NULL;
-  opt[2].val     = 'S';
+  opt[2].val     = 'e';
 
-  opt[3].name    = "list";
-  opt[3].has_arg = 1;
+  opt[3].name    = NULL;
+  opt[3].has_arg = 0;
   opt[3].flag    = NULL;
-  opt[3].val     = 'L';
-
-  opt[4].name    = "save";
-  opt[4].has_arg = 1;
-  opt[4].flag    = NULL;
-  opt[4].val     = 's';
-
-  opt[5].name    = "load";
-  opt[5].has_arg = 1;
-  opt[5].flag    = NULL;
-  opt[5].val     = 'l';
-
-  opt[6].name    = "export";
-  opt[6].has_arg = 1;
-  opt[6].flag    = NULL;
-  opt[6].val     = 'e';
-
-  opt[7].name    = NULL;
-  opt[7].has_arg = 0;
-  opt[7].flag    = NULL;
-  opt[7].val     = 0;
+  opt[3].val     = 0;
 
   kinit_option();
   kopt.max_packet_size = 1024;
@@ -262,13 +294,13 @@ int main(int argc, char *argv[])
   }
   kopt.diskfree = 0;
 
-  while((r = getopt_long(argc, argv, "hVne:", opt, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "hvne:s:", opt, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
         exit(0);
 
-      case 'V':
+      case 'v':
         version();
         exit(0);
 
@@ -283,17 +315,30 @@ int main(int argc, char *argv[])
         }
         break;
 
+      case 's':
+        break;
+
       case '?':
         usage();
         exit(1);
     }
   }
 
-  /* ディスクの空き容量などを取得する */
   struct statvfs buff;
-  statvfs(".", &buff);
-  kopt.diskfree = buff.f_bfree * buff.f_bsize;
-  kopt.datasize = 0; 
+  memset(&buff, 0, sizeof(buff));
+
+  kopt.cwd = getcwd(NULL, 0);
+  if(statvfs(kopt.cwd, &buff) == -1){
+    lprintf(0, "error: %s\n", strerror(errno));
+    return(1);
+  }
+  kopt.diskfree = buff.f_bfree * buff.f_bsize / 1024 / 1024;
+  kopt.datasize = get_dirsize(kopt.cwd);
+
+  version();
+  lprintf(0, "export   : %s\n",     kopt.cwd);
+  lprintf(0, "free size: %u[MB]\n", kopt.diskfree);
+  lprintf(0, "data size: %u[MB]\n", kopt.datasize);
 
   if(daemonize){
     do_daemon();

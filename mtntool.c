@@ -15,12 +15,13 @@ void usage()
   printf("usage: %s [OPTION] [PATH]\n", MODULE_NAME);
   printf("\n");
   printf("  OPTION\n");
-  printf("   -h       --help\n");
-  printf("   -V       --version\n");
-  printf("   -i       --info\n");
-  printf("   -L path  --list=path\n");
-  printf("   -s path  --save=path\n");
-  printf("   -l path  --load=path\n");
+  printf("   -h        --help\n");
+  printf("   -V        --version\n");
+  printf("   -i        --info\n");
+  printf("   -l path   --list=path\n");
+  printf("   -f path   --file=path\n");
+  printf("   -s path   --set=path\n");
+  printf("   -g path   --get=path\n");
   printf("\n");
 }
 
@@ -63,7 +64,7 @@ void mtn_info()
       alen = sizeof(addr_storage);
       if(recv_dgram(s, &data, addr, &alen) == 0){
         info->host += (uintptr_t)info;
-        printf("%s (%LuM Free)\n", info->host, info->free / 1024 / 1024);
+        printf("%s (%uM Free)\n", info->host, info->free);
       }
     }
   }
@@ -73,11 +74,11 @@ void mtn_list(char *path)
 {
 }
 
-uint64_t mtn_choose(char *choose_host, struct sockaddr *choose_addr, socklen_t *choose_alen)
+uint32_t mtn_choose(char *choose_host, struct sockaddr *choose_addr, socklen_t *choose_alen)
 {
   int       r;
   int       s;
-  uint64_t  free_max;
+  uint32_t  free_max;
   fd_set    fds;
   kdata     data;
   char     *buff = data.data.data;
@@ -133,12 +134,12 @@ uint64_t mtn_choose(char *choose_host, struct sockaddr *choose_addr, socklen_t *
   return(free_max);
 }
 
-int mtn_load(char *load_path, char *file_path)
+int mtn_get(char *load_path, char *file_path)
 {
   return(0);
 }
 
-int mtn_save(char *save_path, char *file_path)
+int mtn_set(char *save_path, char *file_path)
 {
   int r = 0;
   int f = 0;
@@ -146,17 +147,27 @@ int mtn_save(char *save_path, char *file_path)
   
   kdata data;
   uint8_t *p;
-  uint64_t free_max;
-  char buff[1024];
+  size_t size;
+  uint32_t free_max;
   char host[1024];
   socklen_t  alen;
   struct sockaddr_storage addr_storage;
   struct sockaddr_in *addr_in = (struct sockaddr_in *)&addr_storage;
   struct sockaddr    *addr    = (struct sockaddr    *)&addr_storage;
   struct stat file_stat;
+  struct timeval tv;
 
   memset(&file_stat, 0, sizeof(file_stat));
-  if(strcmp("-", file_path)){
+  gettimeofday(&tv, NULL);
+  if(strcmp("-", file_path) == 0){
+    // STDIN
+    file_stat.st_uid   = getuid();
+    file_stat.st_gid   = getgid();
+    file_stat.st_mode  = 0640;
+    file_stat.st_atime = tv.tv_sec;
+    file_stat.st_mtime = tv.tv_sec;
+  }else{
+    // FILE
     f = open(file_path, O_RDONLY);
     if(f == -1){
       printf("error: %s %s\n", strerror(errno), file_path);
@@ -174,14 +185,33 @@ int mtn_save(char *save_path, char *file_path)
   if(r == -1){
     printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(addr_in->sin_addr), ntohs(addr_in->sin_port));
   }else{
-    printf("connect: %s %s (%LuM free)\n", host, inet_ntoa(addr_in->sin_addr), free_max / 1024 / 1024);
+    printf("connect: %s %s (%dM free)\n", host, inet_ntoa(addr_in->sin_addr), free_max);
     data.head.size = 0;
     data.head.type = MTNCMD_SAVE;
     p = data.data.data;
+
+    size = strlen(save_path) + 1;
     strcpy(p, save_path);
-    data.head.size += strlen(p) + 1;
+    data.head.size += size;
+    p += size;
+
+    size = sizeof(mode_t);
+    *((mode_t *)p) = htons(file_stat.st_mode);
+    data.head.size += size;
+    p += size;
+
+    size = sizeof(uint32_t);
+    *((uint32_t *)p) = htonl((uint32_t)file_stat.st_ctime);
+    data.head.size += size;
+    p += size;
+
+    *((uint32_t *)p) = htonl((uint32_t)file_stat.st_mtime);
+    data.head.size += size;
+    p += size;
+
     send_stream(s, &data);
-    while(r = read(f, data.data.data, 1024)){
+
+    while(r = read(f, data.data.data, sizeof(data.data.data))){
       if(r == -1){
         printf("error: %s %s\n", strerror(errno), file_path);
         break;
@@ -200,6 +230,20 @@ int mtn_save(char *save_path, char *file_path)
   }
   if(f){
     close(f);
+  }
+  if(recv_stream(s, &data, sizeof(data.head))){
+    printf("error: can't recv result data\n");
+  }else{
+    if(recv_stream(s, data.data.data, data.head.size)){
+      printf("error: can't recv result data\n");
+    }else{
+      if(data.head.type == MTNRES_SUCCESS){
+        printf("OK\n");
+      }else{
+        memcpy(&errno, data.data.data, sizeof(errno)); 
+        printf("remote error: %s\n", strerror(errno));
+      }
+    }
   }
   close(s);
   return(r); 
@@ -230,22 +274,22 @@ int main(int argc, char *argv[])
   opt[3].name    = "list";
   opt[3].has_arg = 1;
   opt[3].flag    = NULL;
-  opt[3].val     = 'L';
+  opt[3].val     = 'l';
 
   opt[4].name    = "file";
   opt[4].has_arg = 1;
   opt[4].flag    = NULL;
   opt[4].val     = 'f';
 
-  opt[5].name    = "save";
+  opt[5].name    = "set";
   opt[5].has_arg = 1;
   opt[5].flag    = NULL;
   opt[5].val     = 's';
 
-  opt[6].name    = "load";
+  opt[6].name    = "get";
   opt[6].has_arg = 1;
   opt[6].flag    = NULL;
-  opt[6].val     = 'l';
+  opt[6].val     = 'g';
 
   opt[7].name    = NULL;
   opt[7].has_arg = 0;
@@ -256,7 +300,7 @@ int main(int argc, char *argv[])
   save_path[0]=0;
   file_path[0]=0;
   kinit_option();
-  while((r = getopt_long(argc, argv, "f:s:l:L:hvi", opt, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "f:s:g:l:hvi", opt, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -270,7 +314,7 @@ int main(int argc, char *argv[])
         mtn_info();
         exit(0);
 
-      case 'L':
+      case 'l':
         mtn_list(optarg);
         exit(0);
 
@@ -282,7 +326,7 @@ int main(int argc, char *argv[])
         strcpy(save_path, optarg);
         break;
 
-      case 'l':
+      case 'g':
         strcpy(load_path, optarg);
         break;
 
@@ -293,17 +337,17 @@ int main(int argc, char *argv[])
   }
   if(strlen(save_path)){
     if(strlen(file_path)){
-      r = mtn_save(save_path, file_path);
+      r = mtn_set(save_path, file_path);
     }else{
-      r = mtn_save(save_path, save_path);
+      r = mtn_set(save_path, save_path);
     }
     exit(r);
   }
   if(strlen(load_path)){
     if(strlen(file_path)){
-      r = mtn_load(load_path, file_path);
+      r = mtn_get(load_path, file_path);
     }else{
-      r = mtn_load(load_path, load_path);
+      r = mtn_get(load_path, load_path);
     }
     exit(r);
   }
