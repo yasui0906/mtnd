@@ -70,8 +70,64 @@ void mtn_info()
   }
 }
 
-void mtn_list(char *path)
+int mtn_list(char *path)
 {
+  int      r;
+  uint8_t *p;
+  size_t   l;
+  fd_set fds;
+  kdata  data;
+  kinfo *info = &(data.data.info);
+  struct timeval tv;
+  socklen_t alen;
+  struct sockaddr_storage addr_storage;
+  struct sockaddr    *addr    = (struct sockaddr    *)&addr_storage;
+  struct sockaddr_in *addr_in = (struct sockaddr_in *)&addr_storage;
+
+  int s= create_socket(0, SOCK_DGRAM);
+  addr_in->sin_family      = AF_INET;
+  addr_in->sin_port        = htons(kopt.mcast_port);
+  addr_in->sin_addr.s_addr = inet_addr(kopt.mcast_addr);
+  data.head.ver            = PROTOCOL_VERSION;
+  data.head.type           = MTNCMD_LIST;
+  data.head.size           = 0;
+
+  if(path){
+    p = data.data.data;
+    l = strlen(path) + 1;
+    memcpy(p, path, l);
+    data.head.size += l;
+    p += l;
+  }
+  send_dgram(s, &data, addr);
+
+  tv.tv_sec  = 1;
+  tv.tv_usec = 0;
+  while(is_loop){
+    FD_ZERO(&fds);
+    FD_SET(s, &fds);
+    r = select(1024, &fds, NULL,  NULL, &tv);
+    tv.tv_sec  = 0;
+    tv.tv_usec = 100000;
+    if(r == 0){
+      break;
+    }
+    if(r == -1){
+      continue; /* error */
+    }
+    if(FD_ISSET(s, &fds)){
+      alen = sizeof(addr_storage);
+      if(recv_dgram(s, &data, addr, &alen) == 0){
+        p = data.data.data;
+        while(data.head.size){
+          printf("%s\n", p);
+          l  = strlen(p) + 1;
+          p += l;
+          data.head.size -= l;
+        }
+      }
+    }
+  }
 }
 
 uint32_t mtn_choose(char *choose_host, struct sockaddr *choose_addr, socklen_t *choose_alen)
@@ -187,7 +243,7 @@ int mtn_set(char *save_path, char *file_path)
   }else{
     printf("connect: %s %s (%dM free)\n", host, inet_ntoa(addr_in->sin_addr), free_max);
     data.head.size = 0;
-    data.head.type = MTNCMD_SAVE;
+    data.head.type = MTNCMD_SET;
     p = data.data.data;
 
     size = strlen(save_path) + 1;
@@ -252,6 +308,7 @@ int mtn_set(char *save_path, char *file_path)
 int main(int argc, char *argv[])
 {
   int r;
+  int mode;
   char load_path[1024];
   char save_path[1024];
   char file_path[1024];
@@ -267,12 +324,12 @@ int main(int argc, char *argv[])
   opt[1].val     = 'v';
 
   opt[2].name    = "info";
-  opt[2].has_arg = 1;
+  opt[2].has_arg = 0;
   opt[2].flag    = NULL;
   opt[2].val     = 'i';
 
   opt[3].name    = "list";
-  opt[3].has_arg = 1;
+  opt[3].has_arg = 0;
   opt[3].flag    = NULL;
   opt[3].val     = 'l';
 
@@ -282,12 +339,12 @@ int main(int argc, char *argv[])
   opt[4].val     = 'f';
 
   opt[5].name    = "set";
-  opt[5].has_arg = 1;
+  opt[5].has_arg = 0;
   opt[5].flag    = NULL;
   opt[5].val     = 's';
 
   opt[6].name    = "get";
-  opt[6].has_arg = 1;
+  opt[6].has_arg = 0;
   opt[6].flag    = NULL;
   opt[6].val     = 'g';
 
@@ -300,7 +357,9 @@ int main(int argc, char *argv[])
   save_path[0]=0;
   file_path[0]=0;
   kinit_option();
-  while((r = getopt_long(argc, argv, "f:s:g:l:hvi", opt, NULL)) != -1){
+
+  mode = MTNCMD_NONE;
+  while((r = getopt_long(argc, argv, "f:sglhvi", opt, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -315,19 +374,19 @@ int main(int argc, char *argv[])
         exit(0);
 
       case 'l':
-        mtn_list(optarg);
-        exit(0);
-
-      case 'f':
-        strcpy(file_path, optarg);
+        mode = MTNCMD_LIST;
         break;
 
       case 's':
-        strcpy(save_path, optarg);
+        mode = MTNCMD_SET;
         break;
 
       case 'g':
-        strcpy(load_path, optarg);
+        mode = MTNCMD_SET;
+        break;
+
+      case 'f':
+        strcpy(file_path, optarg);
         break;
 
       case '?':
@@ -335,19 +394,25 @@ int main(int argc, char *argv[])
         exit(1);
     }
   }
-  if(strlen(save_path)){
-    if(strlen(file_path)){
-      r = mtn_set(save_path, file_path);
-    }else{
-      r = mtn_set(save_path, save_path);
-    }
+
+  if(mode == MTNCMD_LIST){
+    r = mtn_list(argv[optind]);
     exit(r);
   }
-  if(strlen(load_path)){
-    if(strlen(file_path)){
-      r = mtn_get(load_path, file_path);
+  if(mode == MTNCMD_SET){
+    if(file_path[0]){
+      r = mtn_set(argv[optind], file_path);
     }else{
-      r = mtn_get(load_path, load_path);
+      r = mtn_set(argv[optind], argv[optind]);
+    }
+    exit(r);
+
+  }
+  if(mode == MTNCMD_GET){
+    if(file_path[0]){
+      r = mtn_get(save_path, file_path);
+    }else{
+      r = mtn_get(argv[optind], argv[optind]);
     }
     exit(r);
   }

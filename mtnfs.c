@@ -19,6 +19,7 @@ void usage()
   printf("   -v      # version\n");
   printf("   -n      # no daemon\n");
   printf("   -e dir  # export dir\n");
+  printf("   -l size # limit size (MB)\n");
   printf("\n");
 }
 
@@ -28,7 +29,7 @@ int mtn_stream_init(kstream *stream)
   uint8_t  *p;
   kdata  data;
   stream->type = stream->data.head.type;
-  if(stream->type == MTNCMD_SAVE){
+  if(stream->type == MTNCMD_SET){
     p = stream->data.data.data;
     size = strlen(p) + 1;
     memcpy(stream->file_name, p, size);
@@ -74,7 +75,7 @@ int mtn_stream_exec(kstream *stream)
   uint8_t *p;
   size_t   l;
   kdata data;
-  if(stream->type == MTNCMD_SAVE){
+  if(stream->type == MTNCMD_SET){
     lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->file_name);
     if(stream->data.head.size == 0){
       data.head.ver  = PROTOCOL_VERSION;
@@ -238,19 +239,55 @@ void do_loop()
       if(recv_dgram(msocket, &data, addr, &alen) == 0){
         uint8_t *buff = data.data.data;
         int ver  = data.head.ver;
-        int type = data.head.type; 
-        printf("type=%d ver=%d from=%s:%d\n", type, ver, inet_ntoa(addr_in->sin_addr), ntohs(addr_in->sin_port));
+        int type = data.head.type;
+        int size = data.head.size;
+        printf("type=%d size=%d ver=%d from=%s:%d\n", type, size, ver, inet_ntoa(addr_in->sin_addr), ntohs(addr_in->sin_port));
         if(type == MTNCMD_LIST){
+          struct stat st;
+          struct dirent *ent;
+          char path[PATH_MAX];
+          char full[PATH_MAX];
+          if(size){
+            sprintf(path, "./%s", data.data.data);
+          }else{
+            strcpy(path, "./");
+          }
+          if(stat(path, &st) == -1){
+          }else{
+            if(S_ISREG(st.st_mode)){
+              strcpy(buff, basename(path));
+              buff += strlen(buff) + 1;
+            }
+            if(S_ISDIR(st.st_mode)){
+              DIR *d = opendir(path);
+              while(ent = readdir(d)){
+                if(ent->d_name[0] == '.'){
+                  continue;
+                }
+                sprintf(full, "%s/%s", path, ent->d_name);
+                if(ent->d_type == DT_DIR){
+                }
+                if(ent->d_type == DT_REG){
+                  printf("name=%s buff=%p\n", ent->d_name, buff);
+                  stat(full, &st);
+                  strcpy(buff, ent->d_name);
+                  buff += strlen(buff) + 1;
+                }
+              }
+              closedir(d);
+            }
+          }
         }
         if(type == MTNCMD_INFO){
           kinfo *info = &(data.data.info);
           buff += sizeof(kinfo);
-          info->free = kopt.diskfree;
+          info->free = kopt.freesize;
           info->host = buff - (uintptr_t)info;
           strcpy(buff, kopt.host);
           buff += strlen(kopt.host) + 1;
         }
         data.head.size = (uintptr_t)(buff - (uintptr_t)(data.data.data));
+        printf("size=%d\n", data.head.size);
         send_dgram(msocket, &data, addr);
       }
     }
@@ -292,9 +329,10 @@ int main(int argc, char *argv[])
   if(gethostname(kopt.host, sizeof(kopt.host)) == -1){
     kopt.host[0] = 0;
   }
-  kopt.diskfree = 0;
+  kopt.freesize  = 0;
+  kopt.limitsize = 0;
 
-  while((r = getopt_long(argc, argv, "hvne:s:", opt, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "hvne:l:", opt, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -315,7 +353,8 @@ int main(int argc, char *argv[])
         }
         break;
 
-      case 's':
+      case 'l':
+        kopt.limitsize = atoi(optarg);
         break;
 
       case '?':
@@ -324,21 +363,14 @@ int main(int argc, char *argv[])
     }
   }
 
-  struct statvfs buff;
-  memset(&buff, 0, sizeof(buff));
-
   kopt.cwd = getcwd(NULL, 0);
-  if(statvfs(kopt.cwd, &buff) == -1){
-    lprintf(0, "error: %s\n", strerror(errno));
-    return(1);
-  }
-  kopt.diskfree = buff.f_bfree * buff.f_bsize / 1024 / 1024;
-  kopt.datasize = get_dirsize(kopt.cwd);
+  kopt.freesize = get_freesize(kopt.cwd);
+  kopt.datasize = get_datasize(kopt.cwd);
 
   version();
-  lprintf(0, "export   : %s\n",     kopt.cwd);
-  lprintf(0, "free size: %u[MB]\n", kopt.diskfree);
-  lprintf(0, "data size: %u[MB]\n", kopt.datasize);
+  lprintf(0, "base: %s\n", kopt.cwd);
+  lprintf(0, "free: %u[MB]\n", kopt.freesize);
+  lprintf(0, "used: %u[MB]\n", kopt.datasize);
 
   if(daemonize){
     do_daemon();

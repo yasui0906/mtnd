@@ -32,14 +32,15 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <dirent.h>
+#include <libgen.h>
 
 #define MTNRES_SUCCESS 0
 #define MTNRES_ERROR   1
 #define MTNCMD_NONE    0
 #define MTNCMD_INFO    1
 #define MTNCMD_LIST    2
-#define MTNCMD_SAVE    3
-#define MTNCMD_LOAD    4
+#define MTNCMD_SET     3
+#define MTNCMD_GET     4
 #define MTNCMD_DATA    9
 
 #define PROTOCOL_VERSION 1
@@ -83,8 +84,9 @@ typedef struct
 typedef struct
 {
   uint16_t max_packet_size;               // 1パケットに格納する最大サイズ
-  uint32_t diskfree;                      // 空容量
+  uint32_t freesize;                      // 空容量
   uint32_t datasize;                      // 使用量
+  uint32_t limitsize;                     //
   uint16_t mcast_port;                    //
   uint8_t  mcast_addr[16];                //
   uint8_t  host[64];                      //

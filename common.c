@@ -14,7 +14,21 @@ void kinit_option()
   kopt.mcast_port = 6000;
 }
 
-uint64_t get_dirsize(char *path)
+uint32_t get_freesize(char *path)
+{
+  uint64_t size = 0;
+  struct statvfs vf;
+  if(statvfs(path, &vf) == -1){
+    lprintf(0, "error: %s\n", strerror(errno));
+    return(0);
+  }
+  size = vf.f_bfree * vf.f_bsize;
+  size /= 1024;
+  size /= 1024;
+  return(size);
+}
+
+uint32_t get_datasize(char *path)
 {
   char full[PATH_MAX];
   uint64_t size = 0;
@@ -27,7 +41,7 @@ uint64_t get_dirsize(char *path)
     }
     sprintf(full, "%s/%s", path, ent->d_name);
     if(ent->d_type == DT_DIR){
-      size += get_dirsize(full);
+      size += get_datasize(full);
       continue;
     }
     if(ent->d_type == DT_REG){
@@ -35,6 +49,9 @@ uint64_t get_dirsize(char *path)
       size += st.st_size;
     }
   }
+  closedir(d);
+  size /= 1024;
+  size /= 1024;
   return(size);
 }
 
