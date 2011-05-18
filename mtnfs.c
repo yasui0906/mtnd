@@ -23,278 +23,298 @@ void usage()
   printf("\n");
 }
 
-int mtn_stream_init(kstream *stream)
+void mtnfs_list_process(kdata *sdata, kdata *rdata)
 {
-  size_t size;
-  uint8_t  *p;
-  kdata  data;
-  stream->type = stream->data.head.type;
-  if(stream->type == MTNCMD_SET){
-    p = stream->data.data.data;
-    size = strlen(p) + 1;
-    memcpy(stream->file_name, p, size);
-    p += size;
-    size = sizeof(mode_t);
-    stream->stat.st_mode = ntohs(*(mode_t *)p);
-    p += size;
-    size = sizeof(time_t);
-    stream->stat.st_mtime = ntohl(*(time_t *)p);
-    p += size;
-    stream->fd = creat(stream->file_name, stream->stat.st_mode);
-    if(stream->fd == -1){
-      data.head.ver  = PROTOCOL_VERSION;
-      data.head.type = MTNRES_ERROR;
-      data.head.size = sizeof(errno);
-      memcpy(data.data.data, &errno, sizeof(errno));
-      send_stream(stream->socket, &data);
-      return(-1);
+  struct stat st;
+  struct dirent *ent;
+  char path[PATH_MAX];
+  char full[PATH_MAX];
+  uint8_t *buff;
+
+  sdata->head.size = 0;
+  if(rdata->head.size){
+    sprintf(path, "./%s", rdata->data.data);
+  }else{
+    strcpy(path, "./");
+  }
+  if(stat(path, &st) == -1){
+    return;
+  }
+  if(S_ISREG(st.st_mode)){
+    buff = sdata->data.data + sdata->head.size;
+    strcpy(buff, basename(path));
+    sdata->head.size += strlen(buff) + 1;
+  }
+  if(S_ISDIR(st.st_mode)){
+    DIR *d = opendir(path);
+    while(ent = readdir(d)){
+      if(ent->d_name[0] == '.'){
+        continue;
+      }
+      sprintf(full, "%s/%s", path, ent->d_name);
+      if(ent->d_type == DT_DIR){
+      }
+      if(ent->d_type == DT_REG){
+        printf("name=%s\n", ent->d_name);
+        stat(full, &st);
+        buff = sdata->data.data + sdata->head.size;
+        strcpy(buff, ent->d_name);
+        sdata->head.size += strlen(buff) + 1;
+      }
     }
-    lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->file_name);
+    closedir(d);
   }
-  return(0);
 }
 
-void mtn_stream_exit(kstream *stream)
+void mtnfs_hello_process(kdata *sdata, kdata *rdata)
 {
-  stream->type = MTNCMD_NONE;
-  if(stream->fd){
-    struct timeval tv[2];
-    tv[0].tv_sec  = stream->stat.st_atime;
-    tv[0].tv_usec = 0;
-    tv[1].tv_sec  = stream->stat.st_mtime;
-    tv[1].tv_usec = 0;
-    futimes(stream->fd, tv);
-    close(stream->fd);
-    stream->fd = 0;
-  }
+  sdata->head.size = strlen(kopt.host) + 1;
+  memcpy(sdata->data.data, kopt.host, sdata->head.size);
 }
 
-int mtn_stream_exec(kstream *stream)
+void mtnfs_info_process(kdata *sdata, kdata *rdata)
+{
+  kinfo *info = &(sdata->data.info);
+  sdata->head.size = sizeof(kinfo);
+  info->free = kopt.freesize;
+  info->host = (uint8_t *)NULL + sdata->head.size;
+  strcpy(sdata->data.data + sdata->head.size, kopt.host);
+  sdata->head.size += strlen(kopt.host) + 1;
+}
+
+void mtnfs_udp_process(int s)
+{
+  kaddr  addr;
+  kdata sdata;
+  kdata rdata;
+  uint8_t *sbuff = sdata.data.data;
+  uint8_t *rbuff = rdata.data.data;
+
+  addr.len = sizeof(addr.addr);
+  if(recv_dgram(s, &rdata, &(addr.addr.addr), &(addr.len)) == -1){
+    return;
+  }
+  int ver  = rdata.head.ver;
+  int type = rdata.head.type;
+  int size = rdata.head.size;
+  printf("type=%d size=%d ver=%d from=%s:%d\n", type, size, ver, inet_ntoa(addr.addr.in.sin_addr), ntohs(addr.addr.in.sin_port));
+  switch(type){
+    case MTNCMD_LIST:
+      mtnfs_list_process(&sdata, &rdata);
+      break;
+    case MTNCMD_HELLO:
+      mtnfs_hello_process(&sdata, &rdata);
+      break;
+    case MTNCMD_INFO:
+      mtnfs_info_process(&sdata, &rdata);
+      break;
+  }
+  printf("size=%d\n", sdata.head.size);
+  send_dgram(s, &sdata, &addr);
+}
+
+int mtnfs_child_get(int s, kdata *data)
 {
   int r;
-  uint8_t *p;
-  size_t   l;
-  kdata data;
-  if(stream->type == MTNCMD_SET){
-    lprintf(0,"type=%d size=%d file=%s\n", stream->data.head.type, stream->data.head.size, stream->file_name);
-    if(stream->data.head.size == 0){
-      data.head.ver  = PROTOCOL_VERSION;
-      data.head.type = MTNRES_SUCCESS;
-      data.head.size = 0;
-      send_stream(stream->socket, &data);
-      return(1);
+  int f;
+  kdata sd;
+  kdata rd;
+  struct stat st;
+  uint8_t path[PATH_MAX];
+  uint8_t *buff = data->data.data;
+  size_t   size = data->head.size;
+
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.type = MTNRES_SUCCESS;
+  sd.head.size = 0;
+
+  strcpy(path, buff);
+  buff += strlen(path) + 1;
+  lprintf(0,"get: %s\n", path);
+
+  f = open(path, O_RDONLY);
+  while(is_loop){
+    sd.head.size = read(f, sd.data.data, sizeof(sd.data.data));
+    send_stream(s, &sd);
+    if(sd.head.size == 0){
+      break;
     }
-    l = stream->data.head.size;
-    p = stream->data.data.data;
-    while(l){
-      r = write(stream->fd, p, l);
+  }
+  close(f);
+}
+
+int mtnfs_child_set(int s, kdata *data)
+{
+  int r;
+  int f;
+  kdata sd;
+  kdata rd;
+  struct stat st;
+  uint8_t path[PATH_MAX];
+  uint8_t *buff = data->data.data;
+  size_t size;
+
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.type = MTNRES_SUCCESS;
+  sd.head.size = 0;
+
+  strcpy(path, buff);
+  buff += strlen(path) + 1;
+  size = sizeof(mode_t);
+  st.st_mode = ntohs(*(mode_t *)buff);
+  buff += size;
+  size = sizeof(time_t);
+  st.st_atime = ntohl(*(time_t *)buff);
+  st.st_mtime = ntohl(*(time_t *)buff);
+  buff += size;
+
+  lprintf(0,"set: %s\n", path);
+  f= creat(path, st.st_mode);
+  if(f == -1){
+    sd.head.type = MTNRES_ERROR;
+    sd.head.size = sizeof(errno);
+    memcpy(sd.data.data, &errno, sizeof(errno));
+    send_stream(s, &sd);
+    exit(0);
+  }
+  
+  while(is_loop){
+    r = recv_stream(s, &(rd.head), sizeof(rd.head));
+    if(r == -1){
+      lprintf(0, "%s: head recv error\n", __func__);
+      break;
+    }
+    if(r == 1){
+      lprintf(0, "%s: remote close\n", __func__);
+      break;
+    }
+    if(rd.head.size == 0){
+      struct timeval tv[2];
+      tv[0].tv_sec  = st.st_atime;
+      tv[0].tv_usec = 0;
+      tv[1].tv_sec  = st.st_mtime;
+      tv[1].tv_usec = 0;
+      futimes(f, tv);
+      close(f);
+      break;
+    }else{
+      r = recv_stream(s, rd.data.data, rd.head.size);
+      if(r == -1){
+        lprintf(0, "%s: data recv error\n", __func__);
+        break;
+      }
+      if(r == 1){
+        lprintf(0, "%s: data recv error(remote close)\n", __func__);
+        break;
+      }
+      r = write(f, rd.data.data, rd.head.size);
       if(r == -1){
         printf("error: %s\n", strerror(errno));
-        data.head.ver  = PROTOCOL_VERSION;
-        data.head.type = MTNRES_ERROR;
-        data.head.size = sizeof(errno);
-        memcpy(data.data.data, &errno, sizeof(errno));
-        send_stream(stream->socket, &data);
-        return(1);
+        sd.head.type = MTNRES_ERROR;
+        sd.head.size = sizeof(errno);
+        memcpy(sd.data.data, &errno, sizeof(errno));
+        break;
       }
-      p += r;
-      l -= r;
     }
+  }
+  send_stream(s, &sd);
+}
+
+int mtnfs_child_cmd(int s, kdata *data)
+{
+  switch(data->head.type){
+    case MTNCMD_SET:
+      return(mtnfs_child_set(s, data));
+    case MTNCMD_GET:
+      return(mtnfs_child_get(s, data));
   }
   return(0);
 }
 
-void mtn_stream_process(kstream *stream)
+void mtnfs_child(int s, kaddr *addr)
 {
-  stream->h_size = 0;
-  stream->d_size = 0;
-  if(stream->type == MTNCMD_NONE){
-    mtn_stream_init(stream);
-  }else{
-    if(mtn_stream_exec(stream)){
-      mtn_stream_exit(stream);
-    }
-  }
-}
-
-void mtn_tcp_process(kstream *stream, char *buff, int size)
-{
-  void *ptr;
-  int copy_size;
-  int need_size;
-  while(size){
-    need_size = sizeof(khead) - stream->h_size;
-    if(need_size > 0){
-      ptr = &(stream->data.head) + stream->h_size;
-      if(size > need_size){
-        copy_size = need_size;
-      }else{
-        copy_size = size;
-      }
-      if(copy_size > 0){
-        memcpy(ptr, buff, copy_size);
-        buff += copy_size;
-        size -= copy_size;
-        stream->h_size += copy_size;
-      }
-    }
-    need_size = stream->data.head.size - stream->d_size;
-    if(need_size > 0){
-      ptr = stream->data.data.data + stream->d_size;
-      if(size > need_size){
-        copy_size = need_size;
-      }else{
-        copy_size = size;
-      }
-      if(copy_size > 0){
-        memcpy(ptr, buff, copy_size);
-        buff += copy_size;
-        size -= copy_size;
-        stream->d_size += copy_size;
-        need_size -= copy_size;
-      }
-    }
-    if(need_size == 0){
-      mtn_stream_process(stream);
-    }
-  }
-}
-
-void do_loop()
-{
-  int i;
   int r;
-  int s;
+  kdata kd;
 
-  fd_set    fds;
-  kdata     data;
-  socklen_t alen;
-  struct sockaddr_storage addr_storage;
-  struct sockaddr    *addr    = (struct sockaddr    *)&addr_storage;
-  struct sockaddr_in *addr_in = (struct sockaddr_in *)&addr_storage;
-  struct timeval tv;
-  kstream stream[8];
-
-  int msocket = create_msocket(6000);
-  int lsocket = create_lsocket(6000);
-  
-  memset(stream, 0, sizeof(stream));
-  if(listen(lsocket, 5) == -1){
-    lprintf(0, "%s: listen error\n", __func__);
-    exit(1);
+  lprintf(0,"accept from %s:%d\n", inet_ntoa(addr->addr.in.sin_addr), ntohs(addr->addr.in.sin_port));
+  while(is_loop){
+    r = recv_stream(s, &(kd.head), sizeof(kd.head));
+    if(r == -1){
+      lprintf(0, "%s: head recv error\n", __func__);
+      break;
+    }
+    if(r == 1){
+      lprintf(0, "%s: remote close\n", __func__);
+      break;
+    }
+    if(kd.head.size){
+      r = recv_stream(s, kd.data.data, kd.head.size);
+      if(r == -1){
+        lprintf(0, "%s: data recv error\n", __func__);
+        break;
+      }
+      if(r == 1){
+        lprintf(0, "%s: data recv error(remote close)\n", __func__);
+        break;
+      }
+    }
+    lprintf(0,"pid=%d type=%d size=%d\n", getpid(), kd.head.type, kd.head.size);
+    if(mtnfs_child_cmd(s, &kd)){
+      break;
+    }
   }
+  exit(0);
+}
 
+void mtnfs_accept_process(int l)
+{
+  int s;
+  kaddr addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.len = sizeof(addr.addr);
+  pid_t pid = fork();
+  if(pid == -1){
+    lprintf(0, "%s: fork error\n", __func__);
+    close(accept(l, &(addr.addr.addr), &(addr.len)));
+    return;
+  }
+  if(pid){
+    return;
+  }
+  //----- child process -----
+  s = accept(l, &(addr.addr.addr), &(addr.len));
+  if(s == -1){
+    lprintf(0, "%s: %s\n", __func__, strerror(errno));
+    exit(0);
+  }
+  mtnfs_child(s, &addr);
+  exit(0);
+}
+
+void do_loop(int m, int l)
+{
+  fd_set fds;
+  struct timeval tv;
   while(is_loop){
     tv.tv_sec  = 1;
     tv.tv_usec = 0;
     FD_ZERO(&fds);
-    FD_SET(lsocket, &fds);
-    FD_SET(msocket, &fds);
-    for(i=0;i<8;i++){
-      if(stream[i].socket){
-        FD_SET(stream[i].socket, &fds);
-      }
-    }
-    r = select(1024, &fds, NULL,  NULL, &tv);
-    if(r == -1){
+    FD_SET(l, &fds);
+    FD_SET(m, &fds);
+    waitpid(-1, NULL, WNOHANG);
+    if(select(1024, &fds, NULL,  NULL, &tv) <= 0){
       continue;
     }
-    if(r == 0){
-      continue;
+    if(FD_ISSET(m, &fds)){
+      mtnfs_udp_process(m);
     }
-    for(i=0;i<8;i++){
-      if(!FD_ISSET(stream[i].socket, &fds)){
-        continue;
-      }
-      char buff[32768];
-      r = recv(stream[i].socket, buff, sizeof(buff), 0);
-      if(r == -1){
-        lprintf(0,"error: %s client=%d\n", i, strerror(errno));
-        continue;
-      }
-      if(r == 0){
-        lprintf(0,"info: Connection Close client=%d\n", i);
-        close(stream[i].socket);
-        stream[i].socket = 0;
-        continue;
-      }
-      mtn_tcp_process(&stream[i], buff, r);
-    }
-    if(FD_ISSET(lsocket, &fds)){
-      alen = sizeof(addr);
-      s = accept(lsocket, addr, &alen);
-      for(i=0;i<8;i++){
-        if(stream[i].socket == 0){
-          stream[i].socket = s;
-          break;
-        }
-      }
-      if(i==8){
-        close(s);
-        lprintf(0, "%s: accept error max connection\n", __func__);
-      }
-    }
-    if(FD_ISSET(msocket, &fds)){
-      alen = sizeof(addr_storage);
-      if(recv_dgram(msocket, &data, addr, &alen) == 0){
-        uint8_t *buff = data.data.data;
-        int ver  = data.head.ver;
-        int type = data.head.type;
-        int size = data.head.size;
-        printf("type=%d size=%d ver=%d from=%s:%d\n", type, size, ver, inet_ntoa(addr_in->sin_addr), ntohs(addr_in->sin_port));
-        if(type == MTNCMD_LIST){
-          struct stat st;
-          struct dirent *ent;
-          char path[PATH_MAX];
-          char full[PATH_MAX];
-          if(size){
-            sprintf(path, "./%s", data.data.data);
-          }else{
-            strcpy(path, "./");
-          }
-          if(stat(path, &st) == -1){
-          }else{
-            if(S_ISREG(st.st_mode)){
-              strcpy(buff, basename(path));
-              buff += strlen(buff) + 1;
-            }
-            if(S_ISDIR(st.st_mode)){
-              DIR *d = opendir(path);
-              while(ent = readdir(d)){
-                if(ent->d_name[0] == '.'){
-                  continue;
-                }
-                sprintf(full, "%s/%s", path, ent->d_name);
-                if(ent->d_type == DT_DIR){
-                }
-                if(ent->d_type == DT_REG){
-                  printf("name=%s buff=%p\n", ent->d_name, buff);
-                  stat(full, &st);
-                  strcpy(buff, ent->d_name);
-                  buff += strlen(buff) + 1;
-                }
-              }
-              closedir(d);
-            }
-          }
-        }
-        if(type == MTNCMD_INFO){
-          kinfo *info = &(data.data.info);
-          buff += sizeof(kinfo);
-          info->free = kopt.freesize;
-          info->host = buff - (uintptr_t)info;
-          strcpy(buff, kopt.host);
-          buff += strlen(kopt.host) + 1;
-        }
-        data.head.size = (uintptr_t)(buff - (uintptr_t)(data.data.data));
-        printf("size=%d\n", data.head.size);
-        send_dgram(msocket, &data, addr);
-      }
+    if(FD_ISSET(l, &fds)){
+      mtnfs_accept_process(l);
     }
   }
 }
 
-void do_daemon()
+void do_daemon(int m, int l)
 {
 }
 
@@ -372,10 +392,16 @@ int main(int argc, char *argv[])
   lprintf(0, "free: %u[MB]\n", kopt.freesize);
   lprintf(0, "used: %u[MB]\n", kopt.datasize);
 
+  int m = create_msocket(6000);
+  int l = create_lsocket(6000);
+  if(listen(l, 5) == -1){
+    lprintf(0, "%s: listen error\n", __func__);
+    exit(1);
+  }
   if(daemonize){
-    do_daemon();
+    do_daemon(m, l);
   }else{
-    do_loop();
+    do_loop(m ,l);
   }
   return(0);
 }

@@ -6,6 +6,7 @@
 
 int is_loop = 1;
 koption kopt;
+kmember *members = NULL;
 
 void kinit_option()
 {
@@ -184,11 +185,11 @@ int recv_stream_line(int s, uint8_t *buff, size_t size)
   return(0);
 }
 
-int send_dgram(int s, kdata *data, struct sockaddr *addr)
+int send_dgram(int s, kdata *data, kaddr *addr)
 {
   int size = data->head.size + sizeof(khead);
   while(send_readywait(s)){
-    int r = sendto(s, data, size, 0, (struct sockaddr*)addr, sizeof(struct sockaddr_in));
+    int r = sendto(s, data, size, 0, &(addr->addr.addr), addr->len);
     if(r == size){
       return(0); /* success */
     }
@@ -204,11 +205,13 @@ int send_dgram(int s, kdata *data, struct sockaddr *addr)
 
 int send_stream(int s, kdata *data)
 {
-  size_t size;
+  size_t   size;
+  uint8_t *buff;
   size  = sizeof(khead);
   size += data->head.size;
+  buff  = (uint8_t *)data;
   while(send_readywait(s)){
-    int r = send(s, data, size, 0);
+    int r = send(s, buff, size, 0);
     if(r == -1){
       if(errno == EINTR){
         continue;
@@ -219,7 +222,7 @@ int send_stream(int s, kdata *data)
       break;
     }
     size -= r;
-    data += r;
+    buff += r;
   }
   return(0);
 }
@@ -313,5 +316,137 @@ int create_msocket(int port)
     return(-1);
   }
   return(s);
+}
+
+char *mtn_get_v4addr(kaddr *addr)
+{
+  return(inet_ntoa(addr->addr.in.sin_addr));
+}
+
+int mtn_get_v4port(kaddr *addr)
+{
+  return(ntohs(addr->addr.in.sin_port));
+}
+
+int mtn_get_string(uint8_t *str, kdata *kd)
+{
+  uint16_t len;
+  uint16_t size = kd->head.size;
+  uint8_t *buff = kd->data.data;
+  if(size > MAX_DATASIZE){
+    return(-1);
+  }
+  for(len=0;len<size;len++){
+    if(*(buff + len) == 0){
+      break;
+    }
+  }
+  if(len == size){
+    return(-1);
+  }
+  len++;
+  size -= len;
+  memcpy(str, buff, len);
+  memmove(buff, buff + len, size);
+  return(0);
+}
+
+int mtn_get_int16(uint16_t *val, kdata *kd)
+{
+  uint16_t len  = sizeof(uint16_t);
+  uint16_t size = kd->head.size;
+  if(size > MAX_DATASIZE){
+    return(-1);
+  }
+  if(size < len){
+    return(-1);
+  }
+  size -= len;
+  *val = ntohs(kd->data.data16);
+  memmove(kd->data.data, kd->data.data + len, size);
+  return(0);
+}
+
+int mtn_get_int32(uint32_t *val, kdata *kd)
+{
+  uint16_t len  = sizeof(uint32_t);
+  uint16_t size = kd->head.size;
+  if(size > MAX_DATASIZE){
+    return(-1);
+  }
+  if(size < len){
+    return(-1);
+  }
+  size -= len;
+  *val = ntohl(kd->data.data32);
+  memmove(kd->data.data, kd->data.data + len, size);
+  return(0);
+}
+
+int mtn_get_int64(uint64_t *val, kdata *kd)
+{
+  uint16_t  len = sizeof(uint64_t);
+  uint16_t size = kd->head.size;
+  if(size > MAX_DATASIZE){
+    return(-1);
+  }
+  if(size < len){
+    return(-1);
+  }
+  uint32_t *ptr = (uint32_t *)(kd->data.data + kd->head.size);
+  uint64_t hval = (uint64_t)(*(ptr + 0));
+  uint64_t lval = (uint64_t)(*(ptr + 1));
+  *val = (hval << 32) | lval;
+  size -= len;
+  memmove(kd->data.data, kd->data.data + len, size);
+  return(0);
+}
+
+int mtn_set_string(uint8_t *str, kdata *kd)
+{
+  uint16_t len = strlen(str) + 1;
+  if(kd->head.size + len > MAX_DATASIZE){
+    return(-1);
+  }
+  memcpy(kd->data.data + kd->head.size, str, len);
+  kd->head.size += len;
+  return(0);
+}
+
+int mtn_set_int16(uint16_t *val, kdata *kd)
+{
+  uint16_t len = sizeof(uint16_t);
+  if(kd->head.size + len > MAX_DATASIZE){
+    return(-1);
+  }
+  *(uint16_t *)(kd->data.data + kd->head.size) = htons(*val);
+  kd->head.size += len;
+  return(0);
+}
+
+int mtn_set_int32(uint32_t *val, kdata *kd)
+{
+  uint16_t len = sizeof(uint32_t);
+  if(kd->head.size + len > MAX_DATASIZE){
+    return(-1);
+  }
+  *(uint32_t *)(kd->data.data + kd->head.size) = htonl(*val);
+  kd->head.size += len;
+  return(0);
+}
+
+int mtn_set_int64(uint64_t *val, kdata *kd)
+{
+  uint32_t hval = (*val) >> 32;
+  uint32_t lval = (*val) & 0xFFFFFFFF;
+  uint32_t *ptr = (uint32_t *)(kd->data.data + kd->head.size);
+  uint16_t  len = sizeof(uint64_t);
+  if(kd->head.size + len > MAX_DATASIZE){
+    return(-1);
+  }
+  *(ptr + 0) = htonl(hval);
+  *(ptr + 1) = htonl(lval);
+  kd->head.size += len;
+  return(0);
 }
 

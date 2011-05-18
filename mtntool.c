@@ -4,6 +4,10 @@
  */
 #include "mtnfs.h"
 
+typedef void (*MTNPROCFUNC)(kdata *sdata, kdata *rdata, kaddr *addr);
+kmember *make_member(uint8_t *host, kaddr *addr);
+kmember *get_member(kaddr *addr, int mkflag);
+
 void version()
 {
   printf("%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
@@ -15,45 +19,98 @@ void usage()
   printf("usage: %s [OPTION] [PATH]\n", MODULE_NAME);
   printf("\n");
   printf("  OPTION\n");
-  printf("   -h        --help\n");
-  printf("   -V        --version\n");
-  printf("   -i        --info\n");
-  printf("   -l path   --list=path\n");
-  printf("   -f path   --file=path\n");
-  printf("   -s path   --set=path\n");
-  printf("   -g path   --get=path\n");
+  printf("   -h      --help\n");
+  printf("   -V      --version\n");
+  printf("   -i      --info\n");
+  printf("   -l      --list\n");
+  printf("   -s      --set\n");
+  printf("   -g      --get\n");
+  printf("   -f path --file=path\n");
   printf("\n");
 }
 
-void mtn_info()
+void clear_members()
 {
-  int    r;
+  kmember *member;
+  while(members){
+    member  = members;
+    members = members->next;
+    if(member->host){
+      free(member->host);
+    }
+    free(member);
+  }
+}
+
+kmember *make_member(uint8_t *host, kaddr *addr)
+{
+  kmember *member = get_member(addr, 0);
+  if(member == NULL){
+    member = malloc(sizeof(kmember));
+    memset(member, 0, sizeof(kmember));
+    memcpy(&(member->addr), addr, sizeof(kaddr));
+  }
+  if(host){
+    int len = strlen(host) + 1;
+    if(member->host){
+      free(member->host);
+    }
+    member->host = malloc(len);
+    memcpy(member->host, host, len);
+  }
+  member->mark = 0;
+  if(member == members){
+    member->next = NULL;
+  }else{
+    member->next = members;
+  }
+  return(members = member);
+}
+
+kmember *get_member(kaddr *addr, int mkflag)
+{
+  kmember *member;
+  for(member=members;member;member=member->next){
+    if(memcmp(addr, &(member->addr), sizeof(kaddr)) == 0){
+      return(member);
+    }
+  }
+  if(mkflag){
+    return(make_member(NULL, addr));
+  }
+  return(NULL);
+}
+
+void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
+{
+  int r;
+  kaddr addr;
+  kdata rdata;
   fd_set fds;
-  kdata  data;
-  kinfo *info = &(data.data.info);
   struct timeval tv;
-  socklen_t alen;
-  struct sockaddr_storage addr_storage;
-  struct sockaddr    *addr    = (struct sockaddr    *)&addr_storage;
-  struct sockaddr_in *addr_in = (struct sockaddr_in *)&addr_storage;
+  kmember *member;
 
   int s= create_socket(0, SOCK_DGRAM);
-  addr_in->sin_family      = AF_INET;
-  addr_in->sin_port        = htons(kopt.mcast_port);
-  addr_in->sin_addr.s_addr = inet_addr(kopt.mcast_addr);
-  data.head.ver            = PROTOCOL_VERSION;
-  data.head.type           = MTNCMD_INFO;
-  data.head.size           = 0;
-  send_dgram(s, &data, addr);
+  addr.len                     = sizeof(struct sockaddr_in);
+  addr.addr.in.sin_family      = AF_INET;
+  addr.addr.in.sin_port        = htons(kopt.mcast_port);
+  addr.addr.in.sin_addr.s_addr = inet_addr(kopt.mcast_addr);
+  sdata->head.ver              = PROTOCOL_VERSION;
+  send_dgram(s, sdata, &addr);
 
-  tv.tv_sec  = 1;
+  tv.tv_sec  = 5;
   tv.tv_usec = 0;
   while(is_loop){
     FD_ZERO(&fds);
     FD_SET(s, &fds);
     r = select(1024, &fds, NULL,  NULL, &tv);
-    tv.tv_sec  = 0;
-    tv.tv_usec = 100000;
+    if(sdata->head.type == MTNCMD_HELLO){
+      tv.tv_sec  = 0;
+      tv.tv_usec = 100000;
+    }else{
+      tv.tv_sec  = 5;
+      tv.tv_usec = 0;
+    }
     if(r == 0){
       break;
     }
@@ -61,37 +118,133 @@ void mtn_info()
       continue; /* error */
     }
     if(FD_ISSET(s, &fds)){
-      alen = sizeof(addr_storage);
-      if(recv_dgram(s, &data, addr, &alen) == 0){
-        info->host += (uintptr_t)info;
-        printf("%s (%uM Free)\n", info->host, info->free);
+      memset(&addr, 0, sizeof(addr));
+      addr.len = sizeof(addr.addr);
+      if(recv_dgram(s, &rdata, &(addr.addr.addr), &(addr.len)) == 0){
+        member = get_member(&addr, 1);
+        member->mark = 1;
+        mtn(sdata, &rdata, &addr);
+        for(member=members;member;member=member->next){
+          if(member->mark == 0){
+            break;
+          }
+        }
+        if(member == NULL){
+          tv.tv_sec  = 0;
+          tv.tv_usec = 100000;
+        }
       }
     }
   }
 }
 
+void mtn_hello_process(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  uint8_t host[1024];
+  if(mtn_get_string(host, rdata) == -1){
+    lprintf(0, "%s: mtn get error\n", __func__);
+    return;
+  }
+  make_member(host, addr);
+}
+
+void mtn_hello()
+{
+  kdata data;
+  clear_members();
+  data.head.type = MTNCMD_HELLO;
+  data.head.size = 0;
+  mtn_process(&data, (MTNPROCFUNC)mtn_hello_process);
+}
+
+void mtn_info_process(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  kmember *member = get_member(addr, 1);
+  kinfo *info = &(rdata->data.info);
+  info->host += (uintptr_t)info;
+  member->free = info->free;
+  printf("%s (%uM Free)\n", info->host, info->free);
+}
+
+void mtn_info()
+{
+  kdata data;
+  data.head.type = MTNCMD_INFO;
+  data.head.size = 0;
+  mtn_process(&data, (MTNPROCFUNC)mtn_info_process);
+}
+
+void rmstat(kstat *kst)
+{
+  if(kst->next){
+    rmstat(kst->next);
+    kst->next = NULL;
+  }
+  if(kst->name){
+    free(kst->name);
+    kst->name = NULL;
+  }
+  free(kst);
+}
+
+kstat *mkstat(kaddr *addr, uint8_t *data, size_t size)
+{
+  size_t len;
+  kstat *kst;
+
+  if(size == 0){
+    return(NULL);
+  }
+  kst = malloc(sizeof(kstat));
+  memset(kst, 0, sizeof(kstat));
+  kst->member = get_member(addr, 1);
+
+  len = strlen(data) + 1;
+  if(size < len){
+    printf("error: size miss %s\n", __func__);
+    rmstat(kst);
+    return(NULL);
+  }
+  kst->name = malloc(len);
+  memcpy(kst->name, data, len);
+  data += len;
+  size -= len;
+
+  if(kst->next = mkstat(addr, data, size)){
+    kst->next->prev = kst;
+  }
+  return kst;
+}
+
+kstat *mgstat(kstat *krt, kstat *kst)
+{
+  kstat *st;
+  if(krt){
+    for(st=krt;st->next;st=st->next);
+    st->next = kst;
+    kst->prev = st;
+  }else{
+    krt = kst;
+  }
+  return krt;
+}
+
+void mtn_list_process(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  kstat *krt = sdata->option;
+  kstat *kst = mkstat(addr, rdata->data.data, rdata->head.size);
+  sdata->option = mgstat(krt, kst);
+}
+
 int mtn_list(char *path)
 {
-  int      r;
+  kstat *kst;
+  kdata data;
   uint8_t *p;
   size_t   l;
-  fd_set fds;
-  kdata  data;
-  kinfo *info = &(data.data.info);
-  struct timeval tv;
-  socklen_t alen;
-  struct sockaddr_storage addr_storage;
-  struct sockaddr    *addr    = (struct sockaddr    *)&addr_storage;
-  struct sockaddr_in *addr_in = (struct sockaddr_in *)&addr_storage;
 
-  int s= create_socket(0, SOCK_DGRAM);
-  addr_in->sin_family      = AF_INET;
-  addr_in->sin_port        = htons(kopt.mcast_port);
-  addr_in->sin_addr.s_addr = inet_addr(kopt.mcast_addr);
-  data.head.ver            = PROTOCOL_VERSION;
-  data.head.type           = MTNCMD_LIST;
-  data.head.size           = 0;
-
+  data.head.type = MTNCMD_LIST;
+  data.head.size = 0;
   if(path){
     p = data.data.data;
     l = strlen(path) + 1;
@@ -99,193 +252,145 @@ int mtn_list(char *path)
     data.head.size += l;
     p += l;
   }
-  send_dgram(s, &data, addr);
+  mtn_process(&data, (MTNPROCFUNC)mtn_list_process);
+  for(kst = data.option;kst;kst=kst->next){
+    printf("%s: %s\n", kst->member->host, kst->name);
+  }
+}
 
-  tv.tv_sec  = 1;
-  tv.tv_usec = 0;
-  while(is_loop){
-    FD_ZERO(&fds);
-    FD_SET(s, &fds);
-    r = select(1024, &fds, NULL,  NULL, &tv);
-    tv.tv_sec  = 0;
-    tv.tv_usec = 100000;
-    if(r == 0){
-      break;
-    }
-    if(r == -1){
-      continue; /* error */
-    }
-    if(FD_ISSET(s, &fds)){
-      alen = sizeof(addr_storage);
-      if(recv_dgram(s, &data, addr, &alen) == 0){
-        p = data.data.data;
-        while(data.head.size){
-          printf("%s\n", p);
-          l  = strlen(p) + 1;
-          p += l;
-          data.head.size -= l;
-        }
-      }
+void mtn_choose_info(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  kmember *choose = sdata->option;
+  kmember *member = get_member(addr, 1);
+  kinfo *info     = &(rdata->data.info);
+  member->free    = info->free;
+  if(choose == NULL){
+    sdata->option = member;
+  }else{
+    if(info->free > choose->free){
+      sdata->option = member;
     }
   }
 }
 
-uint32_t mtn_choose(char *choose_host, struct sockaddr *choose_addr, socklen_t *choose_alen)
+void mtn_choose_list(kdata *sdata, kdata *rdata, kaddr *addr)
 {
-  int       r;
-  int       s;
-  uint32_t  free_max;
-  fd_set    fds;
-  kdata     data;
-  char     *buff = data.data.data;
-  kinfo    *info = &(data.data.info);
-  struct    timeval tv;
-  struct    sockaddr_storage addr_storage;
-  struct    sockaddr    *addr    = (struct sockaddr    *)&addr_storage;
-  struct    sockaddr_in *addr_in = (struct sockaddr_in *)&addr_storage;
-  socklen_t alen;
-
-  s= create_socket(0, SOCK_DGRAM);
-  if(s == -1){
-    lprintf(0, "%s: create_socket error\n", __func__);
-    return(0);
-  }
-  data.head.ver            = PROTOCOL_VERSION;
-  data.head.type           = MTNCMD_INFO;
-  data.head.size           = 0;
-  addr_in->sin_family      = AF_INET;
-  addr_in->sin_port        = htons(kopt.mcast_port);
-  addr_in->sin_addr.s_addr = inet_addr(kopt.mcast_addr);
-  send_dgram(s, &data, addr);
-
-  free_max   = 0;
-  tv.tv_sec  = 1;
-  tv.tv_usec = 0;
-  while(is_loop){
-    FD_ZERO(&fds);
-    FD_SET(s, &fds);
-    r = select(1024, &fds, NULL,  NULL, &tv);
-    tv.tv_sec  = 0;
-    tv.tv_usec = 100000;
-    if(r == 0){
-      break;
-    }
-    if(r == -1){
-      continue; /* error */
-    }
-    if(FD_ISSET(s, &fds)){
-      alen = sizeof(addr_storage);
-      if(recv_dgram(s, &data, addr, &alen) == 0){
-        if(info->free > free_max){
-          free_max = info->free;
-          info->host += (uintptr_t)info;
-          strcpy(choose_host, info->host);
-          memcpy(choose_addr, addr, alen);
-          *choose_alen = alen;
-        }
-      }
-    }
-  }
-  close(s);
-  return(free_max);
 }
 
-int mtn_get(char *load_path, char *file_path)
+kmember *mtn_choose(char *path)
 {
-  return(0);
-}
-
-int mtn_set(char *save_path, char *file_path)
-{
-  int r = 0;
-  int f = 0;
-  int s = 0;
-  
   kdata data;
-  uint8_t *p;
-  size_t size;
-  uint32_t free_max;
-  char host[1024];
-  socklen_t  alen;
-  struct sockaddr_storage addr_storage;
-  struct sockaddr_in *addr_in = (struct sockaddr_in *)&addr_storage;
-  struct sockaddr    *addr    = (struct sockaddr    *)&addr_storage;
-  struct stat file_stat;
+  data.head.type = MTNCMD_INFO;
+  data.head.size = 0;
+  data.option    = NULL;
+  mtn_process(&data, (MTNPROCFUNC)mtn_choose_info);
+  return(data.option);
+}
+
+void mtn_find_process(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  sdata->option = mgstat(sdata->option, mkstat(addr, rdata->data.data, rdata->head.size));
+}
+
+kstat *mtn_find(char *path)
+{
+  kdata data;
+  data.option    = NULL;
+  data.head.type = MTNCMD_LIST;
+  data.head.size = strlen(path) + 1;
+  strcpy(data.data.data, path);
+  mtn_process(&data, (MTNPROCFUNC)mtn_find_process);
+  return(data.option);
+}
+
+int mtn_set_open(char *path, struct stat *st)
+{
+  int f;
   struct timeval tv;
-
-  memset(&file_stat, 0, sizeof(file_stat));
   gettimeofday(&tv, NULL);
-  if(strcmp("-", file_path) == 0){
-    // STDIN
-    file_stat.st_uid   = getuid();
-    file_stat.st_gid   = getgid();
-    file_stat.st_mode  = 0640;
-    file_stat.st_atime = tv.tv_sec;
-    file_stat.st_mtime = tv.tv_sec;
+  if(strcmp("-", path) == 0){
+    st->st_uid   = getuid();
+    st->st_gid   = getgid();
+    st->st_mode  = 0640;
+    st->st_atime = tv.tv_sec;
+    st->st_mtime = tv.tv_sec;
   }else{
-    // FILE
-    f = open(file_path, O_RDONLY);
+    f = open(path, O_RDONLY);
     if(f == -1){
-      printf("error: %s %s\n", strerror(errno), file_path);
-      return(1);
+      printf("error: %s %s\n", strerror(errno), path);
+      return(-1);
     }
-    fstat(f, &file_stat);
+    fstat(f, st);
   }
-  free_max = mtn_choose(host, addr, &alen);
-  if(free_max == 0){
-    printf("error: node not found\n");
-    return(1);
-  }
-  s = create_socket(0, SOCK_STREAM);
-  r = connect(s, addr, alen);
-  if(r == -1){
-    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(addr_in->sin_addr), ntohs(addr_in->sin_port));
-  }else{
-    printf("connect: %s %s (%dM free)\n", host, inet_ntoa(addr_in->sin_addr), free_max);
-    data.head.size = 0;
-    data.head.type = MTNCMD_SET;
-    p = data.data.data;
+  return(f);
+}
 
-    size = strlen(save_path) + 1;
-    strcpy(p, save_path);
-    data.head.size += size;
-    p += size;
+int mtn_set_stat(int s, char *path, struct stat *st)
+{
+  uint8_t *p;
+  size_t   l;
+  kdata data;
 
-    size = sizeof(mode_t);
-    *((mode_t *)p) = htons(file_stat.st_mode);
-    data.head.size += size;
-    p += size;
+  data.head.ver  = PROTOCOL_VERSION;
+  data.head.size = 0;
+  data.head.type = MTNCMD_SET;
 
-    size = sizeof(uint32_t);
-    *((uint32_t *)p) = htonl((uint32_t)file_stat.st_ctime);
-    data.head.size += size;
-    p += size;
+  p = data.data.data;
+  l = strlen(path) + 1;
+  strcpy(p, path);
+  data.head.size += l;
+  p += l;
 
-    *((uint32_t *)p) = htonl((uint32_t)file_stat.st_mtime);
-    data.head.size += size;
-    p += size;
+  l = sizeof(mode_t);
+  *((mode_t *)p) = htons(st->st_mode);
+  data.head.size += l;
+  p += l;
 
-    send_stream(s, &data);
+  l = sizeof(uint32_t);
+  *((uint32_t *)p) = htonl((uint32_t)st->st_ctime);
+  data.head.size += l;
+  p += l;
 
-    while(r = read(f, data.data.data, sizeof(data.data.data))){
-      if(r == -1){
-        printf("error: %s %s\n", strerror(errno), file_path);
-        break;
-      }
-      data.head.size = r;
-      data.head.type = MTNCMD_DATA;
-      r = send_stream(s, &data);
-      if(r == -1){
-        printf("error: %s %s\n", strerror(errno), file_path);
-        break;
-      }
+  *((uint32_t *)p) = htonl((uint32_t)st->st_mtime);
+  data.head.size += l;
+  p += l;
+
+  send_stream(s, &data);
+}
+
+int mtn_set_write(int f, int s)
+{
+  int r;
+  kdata data;
+
+  while(r = read(f, data.data.data, sizeof(data.data.data))){
+    if(r == -1){
+      printf("error: %s\n", strerror(errno));
+      break;
     }
-    data.head.size = 0;
+    data.head.ver  = PROTOCOL_VERSION;
+    data.head.size = r;
     data.head.type = MTNCMD_DATA;
     r = send_stream(s, &data);
+    if(r == -1){
+      printf("error: %s\n", strerror(errno));
+      break;
+    }
   }
-  if(f){
+  data.head.ver  = PROTOCOL_VERSION;
+  data.head.size = 0;
+  data.head.type = MTNCMD_DATA;
+  r = send_stream(s, &data);
+}
+
+int mtn_set_close(int f, int s)
+{
+  kdata data;
+  if(f > 0){
     close(f);
+  }
+  if(s < 0){
+    return(0);
   }
   if(recv_stream(s, &data, sizeof(data.head))){
     printf("error: can't recv result data\n");
@@ -293,25 +398,153 @@ int mtn_set(char *save_path, char *file_path)
     if(recv_stream(s, data.data.data, data.head.size)){
       printf("error: can't recv result data\n");
     }else{
-      if(data.head.type == MTNRES_SUCCESS){
-        printf("OK\n");
-      }else{
+      if(data.head.type == MTNRES_ERROR){
         memcpy(&errno, data.data.data, sizeof(errno)); 
         printf("remote error: %s\n", strerror(errno));
       }
     }
   }
   close(s);
-  return(r); 
+  return(0);
+}
+
+int mtn_set(char *save_path, char *file_path)
+{
+  int f = 0;
+  int s = 0;
+  kdata data;
+  kmember *member; 
+  struct stat st;
+
+  member = mtn_choose(save_path);
+  if(member == NULL){
+    printf("error: node not found\n");
+    return(1);
+  }
+
+  f = mtn_set_open(file_path, &st);
+  if(f == -1){
+    printf("error: %s\n", __func__);
+    return(1);
+  }
+
+  s = create_socket(0, SOCK_STREAM);
+  if(s == -1){
+    printf("error: %s\n", __func__);
+    mtn_set_close(f, s);
+    return(1);
+  }
+
+  if(connect(s, &(member->addr.addr.addr), member->addr.len) == -1){
+    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(member->addr.addr.in.sin_addr), ntohs(member->addr.addr.in.sin_port));
+    mtn_set_close(f, s);
+    return(1);
+  }
+  //printf("connect: %s %s (%dM free)\n", member->host, inet_ntoa(member->addr.addr.in.sin_addr), member->free);
+  mtn_set_stat(s, save_path, &st);
+  mtn_set_write(f, s);
+  mtn_set_close(f, s);
+  return(0); 
+}
+
+int mtn_get_open(char *path, kstat *st)
+{
+  int f;
+  if(strcmp("-", path) == 0){
+    f = 0;
+  }else{
+    f = creat(path, st->stat.st_mode);
+    if(f == -1){
+      printf("error: %s %s\n", strerror(errno), path);
+    }
+  }
+  return(f);
+}
+
+int mtn_get_write(int f, int s, char *path)
+{
+  int r;
+  kdata sd;
+  kdata rd;
+  uint8_t *buff;
+  size_t size;
+
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.type = MTNCMD_GET;
+  size = strlen(path) + 1;
+  buff = sd.data.data;
+  memcpy(buff, path, size);
+  sd.head.size += size;
+  send_stream(s, &sd);
+
+  sd.head.size = 0;
+  sd.head.type = MTNRES_SUCCESS;
+  while(is_loop){
+    recv_stream(s, &(rd.head), sizeof(rd.head));
+    if(rd.head.size == 0){
+      break;
+    }else{
+      recv_stream(s, rd.data.data, rd.head.size);
+      write(f, rd.data.data, rd.head.size);
+    }
+  }
+  send_stream(s, &sd);
+  return(0);
+}
+
+int mtn_get_close(int f, int s)
+{
+  if(f > 0){
+    close(f);
+  }
+  if(s > 0){
+    close(s);
+  }
+  return(0);
+}
+
+int mtn_get(char *path, char *file)
+{
+  int f = 0;
+  int s = 0;
+  kstat *st;
+
+  st = mtn_find(path);
+  if(st == NULL){
+    printf("error: node not found\n");
+    return(1);
+  }
+
+  s = create_socket(0, SOCK_STREAM);
+  if(s == -1){
+    printf("error: %s\n", __func__);
+    return(1);
+  }
+
+  if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
+    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    mtn_get_close(f, s);
+    return(1);
+  }
+  //printf("connect: %s %s %s (%dM free)\n", path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  f = mtn_get_open(file, st);
+  if(f == -1){
+    printf("error: %s\n", __func__);
+    return(1);
+  }
+  mtn_get_write(f, s, path);
+  mtn_get_close(f, s);
+  return(0); 
 }
 
 int main(int argc, char *argv[])
 {
   int r;
   int mode;
-  char load_path[1024];
-  char save_path[1024];
-  char file_path[1024];
+  char load_path[PATH_MAX];
+  char save_path[PATH_MAX];
+  char file_path[PATH_MAX];
   struct option opt[8];
   opt[0].name    = "help";
   opt[0].has_arg = 0;
@@ -382,7 +615,7 @@ int main(int argc, char *argv[])
         break;
 
       case 'g':
-        mode = MTNCMD_SET;
+        mode = MTNCMD_GET;
         break;
 
       case 'f':
@@ -394,7 +627,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
   }
-
+  mtn_hello();
   if(mode == MTNCMD_LIST){
     r = mtn_list(argv[optind]);
     exit(r);
@@ -410,7 +643,7 @@ int main(int argc, char *argv[])
   }
   if(mode == MTNCMD_GET){
     if(file_path[0]){
-      r = mtn_get(save_path, file_path);
+      r = mtn_get(argv[optind], file_path);
     }else{
       r = mtn_get(argv[optind], argv[optind]);
     }
