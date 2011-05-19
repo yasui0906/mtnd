@@ -242,7 +242,7 @@ int mtnfs_child_set(int s, kdata *data)
     }
     if(r == 1){
       lprintf(0, "%s: remote close\n", __func__);
-      break;
+      return(1);
     }
     if(rd.head.size == 0){
       struct timeval tv[2];
@@ -274,6 +274,7 @@ int mtnfs_child_set(int s, kdata *data)
     }
   }
   send_stream(s, &sd);
+  return(0);
 }
 
 int mtnfs_child_cmd(int s, kdata *data)
@@ -292,7 +293,7 @@ void mtnfs_child(int s, kaddr *addr)
   int r;
   kdata kd;
 
-  lprintf(0,"accept from %s:%d\n", inet_ntoa(addr->addr.in.sin_addr), ntohs(addr->addr.in.sin_port));
+  lprintf(0,"%s: PID=%d accept from %s:%d\n", __func__, getpid(), inet_ntoa(addr->addr.in.sin_addr), ntohs(addr->addr.in.sin_port));
   while(is_loop){
     r = recv_stream(s, &(kd.head), sizeof(kd.head));
     if(r == -1){
@@ -319,31 +320,38 @@ void mtnfs_child(int s, kaddr *addr)
       break;
     }
   }
-  exit(0);
+  lprintf(0, "%s: PID=%d END\n", __func__, getpid());
 }
 
 void mtnfs_accept_process(int l)
 {
   int s;
+  pid_t pid;
   kaddr addr;
   memset(&addr, 0, sizeof(addr));
   addr.len = sizeof(addr.addr);
-  pid_t pid = fork();
-  if(pid == -1){
-    lprintf(0, "%s: fork error\n", __func__);
-    close(accept(l, &(addr.addr.addr), &(addr.len)));
-    return;
-  }
-  if(pid){
-    return;
-  }
-  //----- child process -----
   s = accept(l, &(addr.addr.addr), &(addr.len));
   if(s == -1){
     lprintf(0, "%s: %s\n", __func__, strerror(errno));
     exit(0);
   }
+
+  pid = fork();
+  if(pid == -1){
+    lprintf(0, "%s: fork error\n", __func__);
+    close(s);
+    return;
+  }
+  if(pid){
+    close(s);
+    return;
+  }
+
+  //----- child process -----
+  lprintf(0, "%s: PID=%d CHILD START\n", __func__, getpid());
   mtnfs_child(s, &addr);
+  close(s);
+  lprintf(0, "%s: PID=%d CHILD END\n", __func__, getpid());
   exit(0);
 }
 
