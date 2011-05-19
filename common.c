@@ -8,52 +8,16 @@ int is_loop = 1;
 koption kopt;
 kmember *members = NULL;
 
-void kinit_option()
+void mtn_init_option()
 {
   memset((void *)&kopt, 0, sizeof(kopt));
   strcpy(kopt.mcast_addr, "224.0.0.110");	
   kopt.mcast_port = 6000;
-}
-
-uint32_t get_freesize(char *path)
-{
-  uint64_t size = 0;
-  struct statvfs vf;
-  if(statvfs(path, &vf) == -1){
-    lprintf(0, "error: %s\n", strerror(errno));
-    return(0);
-  }
-  size = vf.f_bfree * vf.f_bsize;
-  size /= 1024;
-  size /= 1024;
-  return(size);
-}
-
-uint32_t get_datasize(char *path)
-{
-  char full[PATH_MAX];
-  uint64_t size = 0;
-  DIR *d = opendir(path);
-  struct dirent *ent;
-  struct stat st;
-  while(ent = readdir(d)){
-    if(ent->d_name[0] == '.'){
-      continue;
-    }
-    sprintf(full, "%s/%s", path, ent->d_name);
-    if(ent->d_type == DT_DIR){
-      size += get_datasize(full);
-      continue;
-    }
-    if(ent->d_type == DT_REG){
-      stat(full, &st);
-      size += st.st_size;
-    }
-  }
-  closedir(d);
-  size /= 1024;
-  size /= 1024;
-  return(size);
+  kopt.host[0]    = 0;
+  kopt.freesize   = 0;
+  kopt.datasize   = 0;
+  kopt.debuglevel = 0;
+  kopt.max_packet_size = 1024;
 }
 
 int send_readywait(int s)
@@ -104,18 +68,31 @@ int recv_readywait(int s)
 
 int recv_dgram(int s, kdata *data, struct sockaddr *addr, socklen_t *alen)
 {
-  int r = recvfrom(s, data, sizeof(kdata), 0, addr, alen);
-  if(r == -1){
+  int r;
+  while(is_loop){
+    r = recvfrom(s, data, sizeof(kdata), 0, addr, alen);
+    if(r >= 0){
+      break;
+    }
     if(errno == EAGAIN){
       return(-1);
     }
     if(errno == EINTR){
-      return(-1);
-    }else{
-      lprintf(0, "[error] %s: %s recv error\n", __func__, strerror(errno));
-      return(-1);
+      continue;
     }
+    lprintf(0, "[error] %s: %s recv error\n", __func__, strerror(errno));
+    return(-1);
   }
+  if(r < sizeof(khead)){
+    return(-1);
+  }
+  if(data->head.ver != PROTOCOL_VERSION){
+    return(-1);
+  }
+  data->head.size = ntohs(data->head.size);
+  if(r != data->head.size + sizeof(khead)){
+    return(-1);
+  }  
   return(0);
 }
 
@@ -129,9 +106,11 @@ int recv_stream(int s, uint8_t *buff, size_t size)
     r = read(s, buff, size);
     if(r == -1){
       if(errno == EAGAIN){
+        lprintf(0, "[warn] %s: %s\n", __func__, strerror(errno));
         continue;
       }
       if(errno == EINTR){
+        lprintf(0, "[warn] %s: %s\n", __func__, strerror(errno));
         continue;
       }else{
         lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
@@ -187,13 +166,20 @@ int recv_stream_line(int s, uint8_t *buff, size_t size)
 
 int send_dgram(int s, kdata *data, kaddr *addr)
 {
+  kdata sd;
   int size = data->head.size + sizeof(khead);
+  memcpy(&sd, data, size);
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = htons(data->head.size);
   while(send_readywait(s)){
-    int r = sendto(s, data, size, 0, &(addr->addr.addr), addr->len);
+    int r = sendto(s, &sd, size, 0, &(addr->addr.addr), addr->len);
     if(r == size){
       return(0); /* success */
     }
     if(r == -1){
+      if(errno == EAGAIN){
+        continue;
+      }
       if(errno == EINTR){
         continue;
       }
@@ -320,6 +306,10 @@ int create_msocket(int port)
 
 char *mtn_get_v4addr(kaddr *addr)
 {
+  static char *dummy="0.0.0.0";
+  if(!addr){
+    return(dummy);
+  }
   return(inet_ntoa(addr->addr.in.sin_addr));
 }
 
@@ -402,9 +392,26 @@ int mtn_get_int64(uint64_t *val, kdata *kd)
   return(0);
 }
 
+int mtn_get_int(void *val, kdata *kd, int size)
+{
+  switch(size){
+    case 2:
+      return mtn_get_int16(val, kd);
+    case 4:
+      return mtn_get_int32(val, kd);
+    case 8:
+      return mtn_get_int64(val, kd);
+  }
+  return(-1);
+}
+
 int mtn_set_string(uint8_t *str, kdata *kd)
 {
-  uint16_t len = strlen(str) + 1;
+  uint16_t len;
+  if(str == NULL){
+    return(-1);
+  }
+  len = strlen(str) + 1;
   if(kd->head.size + len > MAX_DATASIZE){
     return(-1);
   }
@@ -448,5 +455,18 @@ int mtn_set_int64(uint64_t *val, kdata *kd)
   *(ptr + 1) = htonl(lval);
   kd->head.size += len;
   return(0);
+}
+
+int mtn_set_int(void *val, kdata *kd, int size)
+{
+  switch(size){
+    case 2:
+      return mtn_set_int16(val, kd);
+    case 4:
+      return mtn_set_int32(val, kd);
+    case 8:
+      return mtn_set_int64(val, kd);
+  }
+  return(-1);
 }
 

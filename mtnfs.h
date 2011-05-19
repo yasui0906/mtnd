@@ -4,7 +4,7 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
-#define PACKAGE_VERSION "0.1"
+#define PACKAGE_VERSION "0.2"
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
 #include <stdio.h>
@@ -75,18 +75,6 @@ typedef struct
   void *option;
 }__attribute__((packed)) kdata;
 
-typedef struct
-{
-  int fd;
-  int type;
-  int socket;
-  int h_size;
-  int d_size;
-  kdata data;
-  uint8_t file_name[PATH_MAX];
-  struct stat stat;
-}__attribute__((packed)) kstream;
-
 typedef struct kaddr
 {
   socklen_t len;
@@ -122,6 +110,7 @@ typedef struct
   uint32_t freesize;        // 空容量
   uint32_t datasize;        // 使用量
   uint32_t limitsize;       //
+  uint32_t debuglevel;      //
   uint16_t mcast_port;      //
   uint8_t  mcast_addr[16];  //
   uint8_t  host[64];        //
@@ -133,8 +122,11 @@ extern koption kopt;
 extern kmember *members;
 void lprintf(int l, char *fmt, ...);
 void kinit_option();
+char *mtn_get_v4addr(kaddr *addr);
+/*
 int send_readywait(int s);
 int create_socket(int port, int mode);
 int create_lsocket(int port);
 int create_msocket(int port);
+*/
 

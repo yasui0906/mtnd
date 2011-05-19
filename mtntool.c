@@ -49,6 +49,8 @@ kmember *make_member(uint8_t *host, kaddr *addr)
     member = malloc(sizeof(kmember));
     memset(member, 0, sizeof(kmember));
     memcpy(&(member->addr), addr, sizeof(kaddr));
+    member->next = members;
+    members = member;
   }
   if(host){
     int len = strlen(host) + 1;
@@ -59,12 +61,7 @@ kmember *make_member(uint8_t *host, kaddr *addr)
     memcpy(member->host, host, len);
   }
   member->mark = 0;
-  if(member == members){
-    member->next = NULL;
-  }else{
-    member->next = members;
-  }
-  return(members = member);
+  return(member);
 }
 
 kmember *get_member(kaddr *addr, int mkflag)
@@ -121,17 +118,19 @@ void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
       memset(&addr, 0, sizeof(addr));
       addr.len = sizeof(addr.addr);
       if(recv_dgram(s, &rdata, &(addr.addr.addr), &(addr.len)) == 0){
-        member = get_member(&addr, 1);
-        member->mark = 1;
         mtn(sdata, &rdata, &addr);
-        for(member=members;member;member=member->next){
-          if(member->mark == 0){
-            break;
+        if(sdata->head.type != MTNCMD_HELLO){
+          member = get_member(&addr, 1);
+          member->mark = 1;
+          for(member=members;member;member=member->next){
+            if(member->mark == 0){
+              break;
+            }
           }
-        }
-        if(member == NULL){
-          tv.tv_sec  = 0;
-          tv.tv_usec = 100000;
+          if(member == NULL){
+            tv.tv_sec  = 0;
+            tv.tv_usec = 100000;
+          }
         }
       }
     }
@@ -221,8 +220,9 @@ kstat *mgstat(kstat *krt, kstat *kst)
   kstat *st;
   if(krt){
     for(st=krt;st->next;st=st->next);
-    st->next = kst;
-    kst->prev = st;
+    if(st->next = kst){
+      kst->prev = st;
+    }
   }else{
     krt = kst;
   }
@@ -240,18 +240,10 @@ int mtn_list(char *path)
 {
   kstat *kst;
   kdata data;
-  uint8_t *p;
-  size_t   l;
-
   data.head.type = MTNCMD_LIST;
   data.head.size = 0;
-  if(path){
-    p = data.data.data;
-    l = strlen(path) + 1;
-    memcpy(p, path, l);
-    data.head.size += l;
-    p += l;
-  }
+  data.option    = NULL;
+  mtn_set_string(path, &data);
   mtn_process(&data, (MTNPROCFUNC)mtn_list_process);
   for(kst = data.option;kst;kst=kst->next){
     printf("%s: %s\n", kst->member->host, kst->name);
@@ -589,7 +581,7 @@ int main(int argc, char *argv[])
   load_path[0]=0;
   save_path[0]=0;
   file_path[0]=0;
-  kinit_option();
+  mtn_init_option();
 
   mode = MTNCMD_NONE;
   while((r = getopt_long(argc, argv, "f:sglhvi", opt, NULL)) != -1){
@@ -603,8 +595,8 @@ int main(int argc, char *argv[])
         exit(0);
 
       case 'i':
-        mtn_info();
-        exit(0);
+        mode = MTNCMD_INFO;
+        break;
 
       case 'l':
         mode = MTNCMD_LIST;
@@ -628,6 +620,10 @@ int main(int argc, char *argv[])
     }
   }
   mtn_hello();
+  if(mode == MTNCMD_INFO){
+    mtn_info();
+    exit(0);
+  }
   if(mode == MTNCMD_LIST){
     r = mtn_list(argv[optind]);
     exit(r);

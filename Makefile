@@ -6,7 +6,8 @@ clean:
 	rm -f mtnfs mtntool *.o
 
 sync:
-	rsync -av --exclude='*.swp' --exclude='.git' ../mtnfs adc:LOCAL/
+	rsync -a *.c *.h Makefile adc:LOCAL/mtnfs/
+	ssh adc "cd LOCAL/mtnfs/;make"
 
 install:
 	rsync -a mtnfs   /usr/klab/sbin/mtnfs
