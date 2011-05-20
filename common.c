@@ -332,13 +332,16 @@ int mtn_get_string(uint8_t *str, kdata *kd)
     }
   }
   if(len == size){
-    return(-1);
+    return(0);
   }
   len++;
   size -= len;
-  memcpy(str, buff, len);
-  memmove(buff, buff + len, size);
-  return(0);
+  if(str){
+    memcpy(str, buff, len);
+    memmove(buff, buff + len, size);
+    kd->head.size = size;
+  }
+  return(len);
 }
 
 int mtn_get_int16(uint16_t *val, kdata *kd)
@@ -354,6 +357,7 @@ int mtn_get_int16(uint16_t *val, kdata *kd)
   size -= len;
   *val = ntohs(kd->data.data16);
   memmove(kd->data.data, kd->data.data + len, size);
+  kd->head.size = size;
   return(0);
 }
 
@@ -370,6 +374,7 @@ int mtn_get_int32(uint32_t *val, kdata *kd)
   size -= len;
   *val = ntohl(kd->data.data32);
   memmove(kd->data.data, kd->data.data + len, size);
+  kd->head.size = size;
   return(0);
 }
 
@@ -389,6 +394,7 @@ int mtn_get_int64(uint64_t *val, kdata *kd)
   *val = (hval << 32) | lval;
   size -= len;
   memmove(kd->data.data, kd->data.data + len, size);
+  kd->head.size = size;
   return(0);
 }
 

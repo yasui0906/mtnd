@@ -27,7 +27,6 @@ uint32_t get_freesize()
 {
   uint64_t size = 0;
   struct statvfs vf;
-
   if(kopt.freesize){
     return(kopt.freesize);
   }
@@ -77,7 +76,7 @@ uint32_t get_datasize(char *path)
 
 void mtnfs_list_process(kdata *sdata, kdata *rdata)
 {
-  lprintf(0,"%s: START\n", __func__);
+  //lprintf(0,"%s: START\n", __func__);
   struct stat st;
   struct dirent *ent;
   char path[PATH_MAX];
@@ -122,14 +121,14 @@ void mtnfs_list_process(kdata *sdata, kdata *rdata)
 
 void mtnfs_hello_process(kdata *sdata, kdata *rdata)
 {
-  lprintf(0,"%s: START\n", __func__);
+  //lprintf(0,"%s: START\n", __func__);
   sdata->head.size = strlen(kopt.host) + 1;
   memcpy(sdata->data.data, kopt.host, sdata->head.size);
 }
 
 void mtnfs_info_process(kdata *sdata, kdata *rdata)
 {
-  lprintf(0,"%s: START\n", __func__);
+  //lprintf(1,"%s: START\n", __func__);
   kinfo *info = &(sdata->data.info);
   sdata->head.size = sizeof(kinfo);
   info->free = get_freesize();
@@ -349,6 +348,7 @@ void mtnfs_accept_process(int l)
 
   //----- child process -----
   lprintf(0, "%s: PID=%d CHILD START\n", __func__, getpid());
+  close(l);
   mtnfs_child(s, &addr);
   close(s);
   lprintf(0, "%s: PID=%d CHILD END\n", __func__, getpid());

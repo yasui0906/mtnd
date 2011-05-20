@@ -2,6 +2,9 @@ all: mtnfs.c mtntool.c mtnfs.h
 	gcc -DMODULE_NAME=\"mtntool\" -o mtntool mtntool.c common.c
 	gcc -DMODULE_NAME=\"mtnfs\"   -o mtnfs   mtnfs.c   common.c
 
+fuse: mtnmount.c common.c mtnfs.h
+	gcc -DMODULE_NAME=\"mtnmount\" -lfuse -o mtnmount mtnmount.c common.c
+
 clean:
 	rm -f mtnfs mtntool *.o
 

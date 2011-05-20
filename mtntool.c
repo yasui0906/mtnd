@@ -186,31 +186,23 @@ void rmstat(kstat *kst)
   free(kst);
 }
 
-kstat *mkstat(kaddr *addr, uint8_t *data, size_t size)
+kstat *mkstat(kaddr *addr, kdata *data)
 {
-  size_t len;
-  kstat *kst;
-
-  if(size == 0){
+  kstat *kst = NULL;
+  size_t len = mtn_get_string(NULL, data);
+  if(len == -1){
+    printf("%s: data error\n", __func__);
     return(NULL);
   }
-  kst = malloc(sizeof(kstat));
-  memset(kst, 0, sizeof(kstat));
-  kst->member = get_member(addr, 1);
-
-  len = strlen(data) + 1;
-  if(size < len){
-    printf("error: size miss %s\n", __func__);
-    rmstat(kst);
-    return(NULL);
-  }
-  kst->name = malloc(len);
-  memcpy(kst->name, data, len);
-  data += len;
-  size -= len;
-
-  if(kst->next = mkstat(addr, data, size)){
-    kst->next->prev = kst;
+  if(len){
+    kst = malloc(sizeof(kstat));
+    memset(kst, 0, sizeof(kstat));
+    kst->member = get_member(addr, 1);
+    kst->name = malloc(len);
+    mtn_get_string(kst->name, data);
+    if(kst->next = mkstat(addr, data)){
+      kst->next->prev = kst;
+    }
   }
   return kst;
 }
@@ -232,7 +224,7 @@ kstat *mgstat(kstat *krt, kstat *kst)
 void mtn_list_process(kdata *sdata, kdata *rdata, kaddr *addr)
 {
   kstat *krt = sdata->option;
-  kstat *kst = mkstat(addr, rdata->data.data, rdata->head.size);
+  kstat *kst = mkstat(addr, rdata);
   sdata->option = mgstat(krt, kst);
 }
 
@@ -281,7 +273,7 @@ kmember *mtn_choose(char *path)
 
 void mtn_find_process(kdata *sdata, kdata *rdata, kaddr *addr)
 {
-  sdata->option = mgstat(sdata->option, mkstat(addr, rdata->data.data, rdata->head.size));
+  sdata->option = mgstat(sdata->option, mkstat(addr, rdata));
 }
 
 kstat *mtn_find(char *path)
