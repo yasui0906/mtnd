@@ -1,6 +1,7 @@
 /*
 
 */
+#define FUSE_USE_VERSION 26
 #include "mtnfs.h"
 #include <fuse.h>
 
@@ -66,10 +67,10 @@ static int mtn_write(const char *path, const char *buf, size_t size, off_t offse
 }
 
 static struct fuse_operations mtn_oper = {
-  .getattr    = mtn_getattr,
-  .readdir    = mtn_readdir,
-  .open       = mtn_open,
-  .read       = mtn_read,
+  .getattr = mtn_getattr,
+  .readdir = mtn_readdir,
+  .open    = mtn_open,
+  .read    = mtn_read,
 };
 
 int main(int argc, char *argv[])
