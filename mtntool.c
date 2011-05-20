@@ -239,9 +239,9 @@ int mtn_list(char *path)
 {
   kstat *kst;
   kdata data;
+  uint8_t m[16];
   struct passwd *pw;
   struct group  *gr;
-  uint8_t m[16];
   data.head.type = MTNCMD_LIST;
   data.head.size = 0;
   data.option    = NULL;
