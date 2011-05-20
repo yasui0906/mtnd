@@ -94,9 +94,8 @@ void mtnfs_list_process(kdata *sdata, kdata *rdata)
     return;
   }
   if(S_ISREG(st.st_mode)){
+    mtn_set_string(basename(path), sdata);
     buff = sdata->data.data + sdata->head.size;
-    strcpy(buff, basename(path));
-    sdata->head.size += strlen(buff) + 1;
   }
   if(S_ISDIR(st.st_mode)){
     DIR *d = opendir(path);
@@ -105,15 +104,15 @@ void mtnfs_list_process(kdata *sdata, kdata *rdata)
         continue;
       }
       sprintf(full, "%s/%s", path, ent->d_name);
-      stat(full, &st);
-      if(S_ISDIR(st.st_mode)){
-      }
-      if(S_ISREG(st.st_mode)){
-        printf("name=%s\n", ent->d_name);
-        buff = sdata->data.data + sdata->head.size;
-        strcpy(buff, ent->d_name);
-        sdata->head.size += strlen(buff) + 1;
-      }
+      if(lstat(full, &st) == 0){
+        mtn_set_string(ent->d_name, sdata);
+        mtn_set_int(&(st.st_mode),  sdata, sizeof(st.st_mode));
+        mtn_set_int(&(st.st_size),  sdata, sizeof(st.st_size));
+        mtn_set_int(&(st.st_uid),   sdata, sizeof(st.st_uid));
+        mtn_set_int(&(st.st_gid),   sdata, sizeof(st.st_gid));
+        mtn_set_int(&(st.st_atime), sdata, sizeof(st.st_atime));
+        mtn_set_int(&(st.st_mtime), sdata, sizeof(st.st_mtime));
+      } 
     }
     closedir(d);
   }

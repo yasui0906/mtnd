@@ -194,15 +194,22 @@ kstat *mkstat(kaddr *addr, kdata *data)
     printf("%s: data error\n", __func__);
     return(NULL);
   }
-  if(len){
-    kst = malloc(sizeof(kstat));
-    memset(kst, 0, sizeof(kstat));
-    kst->member = get_member(addr, 1);
-    kst->name = malloc(len);
-    mtn_get_string(kst->name, data);
-    if(kst->next = mkstat(addr, data)){
-      kst->next->prev = kst;
-    }
+  if(len == 0){
+    return(NULL);
+  }
+  kst = malloc(sizeof(kstat));
+  memset(kst, 0, sizeof(kstat));
+  kst->member = get_member(addr, 1);
+  kst->name = malloc(len);
+  mtn_get_string(kst->name, data);
+  mtn_get_int(&(kst->stat.st_mode),  data, sizeof(kst->stat.st_mode));
+  mtn_get_int(&(kst->stat.st_size),  data, sizeof(kst->stat.st_size));
+  mtn_get_int(&(kst->stat.st_uid),   data, sizeof(kst->stat.st_uid));
+  mtn_get_int(&(kst->stat.st_gid),   data, sizeof(kst->stat.st_gid));
+  mtn_get_int(&(kst->stat.st_atime), data, sizeof(kst->stat.st_atime));
+  mtn_get_int(&(kst->stat.st_mtime), data, sizeof(kst->stat.st_mtime));
+  if(kst->next = mkstat(addr, data)){
+    kst->next->prev = kst;
   }
   return kst;
 }
@@ -232,13 +239,19 @@ int mtn_list(char *path)
 {
   kstat *kst;
   kdata data;
+  struct passwd *pw;
+  struct group  *gr;
+  uint8_t m[16];
   data.head.type = MTNCMD_LIST;
   data.head.size = 0;
   data.option    = NULL;
   mtn_set_string(path, &data);
   mtn_process(&data, (MTNPROCFUNC)mtn_list_process);
   for(kst = data.option;kst;kst=kst->next){
-    printf("%s: %s\n", kst->member->host, kst->name);
+    pw = getpwuid(kst->stat.st_uid);
+    gr = getgrgid(kst->stat.st_gid);
+    get_mode_string(m, kst->stat.st_mode);
+    printf("%s: %s %s %s %s\n", kst->member->host, m, pw->pw_name, gr->gr_name, kst->name);
   }
 }
 

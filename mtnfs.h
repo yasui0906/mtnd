@@ -33,6 +33,8 @@
 #include <netdb.h>
 #include <dirent.h>
 #include <libgen.h>
+#include <pwd.h>
+#include <grp.h>
 
 #define MTNRES_SUCCESS  0
 #define MTNRES_ERROR    1

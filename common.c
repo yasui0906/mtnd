@@ -476,3 +476,34 @@ int mtn_set_int(void *val, kdata *kd, int size)
   return(-1);
 }
 
+void get_mode_string(uint8_t *buff, mode_t mode)
+{
+  uint8_t *perm[] = {"---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"};
+  if(S_ISREG(mode)){
+    *(buff++) = '-';
+  }else if(S_ISDIR(mode)){
+    *(buff++) = 'd';
+  }else if(S_ISCHR(mode)){
+    *(buff++) = 'c';
+  }else if(S_ISBLK(mode)){
+    *(buff++) = 'b';
+  }else if(S_ISFIFO(mode)){
+    *(buff++) = 'p';
+  }else if(S_ISLNK(mode)){
+    *(buff++) = 'l';
+  }else if(S_ISSOCK(mode)){
+    *(buff++) = 's';
+  }
+  int m;
+  m = (mode >> 6) & 7;
+  strcpy(buff, perm[m]);
+  buff += 3;
+  m = (mode >> 3) & 7;
+  strcpy(buff, perm[m]);
+  buff += 3;
+  m = (mode >> 0) & 7;
+  strcpy(buff, perm[m]);
+  buff += 3;
+  *buff = 0;
+}
+
