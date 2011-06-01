@@ -60,6 +60,7 @@
 #define PROTOCOL_VERSION 1
 #define MAX_DATASIZE 32768
 
+
 typedef struct
 {
   uint8_t  ver;
@@ -123,6 +124,14 @@ typedef struct ktask
   struct ktask *next;
 }__attribute__((packed)) ktask;
 
+typedef struct kdir
+{
+  char path[PATH_MAX];
+  struct kstat *kst;
+  struct kdir *prev;
+  struct kdir *next;
+}__attribute__((packed)) kdir;
+
 typedef struct
 {
   uint16_t max_packet_size; // 1パケットに格納する最大サイズ
@@ -138,12 +147,15 @@ typedef struct
   ktask   *task;            //
 }__attribute__((packed)) koption;
 
+
 extern int is_loop;
 extern koption kopt;
 extern kmember *members;
 void lprintf(int l, char *fmt, ...);
 void kinit_option();
 char *mtn_get_v4addr(kaddr *addr);
+kstat *mtn_list(const char *path);
+kdir *mkkdir(const char *, kstat *, kdir *);
 /*
 int send_readywait(int s);
 int create_socket(int port, int mode);

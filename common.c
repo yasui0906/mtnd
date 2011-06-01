@@ -3,6 +3,9 @@
  * Copyright (C) 2011 KLab Inc.
  */
 #include "mtnfs.h"
+typedef void (*MTNPROCFUNC)(kdata *send, kdata *recv, kaddr *addr);
+kmember *make_member(uint8_t *host, kaddr *addr);
+kmember *get_member(kaddr *addr, int mkflag);
 
 int is_loop = 1;
 koption kopt;
@@ -532,3 +535,564 @@ void get_mode_string(uint8_t *buff, mode_t mode)
   buff += 3;
   *buff = 0;
 }
+
+void clear_members()
+{
+  kmember *member;
+  while(members){
+    member  = members;
+    members = members->next;
+    if(member->host){
+      free(member->host);
+    }
+    free(member);
+  }
+}
+
+kmember *make_member(uint8_t *host, kaddr *addr)
+{
+  kmember *member = get_member(addr, 0);
+  if(member == NULL){
+    member = malloc(sizeof(kmember));
+    memset(member, 0, sizeof(kmember));
+    memcpy(&(member->addr), addr, sizeof(kaddr));
+    member->next = members;
+    members = member;
+  }
+  if(host){
+    int len = strlen(host) + 1;
+    if(member->host){
+      free(member->host);
+    }
+    member->host = malloc(len);
+    memcpy(member->host, host, len);
+  }
+  member->mark = 0;
+  return(member);
+}
+
+kmember *get_member(kaddr *addr, int mkflag)
+{
+  kmember *member;
+  for(member=members;member;member=member->next){
+    if(memcmp(addr, &(member->addr), sizeof(kaddr)) == 0){
+      return(member);
+    }
+  }
+  if(mkflag){
+    return(make_member(NULL, addr));
+  }
+  return(NULL);
+}
+
+void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
+{
+  int r;
+  kaddr addr;
+  kdata rdata;
+  fd_set fds;
+  struct timeval tv;
+  kmember *member;
+
+  int s= create_socket(0, SOCK_DGRAM);
+  addr.len                     = sizeof(struct sockaddr_in);
+  addr.addr.in.sin_family      = AF_INET;
+  addr.addr.in.sin_port        = htons(kopt.mcast_port);
+  addr.addr.in.sin_addr.s_addr = inet_addr(kopt.mcast_addr);
+  sdata->head.ver              = PROTOCOL_VERSION;
+  send_dgram(s, sdata, &addr);
+
+  tv.tv_sec  = 5;
+  tv.tv_usec = 0;
+  while(is_loop){
+    FD_ZERO(&fds);
+    FD_SET(s, &fds);
+    r = select(1024, &fds, NULL,  NULL, &tv);
+    if(sdata->head.type == MTNCMD_HELLO){
+      tv.tv_sec  = 0;
+      tv.tv_usec = 100000;
+    }else{
+      tv.tv_sec  = 5;
+      tv.tv_usec = 0;
+    }
+    if(r == 0){
+      break;
+    }
+    if(r == -1){
+      continue; /* error */
+    }
+    if(FD_ISSET(s, &fds)){
+      memset(&addr, 0, sizeof(addr));
+      addr.len = sizeof(addr.addr);
+      if(recv_dgram(s, &rdata, &(addr.addr.addr), &(addr.len)) == 0){
+        mtn(sdata, &rdata, &addr);
+        if(sdata->head.type != MTNCMD_HELLO){
+          member = get_member(&addr, 1);
+          if(rdata.head.fin){
+            member->mark = 1;
+            for(member=members;member;member=member->next){
+              if(member->mark == 0){
+                break;
+              }
+            }
+            if(member == NULL){
+              tv.tv_sec  = 0;
+              tv.tv_usec = 100000;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void mtn_hello_process(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  uint8_t host[1024];
+  if(mtn_get_string(host, rdata) == -1){
+    lprintf(0, "%s: mtn get error\n", __func__);
+    return;
+  }
+  make_member(host, addr);
+}
+
+void mtn_hello()
+{
+  kdata data;
+  clear_members();
+  data.head.type = MTNCMD_HELLO;
+  data.head.size = 0;
+  mtn_process(&data, (MTNPROCFUNC)mtn_hello_process);
+}
+
+void mtn_info_process(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  kmember *member = get_member(addr, 1);
+  mtn_get_int(&(member->free), rdata, sizeof(member->free));
+  printf("%s (%uM Free)\n", member->host, member->free);
+}
+
+void mtn_info()
+{
+  kdata data;
+  data.head.type = MTNCMD_INFO;
+  data.head.size = 0;
+  mtn_process(&data, (MTNPROCFUNC)mtn_info_process);
+}
+
+void rmkdir(kdir *kd)
+{
+  if(!kd){
+    return;
+  }
+  if(kd->next){
+    rmkdir(kd->next);
+    kd->next = NULL;
+  }
+  free(kd);
+}
+
+kdir *mkkdir(const char *path, kstat *ks, kdir *kd)
+{
+  kdir *nd = malloc(sizeof(kdir));
+  strcpy(nd->path, path);
+  nd->kst  = ks;
+  if(nd->next = kd){
+    kd->prev = nd;
+  }
+  return(nd);
+}
+
+void rmstat(kstat *kst)
+{
+  if(!kst){
+    return;
+  }
+  if(kst->next){
+    rmstat(kst->next);
+    kst->next = NULL;
+  }
+  if(kst->name){
+    free(kst->name);
+    kst->name = NULL;
+  }
+  free(kst);
+}
+
+kstat *mkstat(kaddr *addr, kdata *data)
+{
+  char   buff[256];
+  struct passwd *pw;
+  struct group  *gr;
+  kstat *kst = NULL;
+  size_t len = mtn_get_string(NULL, data);
+  if(len == -1){
+    printf("%s: data error\n", __func__);
+    return(NULL);
+  }
+  if(len == 0){
+    return(NULL);
+  }
+  kst = malloc(sizeof(kstat));
+  memset(kst, 0, sizeof(kstat));
+  kst->member = get_member(addr, 1);
+  kst->name = malloc(len);
+  mtn_get_string(kst->name, data);
+  mtn_get_int(&(kst->stat.st_mode),  data, sizeof(kst->stat.st_mode));
+  mtn_get_int(&(kst->stat.st_size),  data, sizeof(kst->stat.st_size));
+  mtn_get_int(&(kst->stat.st_uid),   data, sizeof(kst->stat.st_uid));
+  mtn_get_int(&(kst->stat.st_gid),   data, sizeof(kst->stat.st_gid));
+  mtn_get_int(&(kst->stat.st_atime), data, sizeof(kst->stat.st_atime));
+  mtn_get_int(&(kst->stat.st_mtime), data, sizeof(kst->stat.st_mtime));
+
+  len = strlen(kst->member->host);
+  if(kopt.field_size[0] < len){
+    kopt.field_size[0] = len;
+  }
+
+  if(pw = getpwuid(kst->stat.st_uid)){
+    strcpy(buff, pw->pw_name);
+  }else{
+    sprintf(buff, "%d", kst->stat.st_uid);
+  }  
+  len = strlen(buff);
+  if(kopt.field_size[1] < len){
+    kopt.field_size[1] = len;
+  }
+
+  if(gr = getgrgid(kst->stat.st_gid)){
+    strcpy(buff, gr->gr_name);
+  }else{
+    sprintf(buff, "%d", kst->stat.st_uid);
+  }  
+  len = strlen(buff);
+  if(kopt.field_size[2] < len){
+    kopt.field_size[2] = len;
+  }
+
+  sprintf(buff, "%llu", kst->stat.st_size);
+  len = strlen(buff);
+  if(kopt.field_size[3] < len){
+    kopt.field_size[3] = len;
+  }
+  if(kst->next = mkstat(addr, data)){
+    kst->next->prev = kst;
+  }
+  return kst;
+}
+
+kstat *mgstat(kstat *krt, kstat *kst)
+{
+  kstat *st;
+  if(krt){
+    for(st=krt;st->next;st=st->next);
+    if(st->next = kst){
+      kst->prev = st;
+    }
+  }else{
+    krt = kst;
+  }
+  return krt;
+}
+
+void mtn_list_process(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  kstat *krt = sdata->option;
+  kstat *kst = mkstat(addr, rdata);
+  sdata->option = mgstat(krt, kst);
+}
+
+kstat *mtn_list(const char *path)
+{
+  kdata data;
+  data.head.type = MTNCMD_LIST;
+  data.head.size = 0;
+  data.option    = NULL;
+  mtn_set_string((uint8_t *)path, &data);
+  kopt.field_size[0] = 1;
+  kopt.field_size[1] = 1;
+  kopt.field_size[2] = 1;
+  kopt.field_size[3] = 1;
+  mtn_process(&data, (MTNPROCFUNC)mtn_list_process);
+  return(data.option);
+}
+
+void mtn_choose_info(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  kmember *choose = sdata->option;
+  kmember *member = get_member(addr, 1);
+  mtn_get_int(&(member->free), rdata, sizeof(member->free));
+  if(choose == NULL){
+    sdata->option = member;
+  }else{
+    if(member->free > choose->free){
+      sdata->option = member;
+    }
+  }
+}
+
+void mtn_choose_list(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+}
+
+kmember *mtn_choose(char *path)
+{
+  kdata data;
+  data.head.type = MTNCMD_INFO;
+  data.head.size = 0;
+  data.option    = NULL;
+  mtn_process(&data, (MTNPROCFUNC)mtn_choose_info);
+  return(data.option);
+}
+
+void mtn_find_process(kdata *sdata, kdata *rdata, kaddr *addr)
+{
+  sdata->option = mgstat(sdata->option, mkstat(addr, rdata));
+}
+
+kstat *mtn_find(char *path)
+{
+  kdata data;
+  data.option    = NULL;
+  data.head.type = MTNCMD_LIST;
+  data.head.size = strlen(path) + 1;
+  strcpy(data.data.data, path);
+  mtn_process(&data, (MTNPROCFUNC)mtn_find_process);
+  return(data.option);
+}
+
+int mtntool_set_open(char *path, struct stat *st)
+{
+  int f;
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  if(strcmp("-", path) == 0){
+    st->st_uid   = getuid();
+    st->st_gid   = getgid();
+    st->st_mode  = 0640;
+    st->st_atime = tv.tv_sec;
+    st->st_mtime = tv.tv_sec;
+  }else{
+    f = open(path, O_RDONLY);
+    if(f == -1){
+      printf("error: %s %s\n", strerror(errno), path);
+      return(-1);
+    }
+    fstat(f, st);
+  }
+  return(f);
+}
+
+int mtntool_set_stat(int s, char *path, struct stat *st)
+{
+  uint8_t *p;
+  size_t   l;
+  kdata data;
+
+  data.head.ver  = PROTOCOL_VERSION;
+  data.head.size = 0;
+  data.head.type = MTNCMD_SET;
+
+  p = data.data.data;
+  l = strlen(path) + 1;
+  strcpy(p, path);
+  data.head.size += l;
+  p += l;
+
+  l = sizeof(mode_t);
+  *((mode_t *)p) = htons(st->st_mode);
+  data.head.size += l;
+  p += l;
+
+  l = sizeof(uint32_t);
+  *((uint32_t *)p) = htonl((uint32_t)st->st_ctime);
+  data.head.size += l;
+  p += l;
+
+  *((uint32_t *)p) = htonl((uint32_t)st->st_mtime);
+  data.head.size += l;
+  p += l;
+
+  send_stream(s, &data);
+}
+
+int mtntool_set_write(int f, int s)
+{
+  int r;
+  kdata data;
+
+  while(r = read(f, data.data.data, sizeof(data.data.data))){
+    if(r == -1){
+      printf("error: %s\n", strerror(errno));
+      break;
+    }
+    data.head.ver  = PROTOCOL_VERSION;
+    data.head.size = r;
+    data.head.type = MTNCMD_DATA;
+    r = send_stream(s, &data);
+    if(r == -1){
+      printf("error: %s\n", strerror(errno));
+      break;
+    }
+  }
+  data.head.ver  = PROTOCOL_VERSION;
+  data.head.size = 0;
+  data.head.type = MTNCMD_DATA;
+  r = send_stream(s, &data);
+}
+
+int mtntool_set_close(int f, int s)
+{
+  kdata data;
+  if(f > 0){
+    close(f);
+  }
+  if(s < 0){
+    return(0);
+  }
+  if(recv_stream(s, (uint8_t *)&data, sizeof(data.head))){
+    printf("error: can't recv result data\n");
+  }else{
+    if(recv_stream(s, data.data.data, data.head.size)){
+      printf("error: can't recv result data\n");
+    }else{
+      if(data.head.type == MTNRES_ERROR){
+        memcpy(&errno, data.data.data, sizeof(errno)); 
+        printf("remote error: %s\n", strerror(errno));
+      }
+    }
+  }
+  close(s);
+  return(0);
+}
+
+int mtntool_set(char *save_path, char *file_path)
+{
+  int f = 0;
+  int s = 0;
+  kdata data;
+  kmember *member; 
+  struct stat st;
+
+  member = mtn_choose(save_path);
+  if(member == NULL){
+    printf("error: node not found\n");
+    return(1);
+  }
+
+  f = mtntool_set_open(file_path, &st);
+  if(f == -1){
+    printf("error: %s\n", __func__);
+    return(1);
+  }
+
+  s = create_socket(0, SOCK_STREAM);
+  if(s == -1){
+    printf("error: %s\n", __func__);
+    mtntool_set_close(f, s);
+    return(1);
+  }
+
+  if(connect(s, &(member->addr.addr.addr), member->addr.len) == -1){
+    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(member->addr.addr.in.sin_addr), ntohs(member->addr.addr.in.sin_port));
+    mtntool_set_close(f, s);
+    return(1);
+  }
+  //printf("connect: %s %s (%dM free)\n", member->host, inet_ntoa(member->addr.addr.in.sin_addr), member->free);
+  mtntool_set_stat(s, save_path, &st);
+  mtntool_set_write(f, s);
+  mtntool_set_close(f, s);
+  return(0); 
+}
+
+int mtntool_get_open(char *path, kstat *st)
+{
+  int f;
+  if(strcmp("-", path) == 0){
+    f = 0;
+  }else{
+    f = creat(path, st->stat.st_mode);
+    if(f == -1){
+      printf("error: %s %s\n", strerror(errno), path);
+    }
+  }
+  return(f);
+}
+
+int mtntool_get_write(int f, int s, char *path)
+{
+  int r;
+  kdata sd;
+  kdata rd;
+  uint8_t *buff;
+  size_t size;
+
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.type = MTNCMD_GET;
+  size = strlen(path) + 1;
+  buff = sd.data.data;
+  memcpy(buff, path, size);
+  sd.head.size += size;
+  send_stream(s, &sd);
+
+  sd.head.size = 0;
+  sd.head.type = MTNRES_SUCCESS;
+  while(is_loop){
+    recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
+    if(rd.head.size == 0){
+      break;
+    }else{
+      recv_stream(s, rd.data.data, rd.head.size);
+      write(f, rd.data.data, rd.head.size);
+    }
+  }
+  send_stream(s, &sd);
+  return(0);
+}
+
+int mtntool_get_close(int f, int s)
+{
+  if(f > 0){
+    close(f);
+  }
+  if(s > 0){
+    close(s);
+  }
+  return(0);
+}
+
+int mtntool_get(char *path, char *file)
+{
+  int f = 0;
+  int s = 0;
+  kstat *st;
+
+  st = mtn_find(path);
+  if(st == NULL){
+    printf("error: node not found\n");
+    return(1);
+  }
+
+  s = create_socket(0, SOCK_STREAM);
+  if(s == -1){
+    printf("error: %s\n", __func__);
+    return(1);
+  }
+
+  if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
+    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    mtntool_get_close(f, s);
+    return(1);
+  }
+  //printf("connect: %s %s %s (%dM free)\n", path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  f = mtntool_get_open(file, st);
+  if(f == -1){
+    printf("error: %s\n", __func__);
+    return(1);
+  }
+  mtntool_get_write(f, s, path);
+  mtntool_get_close(f, s);
+  return(0); 
+}
+

@@ -77,6 +77,24 @@ uint32_t get_datasize(char *path)
   return(size);
 }
 
+char *mtnfs_fix_path(char *path){
+  char buff[PATH_MAX];
+  strcpy(buff, path);
+  if(buff[0] == '/'){
+    strcpy(path, buff + 1);
+    return mtnfs_fix_path(path);
+  }
+  if(memcmp(buff, "./", 2) == 0){
+    strcpy(path, buff + 2);
+    return mtnfs_fix_path(path);
+  }
+  if(memcmp(buff, "../", 3) == 0){
+    strcpy(path, buff + 3);
+    return mtnfs_fix_path(path);
+  }
+  return(path);
+}
+
 ktask *mtnfs_task_create(kdata *data, kaddr *addr)
 {
   ktask *kt = malloc(sizeof(ktask));
@@ -138,6 +156,7 @@ static int mtnfs_list_process(int s, ktask *kt)
   uint16_t len;
   struct stat st;
   struct dirent *ent;
+  char buff[PATH_MAX];
   char full[PATH_MAX];
 
   if(kt->dir){
@@ -168,18 +187,20 @@ static int mtnfs_list_process(int s, ktask *kt)
   }
 
   kt->send.head.size = 0;
-  if(kt->recv.head.size){
-    sprintf(kt->path, "./%s", kt->recv.data.data);
-  }else{
-    strcpy(kt->path, "./");
-  }
-  if(stat(kt->path, &st) == -1){
+  mtn_get_string(buff, &(kt->recv));
+  mtnfs_fix_path(buff);
+  sprintf(kt->path, "./%s", buff);
+
+  if(lstat(kt->path, &st) == -1){
     lprintf(0, "%s: %s %s\n", __func__, strerror(errno), kt->path);
+    kt->send.head.fin = 1;
+    send_dgram(s, &(kt->send), &(kt->addr));
     return(1);
   }
   if(S_ISREG(st.st_mode)){
     mtn_set_string(basename(kt->path), &(kt->send));
     mtn_set_stat(&st, &(kt->send));
+    kt->send.head.fin = 1;
     send_dgram(s, &(kt->send), &(kt->addr));
     return(1);
   }
