@@ -247,73 +247,52 @@ void mtnfs_task_process(int s)
   }
 }
 
-int mtnfs_child_get(int s, kdata *data)
+int mtnfs_child_get(int s, ktask *kt)
 {
   int r;
   int f;
-  kdata sd;
-  kdata rd;
   struct stat st;
-  uint8_t path[PATH_MAX];
-  uint8_t *buff = data->data.data;
-  size_t   size = data->head.size;
 
-  sd.head.ver  = PROTOCOL_VERSION;
-  sd.head.type = MTNRES_SUCCESS;
-  sd.head.size = 0;
+  kt->send.head.ver  = PROTOCOL_VERSION;
+  kt->send.head.type = MTNRES_SUCCESS;
+  kt->send.head.size = 0;
 
-  strcpy(path, buff);
-  buff += strlen(path) + 1;
-  lprintf(0,"get: %s\n", path);
-
-  f = open(path, O_RDONLY);
+  mtn_get_string(kt->path, &(kt->recv));
+  lprintf(0,"get: %s\n", kt->path);
+  f = open(kt->path, O_RDONLY);
   while(is_loop){
-    sd.head.size = read(f, sd.data.data, sizeof(sd.data.data));
-    send_stream(s, &sd);
-    if(sd.head.size == 0){
+    kt->send.head.size = read(f, kt->send.data.data, sizeof(kt->send.data.data));
+    send_stream(s, &(kt->send));
+    if(kt->send.head.size == 0){
       break;
     }
   }
   close(f);
 }
 
-int mtnfs_child_set(int s, kdata *data)
+int mtnfs_child_set(int s, ktask *kt)
 {
   int r;
   int f;
-  kdata sd;
-  kdata rd;
   struct stat st;
-  uint8_t path[PATH_MAX];
-  uint8_t *buff = data->data.data;
-  size_t size;
 
-  sd.head.ver  = PROTOCOL_VERSION;
-  sd.head.type = MTNRES_SUCCESS;
-  sd.head.size = 0;
+  kt->send.head.ver  = PROTOCOL_VERSION;
+  kt->send.head.type = MTNRES_SUCCESS;
+  kt->send.head.size = 0;
 
-  strcpy(path, buff);
-  buff += strlen(path) + 1;
-  size = sizeof(mode_t);
-  st.st_mode = ntohs(*(mode_t *)buff);
-  buff += size;
-  size = sizeof(time_t);
-  st.st_atime = ntohl(*(time_t *)buff);
-  st.st_mtime = ntohl(*(time_t *)buff);
-  buff += size;
-
-  lprintf(0,"set: %s\n", path);
-  f= creat(path, st.st_mode);
+  mtn_get_string(kt->path, &(kt->recv));
+  mtn_get_stat(&st, &(kt->recv));
+  lprintf(0,"set: %s\n", kt->path);
+  f= creat(kt->path, st.st_mode);
   if(f == -1){
-    sd.head.type = MTNRES_ERROR;
-    sd.head.size = sizeof(errno);
-    memcpy(sd.data.data, &errno, sizeof(errno));
-    send_stream(s, &sd);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    send_stream(s, &(kt->send));
     exit(0);
   }
   
   while(is_loop){
-    r = recv_stream(s, &(rd.head), sizeof(rd.head));
+    r = recv_stream(s, &(kt->recv.head), sizeof(kt->recv.head));
     if(r == -1){
       lprintf(0, "%s: head recv error\n", __func__);
       break;
@@ -322,7 +301,7 @@ int mtnfs_child_set(int s, kdata *data)
       lprintf(0, "%s: remote close\n", __func__);
       return(1);
     }
-    if(rd.head.size == 0){
+    if(kt->recv.head.size == 0){
       struct timeval tv[2];
       tv[0].tv_sec  = st.st_atime;
       tv[0].tv_usec = 0;
@@ -332,7 +311,7 @@ int mtnfs_child_set(int s, kdata *data)
       close(f);
       break;
     }else{
-      r = recv_stream(s, rd.data.data, rd.head.size);
+      r = recv_stream(s, kt->recv.data.data, kt->recv.head.size);
       if(r == -1){
         lprintf(0, "%s: data recv error\n", __func__);
         break;
@@ -341,39 +320,116 @@ int mtnfs_child_set(int s, kdata *data)
         lprintf(0, "%s: data recv error(remote close)\n", __func__);
         break;
       }
-      r = write(f, rd.data.data, rd.head.size);
+      r = write(f, kt->recv.data.data, kt->recv.head.size);
       if(r == -1){
         printf("error: %s\n", strerror(errno));
-        sd.head.type = MTNRES_ERROR;
-        sd.head.size = sizeof(errno);
-        memcpy(sd.data.data, &errno, sizeof(errno));
+        kt->send.head.type = MTNRES_ERROR;
+        mtn_set_int(&errno, &(kt->send), sizeof(errno));
         break;
       }
     }
   }
-  send_stream(s, &sd);
+  send_stream(s, &(kt->send));
   return(0);
 }
 
-int mtnfs_child_cmd(int s, kdata *data)
+int mtnfs_child_open(int s, ktask *kt)
 {
-  switch(data->head.type){
-    case MTNCMD_SET:
-      return(mtnfs_child_set(s, data));
-    case MTNCMD_GET:
-      return(mtnfs_child_get(s, data));
+  int flags;
+  kt->send.head.ver = PROTOCOL_VERSION;
+  mtn_get_string(kt->path, &(kt->recv));
+  mtn_get_int(&flags, &(kt->recv), sizeof(flags));
+  mtnfs_fix_path(kt->path);
+  kt->fd = open(kt->path, flags);
+  if(kt->fd == -1){
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    lprintf(0, "%s: NG path=%s\n", __func__, kt->path);
+  }else{
+    kt->send.head.type = MTNRES_SUCCESS;
+    kt->send.head.size = 0;
+    lprintf(0, "%s: OK path=%s\n", __func__, kt->path);
   }
+  send_stream(s, &(kt->send));
+  return(0);
+}
+
+int mtnfs_child_read(int s, ktask *kt)
+{
+  int r;
+  size_t  size;
+  off_t offset;
+  kt->send.head.ver  = PROTOCOL_VERSION;
+  kt->send.head.type = MTNRES_SUCCESS;
+  kt->send.head.size = 0;
+
+  mtn_get_int(&size,   &(kt->recv), sizeof(size));
+  mtn_get_int(&offset, &(kt->recv), sizeof(offset));
+  lprintf(0, "%s: path=%s size=%d off=%llu\n", __func__, kt->path, size, offset);
+
+  lseek(kt->fd, offset, SEEK_SET);
+  while(size){
+    if(size < MAX_DATASIZE){
+      r = read(kt->fd, kt->send.data.data, size);
+    }else{
+      r = read(kt->fd, kt->send.data.data, MAX_DATASIZE);
+    }
+    lprintf(0, "%s: read=%d\n", __func__, r);
+    if(r == 0){
+      break;
+    }
+    if(r == -1){
+      break;
+    }
+    size -= r;
+    kt->send.head.fin  = 0;
+    kt->send.head.size = r;
+    send_stream(s, &(kt->send));
+  }
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  send_stream(s, &(kt->send));
+  return(0);
+}
+
+int mtnfs_child_write(int s, ktask *kt)
+{
+  kt->send.head.ver  = PROTOCOL_VERSION;
+  kt->send.head.type = MTNRES_SUCCESS;
+  kt->send.head.size = 0;
+
+  send_stream(s, &(kt->send));
+  return(0);
+}
+
+int mtnfs_child_close(int s, ktask *kt)
+{
+  kt->send.head.ver  = PROTOCOL_VERSION;
+  kt->send.head.type = MTNRES_SUCCESS;
+  kt->send.head.size = 0;
+  if(kt->fd){
+    close(kt->fd);
+    kt->fd = 0;
+  }
+  send_stream(s, &(kt->send));
   return(0);
 }
 
 void mtnfs_child(int s, kaddr *addr)
 {
-  int r;
-  kdata kd;
-
+  ktask kt;
+  MTNFSTASKFUNC call_func;
+  MTNFSTASKFUNC func_list[MTNCMD_MAX];
+  memset(func_list, 0, sizeof(func_list));
+  func_list[MTNCMD_SET]   = mtnfs_child_set;
+  func_list[MTNCMD_GET]   = mtnfs_child_get;
+  func_list[MTNCMD_OPEN]  = mtnfs_child_open;
+  func_list[MTNCMD_READ]  = mtnfs_child_read;
+  func_list[MTNCMD_WRITE] = mtnfs_child_write;
+  func_list[MTNCMD_CLOSE] = mtnfs_child_close;
   lprintf(0,"%s: PID=%d accept from %s:%d\n", __func__, getpid(), inet_ntoa(addr->addr.in.sin_addr), ntohs(addr->addr.in.sin_port));
   while(is_loop){
-    r = recv_stream(s, &(kd.head), sizeof(kd.head));
+    int r = recv_stream(s, &(kt.recv.head), sizeof(kt.recv.head));
     if(r == -1){
       lprintf(0, "%s: head recv error\n", __func__);
       break;
@@ -382,8 +438,8 @@ void mtnfs_child(int s, kaddr *addr)
       lprintf(0, "%s: remote close\n", __func__);
       break;
     }
-    if(kd.head.size){
-      r = recv_stream(s, kd.data.data, kd.head.size);
+    if(kt.recv.head.size){
+      r = recv_stream(s, kt.recv.data.data, kt.recv.head.size);
       if(r == -1){
         lprintf(0, "%s: data recv error\n", __func__);
         break;
@@ -393,9 +449,11 @@ void mtnfs_child(int s, kaddr *addr)
         break;
       }
     }
-    lprintf(0,"pid=%d type=%d size=%d\n", getpid(), kd.head.type, kd.head.size);
-    if(mtnfs_child_cmd(s, &kd)){
-      break;
+    lprintf(0,"%s: pid=%d type=%d size=%d\n", __func__, getpid(), kt.recv.head.type, kt.recv.head.size);
+    if(call_func = func_list[kt.recv.head.type]){
+      if(call_func(s, &kt)){
+        break;
+      }
     }
   }
   lprintf(0, "%s: PID=%d END\n", __func__, getpid());

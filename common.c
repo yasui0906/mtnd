@@ -11,6 +11,33 @@ int is_loop = 1;
 koption kopt;
 kmember *members = NULL;
 
+void lprintf(int l, char *fmt, ...)
+{
+  va_list arg;
+  struct timeval tv;
+  char b[1024];
+  char d[2048];
+  static char m[2048];
+  strcpy(d, m);
+  va_start(arg, fmt);
+  vsnprintf(b, sizeof(b), fmt, arg);
+  va_end(arg);
+  b[sizeof(b) - 1] = 0;
+  snprintf(m, sizeof(m), "%s%s", d, b);
+  m[sizeof(m) - 1] = 0;
+  m[sizeof(m) - 2] = '\n';
+  if(!strchr(m, '\n')){
+    return;
+  }
+#ifdef MTN_DEBUG
+  gettimeofday(&tv, NULL);
+  fprintf(stderr, "%02d.%06d %s", tv.tv_sec % 60, tv.tv_usec, m);
+#else
+  fprintf(stderr, "%s", m);
+#endif
+  m[0] = 0;
+}
+
 void mtn_init_option()
 {
   memset((void *)&kopt, 0, sizeof(kopt));
@@ -216,33 +243,6 @@ int send_stream(int s, kdata *data)
   return(0);
 }
 
-void lprintf(int l, char *fmt, ...)
-{
-  va_list arg;
-  struct timeval tv;
-  char b[1024];
-  char d[2048];
-  static char m[2048];
-  strcpy(d, m);
-  va_start(arg, fmt);
-  vsnprintf(b, sizeof(b), fmt, arg);
-  va_end(arg);
-  b[sizeof(b) - 1] = 0;
-  snprintf(m, sizeof(m), "%s%s", d, b);
-  m[sizeof(m) - 1] = 0;
-  m[sizeof(m) - 2] = '\n';
-  if(!strchr(m, '\n')){
-    return;
-  }
-#ifdef KFS_DEBUG
-  gettimeofday(&tv, NULL);
-  fprintf(stderr, "%02d.%06d %s", tv.tv_sec % 60, tv.tv_usec, m);
-#else
-  fprintf(stderr, "%s", m);
-#endif
-  m[0] = 0;
-}
-
 int create_socket(int port, int mode)
 {
   int s;
@@ -421,7 +421,9 @@ int mtn_set_string(uint8_t *str, kdata *kd)
 {
   uint16_t len;
   if(str == NULL){
-    return(-1);
+    *(kd->data.data + kd->head.size) = 0;
+    kd->head.size++;
+    return(0);
   }
   len = strlen(str) + 1;
   if(kd){
@@ -493,16 +495,54 @@ int mtn_set_int(void *val, kdata *kd, int size)
 
 int mtn_set_stat(struct stat *st, kdata *kd)
 {
-  int len = 0;
+  int r = 0;
+  int l = 0;
   if(st){
-    len += mtn_set_int(&(st->st_mode),  kd, sizeof(st->st_mode));
-    len += mtn_set_int(&(st->st_size),  kd, sizeof(st->st_size));
-    len += mtn_set_int(&(st->st_uid),   kd, sizeof(st->st_uid));
-    len += mtn_set_int(&(st->st_gid),   kd, sizeof(st->st_gid));
-    len += mtn_set_int(&(st->st_atime), kd, sizeof(st->st_atime));
-    len += mtn_set_int(&(st->st_mtime), kd, sizeof(st->st_mtime));
+    r = mtn_set_int(&(st->st_mode),  kd, sizeof(st->st_mode));
+    if(r == -1){return(-1);}else{l+=r;}
+
+    r = mtn_set_int(&(st->st_size),  kd, sizeof(st->st_size));
+    if(r == -1){return(-1);}else{l+=r;}
+
+    r = mtn_set_int(&(st->st_uid),   kd, sizeof(st->st_uid));
+    if(r == -1){return(-1);}else{l+=r;}
+
+    r = mtn_set_int(&(st->st_gid),   kd, sizeof(st->st_gid));
+    if(r == -1){return(-1);}else{l+=r;}
+
+    r = mtn_set_int(&(st->st_atime), kd, sizeof(st->st_atime));
+    if(r == -1){return(-1);}else{l+=r;}
+
+    r = mtn_set_int(&(st->st_mtime), kd, sizeof(st->st_mtime));
+    if(r == -1){return(-1);}else{l+=r;}
   }
-  return(len);
+  return(l);
+}
+
+int mtn_get_stat(struct stat *st, kdata *kd)
+{
+  if(st && kd){
+    if(mtn_get_int(&(st->st_mode),  kd, sizeof(st->st_mode)) == -1){
+      return(-1);
+    }
+    if(mtn_get_int(&(st->st_size),  kd, sizeof(st->st_size)) == -1){
+      return(-1);
+    }
+    if(mtn_get_int(&(st->st_uid),   kd, sizeof(st->st_uid)) == -1){
+      return(-1);
+    }
+    if(mtn_get_int(&(st->st_gid),   kd, sizeof(st->st_gid)) == -1){
+      return(-1);
+    }
+    if(mtn_get_int(&(st->st_atime), kd, sizeof(st->st_atime)) == -1){
+      return(-1);
+    }
+    if(mtn_get_int(&(st->st_mtime), kd, sizeof(st->st_mtime)) == -1){
+      return(-1);
+    }
+    return(0);
+  }
+  return(-1);
 }
 
 void get_mode_string(uint8_t *buff, mode_t mode)
@@ -737,13 +777,8 @@ kstat *mkstat(kaddr *addr, kdata *data)
   memset(kst, 0, sizeof(kstat));
   kst->member = get_member(addr, 1);
   kst->name = malloc(len);
-  mtn_get_string(kst->name, data);
-  mtn_get_int(&(kst->stat.st_mode),  data, sizeof(kst->stat.st_mode));
-  mtn_get_int(&(kst->stat.st_size),  data, sizeof(kst->stat.st_size));
-  mtn_get_int(&(kst->stat.st_uid),   data, sizeof(kst->stat.st_uid));
-  mtn_get_int(&(kst->stat.st_gid),   data, sizeof(kst->stat.st_gid));
-  mtn_get_int(&(kst->stat.st_atime), data, sizeof(kst->stat.st_atime));
-  mtn_get_int(&(kst->stat.st_mtime), data, sizeof(kst->stat.st_mtime));
+  mtn_get_string(kst->name,  data);
+  mtn_get_stat(&(kst->stat), data);
 
   len = strlen(kst->member->host);
   if(kopt.field_size[0] < len){
@@ -850,7 +885,7 @@ void mtn_find_process(kdata *sdata, kdata *rdata, kaddr *addr)
   sdata->option = mgstat(sdata->option, mkstat(addr, rdata));
 }
 
-kstat *mtn_find(char *path)
+kstat *mtn_find(const char *path)
 {
   kdata data;
   data.option    = NULL;
@@ -885,34 +920,12 @@ int mtntool_set_open(char *path, struct stat *st)
 
 int mtntool_set_stat(int s, char *path, struct stat *st)
 {
-  uint8_t *p;
-  size_t   l;
   kdata data;
-
   data.head.ver  = PROTOCOL_VERSION;
   data.head.size = 0;
   data.head.type = MTNCMD_SET;
-
-  p = data.data.data;
-  l = strlen(path) + 1;
-  strcpy(p, path);
-  data.head.size += l;
-  p += l;
-
-  l = sizeof(mode_t);
-  *((mode_t *)p) = htons(st->st_mode);
-  data.head.size += l;
-  p += l;
-
-  l = sizeof(uint32_t);
-  *((uint32_t *)p) = htonl((uint32_t)st->st_ctime);
-  data.head.size += l;
-  p += l;
-
-  *((uint32_t *)p) = htonl((uint32_t)st->st_mtime);
-  data.head.size += l;
-  p += l;
-
+  mtn_set_string(path, &data);
+  mtn_set_stat(st, &data);
   send_stream(s, &data);
 }
 
@@ -961,6 +974,96 @@ int mtntool_set_close(int f, int s)
         printf("remote error: %s\n", strerror(errno));
       }
     }
+  }
+  close(s);
+  return(0);
+}
+
+int mtn_create(const char *path, int flags, mode_t mode)
+{
+  return(-1);
+}
+
+int mtn_open(const char *path, int flags)
+{
+  int s = 0;
+  kdata  sd;
+  kdata  rd;
+  kstat *st;
+  st = mtn_find(path);
+  if(st == NULL){
+    lprintf(0, "error: node not found\n");
+    errno = EACCES;
+    return(-1);
+  }
+  s = create_socket(0, SOCK_STREAM);
+  if(s == -1){
+    lprintf(0, "error: %s\n", __func__);
+    errno = EACCES;
+    return(-1);
+  }
+  if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
+    lprintf(0, "error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    close(s);
+    errno = EACCES;
+    return(-1);
+  }
+  lprintf(0, "connect: %s %s %s (%dM free)\n", path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.type = MTNCMD_OPEN;
+  mtn_set_string((uint8_t *)path, &sd);
+  mtn_set_int(&flags, &sd, sizeof(flags));
+  send_stream(s, &sd);
+  recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
+  recv_stream(s, rd.data.data, rd.head.size);
+  if(rd.head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, &rd, sizeof(errno));
+    close(s);
+    return(-1);
+  }
+  return(s);
+}
+
+int mtn_read(int s, char *buf, size_t size, off_t offset)
+{
+  int r = 0;
+  kdata  sd;
+  kdata  rd;
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.type = MTNCMD_READ;
+
+  mtn_set_int(&size,   &sd, sizeof(size));
+  mtn_set_int(&offset, &sd, sizeof(offset));
+  send_stream(s, &sd);
+
+  while(is_loop){
+    recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
+    if(rd.head.size == 0){
+      break;
+    }else{
+      recv_stream(s, rd.data.data, rd.head.size);
+      memcpy(buf, rd.data.data, rd.head.size);
+      r   += rd.head.size;
+      buf += rd.head.size;
+    }
+  }
+  sd.head.size = 0;
+  sd.head.type = MTNRES_SUCCESS;
+  send_stream(s, &sd);
+  return(r);
+}
+
+int mtn_write(int s, char *buf, size_t size, off_t offset)
+{
+  return(0);
+}
+
+int mtn_close(int s)
+{
+  if(s == 0){
+    return(0);
   }
   close(s);
   return(0);
@@ -1030,10 +1133,7 @@ int mtntool_get_write(int f, int s, char *path)
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.type = MTNCMD_GET;
-  size = strlen(path) + 1;
-  buff = sd.data.data;
-  memcpy(buff, path, size);
-  sd.head.size += size;
+  mtn_set_string(path, &sd);
   send_stream(s, &sd);
 
   sd.head.size = 0;
