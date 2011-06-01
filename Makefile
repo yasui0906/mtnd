@@ -6,7 +6,7 @@ fuse: mtnmount.c common.c mtnfs.h
 	gcc -DMODULE_NAME=\"mtnmount\" -lfuse -o mtnmount mtnmount.c common.c
 
 clean:
-	rm -f mtnfs mtntool *.o
+	rm -f mtnfs mtntool mtnmount *.o
 
 sync:
 	rsync -a *.c *.h Makefile adc:LOCAL/mtnfs/

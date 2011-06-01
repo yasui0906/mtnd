@@ -49,6 +49,7 @@
 #define MTNCMD_OPEN    10
 #define MTNCMD_READ    11
 #define MTNCMD_WRITE   12
+#define MTNCMD_MAX     99
 
 #define MTNTYPE_STRING  1
 #define MTNTYPE_UINT8   2
@@ -62,21 +63,16 @@
 typedef struct
 {
   uint8_t  ver;
+  uint8_t  fin;
   uint8_t  type;
+  uint8_t  dummy;
   uint16_t size;
 }__attribute__((packed)) khead;
 
-typedef struct
-{
-  uint8_t *host;
-  uint32_t free;
-}__attribute__((packed)) kinfo;
-
-typedef struct
+typedef struct kdata
 {
   khead head;
   union {
-    kinfo    info;
     uint8_t  data8;
     uint16_t data16;
     uint32_t data32;
@@ -115,6 +111,18 @@ typedef struct kstat
   struct kmember *member;
 }__attribute__((packed)) kstat;
 
+typedef struct ktask
+{
+  uint8_t type;
+  DIR *dir;
+  uint8_t path[PATH_MAX];
+  struct kaddr addr;
+  struct kdata send;
+  struct kdata recv;
+  struct ktask *prev;
+  struct ktask *next;
+}__attribute__((packed)) ktask;
+
 typedef struct
 {
   uint16_t max_packet_size; // 1パケットに格納する最大サイズ
@@ -126,6 +134,8 @@ typedef struct
   uint8_t  mcast_addr[16];  //
   uint8_t  host[64];        //
   uint8_t *cwd;             //
+  uint8_t  field_size[4];   // 表示幅
+  ktask   *task;            //
 }__attribute__((packed)) koption;
 
 extern int is_loop;

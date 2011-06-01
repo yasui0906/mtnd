@@ -356,8 +356,9 @@ int mtn_get_int16(uint16_t *val, kdata *kd)
   }
   size -= len;
   *val = ntohs(kd->data.data16);
-  memmove(kd->data.data, kd->data.data + len, size);
-  kd->head.size = size;
+  if(kd->head.size = size){
+    memmove(kd->data.data, kd->data.data + len, size);
+  }
   return(0);
 }
 
@@ -373,8 +374,9 @@ int mtn_get_int32(uint32_t *val, kdata *kd)
   }
   size -= len;
   *val = ntohl(kd->data.data32);
-  memmove(kd->data.data, kd->data.data + len, size);
-  kd->head.size = size;
+  if(kd->head.size = size){
+    memmove(kd->data.data, kd->data.data + len, size);
+  }
   return(0);
 }
 
@@ -388,13 +390,14 @@ int mtn_get_int64(uint64_t *val, kdata *kd)
   if(size < len){
     return(-1);
   }
-  uint32_t *ptr = (uint32_t *)(kd->data.data + kd->head.size);
-  uint64_t hval = (uint64_t)(*(ptr + 0));
-  uint64_t lval = (uint64_t)(*(ptr + 1));
-  *val = (hval << 32) | lval;
   size -= len;
-  memmove(kd->data.data, kd->data.data + len, size);
-  kd->head.size = size;
+  uint32_t *ptr = (uint32_t *)(kd->data.data);
+  uint64_t hval = (uint64_t)(ntohl(*(ptr + 0)));
+  uint64_t lval = (uint64_t)(ntohl(*(ptr + 1)));
+  *val = (hval << 32) | lval;
+  if(kd->head.size = size){
+    memmove(kd->data.data, kd->data.data + len, size);
+  }
   return(0);
 }
 
@@ -418,49 +421,58 @@ int mtn_set_string(uint8_t *str, kdata *kd)
     return(-1);
   }
   len = strlen(str) + 1;
-  if(kd->head.size + len > MAX_DATASIZE){
-    return(-1);
+  if(kd){
+    if(kd->head.size + len > MAX_DATASIZE){
+      return(-1);
+    }
+    memcpy(kd->data.data + kd->head.size, str, len);
+    kd->head.size += len;
   }
-  memcpy(kd->data.data + kd->head.size, str, len);
-  kd->head.size += len;
-  return(0);
+  return(len);
 }
 
 int mtn_set_int16(uint16_t *val, kdata *kd)
 {
   uint16_t len = sizeof(uint16_t);
-  if(kd->head.size + len > MAX_DATASIZE){
-    return(-1);
+  if(kd){
+    if(kd->head.size + len > MAX_DATASIZE){
+      return(-1);
+    }
+    *(uint16_t *)(kd->data.data + kd->head.size) = htons(*val);
+    kd->head.size += len;
   }
-  *(uint16_t *)(kd->data.data + kd->head.size) = htons(*val);
-  kd->head.size += len;
-  return(0);
+  return(len);
 }
 
 int mtn_set_int32(uint32_t *val, kdata *kd)
 {
   uint16_t len = sizeof(uint32_t);
-  if(kd->head.size + len > MAX_DATASIZE){
-    return(-1);
+  if(kd){
+    if(kd->head.size + len > MAX_DATASIZE){
+      return(-1);
+    }
+    *(uint32_t *)(kd->data.data + kd->head.size) = htonl(*val);
+    kd->head.size += len;
   }
-  *(uint32_t *)(kd->data.data + kd->head.size) = htonl(*val);
-  kd->head.size += len;
-  return(0);
+  return(len);
 }
 
 int mtn_set_int64(uint64_t *val, kdata *kd)
 {
+  uint16_t  len = sizeof(uint64_t);
   uint32_t hval = (*val) >> 32;
   uint32_t lval = (*val) & 0xFFFFFFFF;
-  uint32_t *ptr = (uint32_t *)(kd->data.data + kd->head.size);
-  uint16_t  len = sizeof(uint64_t);
-  if(kd->head.size + len > MAX_DATASIZE){
-    return(-1);
+  uint32_t *ptr = NULL;
+  if(kd){
+    ptr = (uint32_t *)(kd->data.data + kd->head.size);
+    if(kd->head.size + len > MAX_DATASIZE){
+      return(-1);
+    }
+    *(ptr + 0) = htonl(hval);
+    *(ptr + 1) = htonl(lval);
+    kd->head.size += len;
   }
-  *(ptr + 0) = htonl(hval);
-  *(ptr + 1) = htonl(lval);
-  kd->head.size += len;
-  return(0);
+  return(len);
 }
 
 int mtn_set_int(void *val, kdata *kd, int size)
@@ -474,6 +486,20 @@ int mtn_set_int(void *val, kdata *kd, int size)
       return mtn_set_int64(val, kd);
   }
   return(-1);
+}
+
+int mtn_set_stat(struct stat *st, kdata *kd)
+{
+  int len = 0;
+  if(st){
+    len += mtn_set_int(&(st->st_mode),  kd, sizeof(st->st_mode));
+    len += mtn_set_int(&(st->st_size),  kd, sizeof(st->st_size));
+    len += mtn_set_int(&(st->st_uid),   kd, sizeof(st->st_uid));
+    len += mtn_set_int(&(st->st_gid),   kd, sizeof(st->st_gid));
+    len += mtn_set_int(&(st->st_atime), kd, sizeof(st->st_atime));
+    len += mtn_set_int(&(st->st_mtime), kd, sizeof(st->st_mtime));
+  }
+  return(len);
 }
 
 void get_mode_string(uint8_t *buff, mode_t mode)
@@ -506,4 +532,3 @@ void get_mode_string(uint8_t *buff, mode_t mode)
   buff += 3;
   *buff = 0;
 }
-

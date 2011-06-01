@@ -8,9 +8,16 @@ static int mtn_getattr(const char *path, struct stat *stbuf)
   memset(stbuf, 0, sizeof(struct stat));
   stbuf->st_mode  = S_IFREG | 0644;
   stbuf->st_nlink = 1;
-  stbuf->st_size  = strlen(0);
-  //res = -ENOENT;
+  stbuf->st_size  = 0;
+  printf("mtn_getattr: path=%s\n", path);
+  res = -ENOENT;
   return res;
+}
+
+static int mtn_readlink(const char *path, char *buff, size_t size)
+{
+  printf("mtn_readlink: path=%s\n", path);
+  return 0;
 }
 
 static int mtn_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
@@ -25,6 +32,7 @@ static int mtn_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
   filler(buf, "..", NULL, 0);
   //filler(buf, hello_path + 1, NULL, 0);
   */
+  printf("mtn_readdir: path=%s\n", path);
   return 0;
 }
 
@@ -64,10 +72,11 @@ static int mtn_write(const char *path, const char *buf, size_t size, off_t offse
 }
 
 static struct fuse_operations mtn_oper = {
-  .getattr = mtn_getattr,
-  .readdir = mtn_readdir,
-  .open    = mtn_open,
-  .read    = mtn_read,
+  .getattr  = mtn_getattr,
+  .readlink = mtn_readlink,
+  .readdir  = mtn_readdir,
+  .open     = mtn_open,
+  .read     = mtn_read,
 };
 
 int main(int argc, char *argv[])

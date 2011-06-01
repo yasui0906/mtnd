@@ -3,6 +3,8 @@
  * Copyright (C) 2011 KLab Inc.
  */
 #include "mtnfs.h"
+typedef int (*MTNFSTASKFUNC)(int, ktask *);
+MTNFSTASKFUNC task_func[MTNCMD_MAX];
 
 void version()
 {
@@ -64,107 +66,164 @@ uint32_t get_datasize(char *path)
     }
     if(S_ISREG(st.st_mode)){
       size += st.st_size;
-      lprintf(0,"%s: file=%s size=%d\n", __func__, full, (int)st.st_size);
+      lprintf(0,"%s: file=%s size=%llu\n", __func__, full, st.st_size);
     }
   }
   closedir(d);
+  lprintf(0,"%s: size1=%u\n",__func__, size);
   size /= 1024;
   size /= 1024;
+  lprintf(0,"%s: size2=%u\n",__func__, size);
   return(size);
 }
 
+ktask *mtnfs_task_create(kdata *data, kaddr *addr)
+{
+  ktask *kt = malloc(sizeof(ktask));
+  memset(kt, 0, sizeof(ktask));
+  memcpy(&(kt->addr), addr, sizeof(kaddr));
+  memcpy(&(kt->recv), data, sizeof(kdata));
+  kt->type = data->head.type;
+  if(kopt.task){
+    kopt.task->prev = kt;
+  }
+  kt->next  = kopt.task;
+  kopt.task = kt;
+  return(kt);
+}
 
-void mtnfs_list_process(kdata *sdata, kdata *rdata)
+ktask *mtnfs_task_delete(ktask *task)
+{
+  ktask *pt = NULL;
+  ktask *nt = NULL;
+  if(!task){
+    return(NULL);
+  }
+  pt = task->prev;
+  nt = task->next;
+  if(pt){
+    pt->next = nt;
+  }
+  if(nt){
+    nt->prev = pt;
+  }
+  if(kopt.task == task){
+    kopt.task = nt;
+  }
+  free(task);
+  return(nt);
+}
+
+static int mtnfs_hello_process(int s, ktask *kt)
 {
   //lprintf(0,"%s: START\n", __func__);
+  mtn_set_string(kopt.host, &(kt->send));
+  send_dgram(s, &(kt->send), &(kt->addr));
+  return(1);
+}
+
+static int mtnfs_info_process(int s, ktask *kt)
+{
+  //lprintf(1,"%s: START\n", __func__);
+  uint32_t size = get_freesize();
+  kt->send.head.fin = 1;
+  mtn_set_int(&size, &(kt->send), sizeof(size));
+  send_dgram(s, &(kt->send), &(kt->addr));
+  return(1);
+}
+
+static int mtnfs_list_process(int s, ktask *kt)
+{
+  //lprintf(0,"%s: START\n", __func__);
+  uint16_t len;
   struct stat st;
   struct dirent *ent;
-  char path[PATH_MAX];
   char full[PATH_MAX];
-  uint8_t *buff;
 
-  sdata->head.size = 0;
-  if(rdata->head.size){
-    sprintf(path, "./%s", rdata->data.data);
-  }else{
-    strcpy(path, "./");
-  }
-  if(stat(path, &st) == -1){
-    lprintf(0, "%s: %s %s\n", __func__, strerror(errno), path);
-    return;
-  }
-  if(S_ISREG(st.st_mode)){
-    mtn_set_string(basename(path), sdata);
-    buff = sdata->data.data + sdata->head.size;
-  }
-  if(S_ISDIR(st.st_mode)){
-    DIR *d = opendir(path);
-    while(ent = readdir(d)){
+  if(kt->dir){
+    while(ent = readdir(kt->dir)){
       if(ent->d_name[0] == '.'){
         continue;
       }
-      sprintf(full, "%s/%s", path, ent->d_name);
+      sprintf(full, "%s/%s", kt->path, ent->d_name);
       if(lstat(full, &st) == 0){
-        mtn_set_string(ent->d_name, sdata);
-        mtn_set_int(&(st.st_mode),  sdata, sizeof(st.st_mode));
-        mtn_set_int(&(st.st_size),  sdata, sizeof(st.st_size));
-        mtn_set_int(&(st.st_uid),   sdata, sizeof(st.st_uid));
-        mtn_set_int(&(st.st_gid),   sdata, sizeof(st.st_gid));
-        mtn_set_int(&(st.st_atime), sdata, sizeof(st.st_atime));
-        mtn_set_int(&(st.st_mtime), sdata, sizeof(st.st_mtime));
+        len  = mtn_set_string(ent->d_name, NULL);
+        len += mtn_set_stat(&st, NULL);
+        if(kt->send.head.size + len > kopt.max_packet_size){
+          send_dgram(s, &(kt->send), &(kt->addr));
+          memset(&(kt->send), 0, sizeof(kt->send));
+          mtn_set_string(ent->d_name, &(kt->send));
+          mtn_set_stat(&st, &(kt->send));
+          return(0);
+        }
+        mtn_set_string(ent->d_name, &(kt->send));
+        mtn_set_stat(&st, &(kt->send));
       } 
     }
-    closedir(d);
+    closedir(kt->dir);
+    kt->dir = NULL;
+    kt->send.head.fin = 1;
+    send_dgram(s, &(kt->send), &(kt->addr));
+    return(1);
   }
-}
 
-void mtnfs_hello_process(kdata *sdata, kdata *rdata)
-{
-  //lprintf(0,"%s: START\n", __func__);
-  sdata->head.size = strlen(kopt.host) + 1;
-  memcpy(sdata->data.data, kopt.host, sdata->head.size);
-}
-
-void mtnfs_info_process(kdata *sdata, kdata *rdata)
-{
-  //lprintf(1,"%s: START\n", __func__);
-  kinfo *info = &(sdata->data.info);
-  sdata->head.size = sizeof(kinfo);
-  info->free = get_freesize();
-  info->host = (uint8_t *)NULL + sdata->head.size;
-  strcpy(sdata->data.data + sdata->head.size, kopt.host);
-  sdata->head.size += strlen(kopt.host) + 1;
+  kt->send.head.size = 0;
+  if(kt->recv.head.size){
+    sprintf(kt->path, "./%s", kt->recv.data.data);
+  }else{
+    strcpy(kt->path, "./");
+  }
+  if(stat(kt->path, &st) == -1){
+    lprintf(0, "%s: %s %s\n", __func__, strerror(errno), kt->path);
+    return(1);
+  }
+  if(S_ISREG(st.st_mode)){
+    mtn_set_string(basename(kt->path), &(kt->send));
+    mtn_set_stat(&st, &(kt->send));
+    send_dgram(s, &(kt->send), &(kt->addr));
+    return(1);
+  }
+  if(S_ISDIR(st.st_mode)){
+    kt->dir = opendir(kt->path);
+    return(0);
+  }
+  return(1);
 }
 
 void mtnfs_udp_process(int s)
 {
-  kaddr  addr;
-  kdata sdata;
-  kdata rdata;
-  uint8_t *sbuff = sdata.data.data;
-  uint8_t *rbuff = rdata.data.data;
-
+  kaddr addr;
+  kdata data;
   addr.len = sizeof(addr.addr);
-  if(recv_dgram(s, &rdata, &(addr.addr.addr), &(addr.len)) == -1){
+  if(recv_dgram(s, &data, &(addr.addr.addr), &(addr.len)) == -1){
     return;
   }
-  int ver  = rdata.head.ver;
-  int type = rdata.head.type;
-  int size = rdata.head.size;
+  mtnfs_task_create(&data, &addr);
+  // for debug top
+  int ver  = data.head.ver;
+  int type = data.head.type;
+  int size = data.head.size;
   printf("type=%d size=%d ver=%d from=%s:%d\n", type, size, ver, inet_ntoa(addr.addr.in.sin_addr), ntohs(addr.addr.in.sin_port));
-  switch(type){
-    case MTNCMD_LIST:
-      mtnfs_list_process(&sdata, &rdata);
-      break;
-    case MTNCMD_HELLO:
-      mtnfs_hello_process(&sdata, &rdata);
-      break;
-    case MTNCMD_INFO:
-      mtnfs_info_process(&sdata, &rdata);
-      break;
+  // for debug end
+}
+
+void mtnfs_task_process(int s)
+{
+  int r = 1;
+  ktask *kt = kopt.task;
+  while(kt){
+    MTNFSTASKFUNC task = task_func[kt->type];
+    if(task){
+      r = task(s, kt);
+    }else{
+      lprintf(0, "%s: Function Not Found %d\n", __func__, kt->type);
+    }
+    if(r){
+      kt = mtnfs_task_delete(kt);
+    }else{
+      kt = kt->next;
+    }
   }
-  printf("size=%d\n", sdata.head.size);
-  send_dgram(s, &sdata, &addr);
 }
 
 int mtnfs_child_get(int s, kdata *data)
@@ -356,22 +415,30 @@ void mtnfs_accept_process(int l)
 
 void do_loop(int m, int l)
 {
-  fd_set fds;
+  fd_set rfds;
+  fd_set sfds;
   struct timeval tv;
   while(is_loop){
+    waitpid(-1, NULL, WNOHANG);
     tv.tv_sec  = 1;
     tv.tv_usec = 0;
-    FD_ZERO(&fds);
-    FD_SET(l, &fds);
-    FD_SET(m, &fds);
-    waitpid(-1, NULL, WNOHANG);
-    if(select(1024, &fds, NULL,  NULL, &tv) <= 0){
+    FD_ZERO(&rfds);
+    FD_ZERO(&sfds);
+    FD_SET(l, &rfds);
+    FD_SET(m, &rfds);
+    if(kopt.task){
+      FD_SET(m, &sfds);
+    }
+    if(select(1024, &rfds, &sfds, NULL, &tv) <= 0){
       continue;
     }
-    if(FD_ISSET(m, &fds)){
+    if(FD_ISSET(m, &rfds)){
       mtnfs_udp_process(m);
     }
-    if(FD_ISSET(l, &fds)){
+    if(FD_ISSET(m, &sfds)){
+      mtnfs_task_process(m);
+    }
+    if(FD_ISSET(l, &rfds)){
       mtnfs_accept_process(l);
     }
   }
@@ -452,6 +519,11 @@ int main(int argc, char *argv[])
   set_sig_handler();
   mtn_init_option();
   gethostname(kopt.host, sizeof(kopt.host));
+
+  memset(task_func, 0, sizeof(task_func));
+  task_func[MTNCMD_HELLO] = (MTNFSTASKFUNC)mtnfs_hello_process;
+  task_func[MTNCMD_INFO]  = (MTNFSTASKFUNC)mtnfs_info_process;
+  task_func[MTNCMD_LIST]  = (MTNFSTASKFUNC)mtnfs_list_process;
 
   while((r = getopt_long(argc, argv, "hvne:l:f:", opt, NULL)) != -1){
     switch(r){

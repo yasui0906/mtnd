@@ -121,15 +121,17 @@ void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
         mtn(sdata, &rdata, &addr);
         if(sdata->head.type != MTNCMD_HELLO){
           member = get_member(&addr, 1);
-          member->mark = 1;
-          for(member=members;member;member=member->next){
-            if(member->mark == 0){
-              break;
+          if(rdata.head.fin){
+            member->mark = 1;
+            for(member=members;member;member=member->next){
+              if(member->mark == 0){
+                break;
+              }
             }
-          }
-          if(member == NULL){
-            tv.tv_sec  = 0;
-            tv.tv_usec = 100000;
+            if(member == NULL){
+              tv.tv_sec  = 0;
+              tv.tv_usec = 100000;
+            }
           }
         }
       }
@@ -159,10 +161,8 @@ void mtn_hello()
 void mtn_info_process(kdata *sdata, kdata *rdata, kaddr *addr)
 {
   kmember *member = get_member(addr, 1);
-  kinfo *info = &(rdata->data.info);
-  info->host += (uintptr_t)info;
-  member->free = info->free;
-  printf("%s (%uM Free)\n", info->host, info->free);
+  mtn_get_int(&(member->free), rdata, sizeof(member->free));
+  printf("%s (%uM Free)\n", member->host, member->free);
 }
 
 void mtn_info()
@@ -188,6 +188,9 @@ void rmstat(kstat *kst)
 
 kstat *mkstat(kaddr *addr, kdata *data)
 {
+  char   buff[256];
+  struct passwd *pw;
+  struct group  *gr;
   kstat *kst = NULL;
   size_t len = mtn_get_string(NULL, data);
   if(len == -1){
@@ -208,6 +211,37 @@ kstat *mkstat(kaddr *addr, kdata *data)
   mtn_get_int(&(kst->stat.st_gid),   data, sizeof(kst->stat.st_gid));
   mtn_get_int(&(kst->stat.st_atime), data, sizeof(kst->stat.st_atime));
   mtn_get_int(&(kst->stat.st_mtime), data, sizeof(kst->stat.st_mtime));
+
+  len = strlen(kst->member->host);
+  if(kopt.field_size[0] < len){
+    kopt.field_size[0] = len;
+  }
+
+  if(pw = getpwuid(kst->stat.st_uid)){
+    strcpy(buff, pw->pw_name);
+  }else{
+    sprintf(buff, "%d", kst->stat.st_uid);
+  }  
+  len = strlen(buff);
+  if(kopt.field_size[1] < len){
+    kopt.field_size[1] = len;
+  }
+
+  if(gr = getgrgid(kst->stat.st_gid)){
+    strcpy(buff, gr->gr_name);
+  }else{
+    sprintf(buff, "%d", kst->stat.st_uid);
+  }  
+  len = strlen(buff);
+  if(kopt.field_size[2] < len){
+    kopt.field_size[2] = len;
+  }
+
+  sprintf(buff, "%llu", kst->stat.st_size);
+  len = strlen(buff);
+  if(kopt.field_size[3] < len){
+    kopt.field_size[3] = len;
+  }
   if(kst->next = mkstat(addr, data)){
     kst->next->prev = kst;
   }
@@ -240,18 +274,45 @@ int mtn_list(char *path)
   kstat *kst;
   kdata data;
   uint8_t m[16];
+  uint8_t field[4][32];
+  uint8_t pname[64];
+  uint8_t gname[64];
+  struct tm     *tm;
   struct passwd *pw;
   struct group  *gr;
   data.head.type = MTNCMD_LIST;
   data.head.size = 0;
   data.option    = NULL;
   mtn_set_string(path, &data);
+  kopt.field_size[0] = 1;
+  kopt.field_size[1] = 1;
+  kopt.field_size[2] = 1;
+  kopt.field_size[3] = 1;
   mtn_process(&data, (MTNPROCFUNC)mtn_list_process);
+  sprintf(field[0], "%%%ds: %%s ", kopt.field_size[0]);
+  sprintf(field[1], "%%%ds ",      kopt.field_size[1]);
+  sprintf(field[2], "%%%ds ",      kopt.field_size[2]);
+  sprintf(field[3], "%%%dllu ",    kopt.field_size[3]);
   for(kst = data.option;kst;kst=kst->next){
-    pw = getpwuid(kst->stat.st_uid);
-    gr = getgrgid(kst->stat.st_gid);
+    tm = localtime(&(kst->stat.st_mtime));
+    if(pw = getpwuid(kst->stat.st_uid)){
+      strcpy(pname, pw->pw_name);
+    }else{
+      sprintf(pname, "%d", kst->stat.st_uid);
+    }
+    if(gr = getgrgid(kst->stat.st_gid)){
+      strcpy(gname, gr->gr_name);
+    }else{
+      sprintf(gname, "%d", kst->stat.st_gid);
+    }
     get_mode_string(m, kst->stat.st_mode);
-    printf("%s: %s %s %s %s\n", kst->member->host, m, pw->pw_name, gr->gr_name, kst->name);
+    printf(field[0], kst->member->host, m);
+    printf(field[1], pname);
+    printf(field[2], gname);
+    printf(field[3], kst->stat.st_size);
+    printf("%02d/%02d/%02d ", (1900 + tm->tm_year) % 100, tm->tm_mon, tm->tm_mday);
+    printf("%02d:%02d:%02d ", tm->tm_hour, tm->tm_min, tm->tm_sec);
+    printf("%s\n", kst->name);
   }
 }
 
@@ -259,12 +320,11 @@ void mtn_choose_info(kdata *sdata, kdata *rdata, kaddr *addr)
 {
   kmember *choose = sdata->option;
   kmember *member = get_member(addr, 1);
-  kinfo *info     = &(rdata->data.info);
-  member->free    = info->free;
+  mtn_get_int(&(member->free), rdata, sizeof(member->free));
   if(choose == NULL){
     sdata->option = member;
   }else{
-    if(info->free > choose->free){
+    if(member->free > choose->free){
       sdata->option = member;
     }
   }
@@ -300,7 +360,7 @@ kstat *mtn_find(char *path)
   return(data.option);
 }
 
-int mtn_set_open(char *path, struct stat *st)
+int mtntool_set_open(char *path, struct stat *st)
 {
   int f;
   struct timeval tv;
@@ -322,7 +382,7 @@ int mtn_set_open(char *path, struct stat *st)
   return(f);
 }
 
-int mtn_set_stat(int s, char *path, struct stat *st)
+int mtntool_set_stat(int s, char *path, struct stat *st)
 {
   uint8_t *p;
   size_t   l;
@@ -355,7 +415,7 @@ int mtn_set_stat(int s, char *path, struct stat *st)
   send_stream(s, &data);
 }
 
-int mtn_set_write(int f, int s)
+int mtntool_set_write(int f, int s)
 {
   int r;
   kdata data;
@@ -380,7 +440,7 @@ int mtn_set_write(int f, int s)
   r = send_stream(s, &data);
 }
 
-int mtn_set_close(int f, int s)
+int mtntool_set_close(int f, int s)
 {
   kdata data;
   if(f > 0){
@@ -405,7 +465,7 @@ int mtn_set_close(int f, int s)
   return(0);
 }
 
-int mtn_set(char *save_path, char *file_path)
+int mtntool_set(char *save_path, char *file_path)
 {
   int f = 0;
   int s = 0;
@@ -419,7 +479,7 @@ int mtn_set(char *save_path, char *file_path)
     return(1);
   }
 
-  f = mtn_set_open(file_path, &st);
+  f = mtntool_set_open(file_path, &st);
   if(f == -1){
     printf("error: %s\n", __func__);
     return(1);
@@ -428,23 +488,23 @@ int mtn_set(char *save_path, char *file_path)
   s = create_socket(0, SOCK_STREAM);
   if(s == -1){
     printf("error: %s\n", __func__);
-    mtn_set_close(f, s);
+    mtntool_set_close(f, s);
     return(1);
   }
 
   if(connect(s, &(member->addr.addr.addr), member->addr.len) == -1){
     printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(member->addr.addr.in.sin_addr), ntohs(member->addr.addr.in.sin_port));
-    mtn_set_close(f, s);
+    mtntool_set_close(f, s);
     return(1);
   }
   //printf("connect: %s %s (%dM free)\n", member->host, inet_ntoa(member->addr.addr.in.sin_addr), member->free);
-  mtn_set_stat(s, save_path, &st);
-  mtn_set_write(f, s);
-  mtn_set_close(f, s);
+  mtntool_set_stat(s, save_path, &st);
+  mtntool_set_write(f, s);
+  mtntool_set_close(f, s);
   return(0); 
 }
 
-int mtn_get_open(char *path, kstat *st)
+int mtntool_get_open(char *path, kstat *st)
 {
   int f;
   if(strcmp("-", path) == 0){
@@ -458,7 +518,7 @@ int mtn_get_open(char *path, kstat *st)
   return(f);
 }
 
-int mtn_get_write(int f, int s, char *path)
+int mtntool_get_write(int f, int s, char *path)
 {
   int r;
   kdata sd;
@@ -490,7 +550,7 @@ int mtn_get_write(int f, int s, char *path)
   return(0);
 }
 
-int mtn_get_close(int f, int s)
+int mtntool_get_close(int f, int s)
 {
   if(f > 0){
     close(f);
@@ -501,7 +561,7 @@ int mtn_get_close(int f, int s)
   return(0);
 }
 
-int mtn_get(char *path, char *file)
+int mtntool_get(char *path, char *file)
 {
   int f = 0;
   int s = 0;
@@ -521,17 +581,17 @@ int mtn_get(char *path, char *file)
 
   if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
     printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
-    mtn_get_close(f, s);
+    mtntool_get_close(f, s);
     return(1);
   }
   //printf("connect: %s %s %s (%dM free)\n", path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
-  f = mtn_get_open(file, st);
+  f = mtntool_get_open(file, st);
   if(f == -1){
     printf("error: %s\n", __func__);
     return(1);
   }
-  mtn_get_write(f, s, path);
-  mtn_get_close(f, s);
+  mtntool_get_write(f, s, path);
+  mtntool_get_close(f, s);
   return(0); 
 }
 
@@ -635,22 +695,23 @@ int main(int argc, char *argv[])
   }
   if(mode == MTNCMD_SET){
     if(file_path[0]){
-      r = mtn_set(argv[optind], file_path);
+      r = mtntool_set(argv[optind], file_path);
     }else{
-      r = mtn_set(argv[optind], argv[optind]);
+      r = mtntool_set(argv[optind], argv[optind]);
     }
     exit(r);
 
   }
   if(mode == MTNCMD_GET){
     if(file_path[0]){
-      r = mtn_get(argv[optind], file_path);
+      r = mtntool_get(argv[optind], file_path);
     }else{
-      r = mtn_get(argv[optind], argv[optind]);
+      r = mtntool_get(argv[optind], argv[optind]);
     }
     exit(r);
   }
   usage();
+
   exit(0);
 }
 
