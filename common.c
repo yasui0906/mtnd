@@ -126,7 +126,7 @@ int recv_dgram(int s, kdata *data, struct sockaddr *addr, socklen_t *alen)
   return(0);
 }
 
-int recv_stream(int s, uint8_t *buff, size_t size)
+int recv_stream(int s, void *buff, size_t size)
 {
   int r;
   while(size){
@@ -156,41 +156,18 @@ int recv_stream(int s, uint8_t *buff, size_t size)
   return(0);
 }
 
-int recv_stream_line(int s, uint8_t *buff, size_t size)
+int recv_data_stream(int s, kdata *kd)
 {
   int r;
-  uint8_t data;
-  while(recv_readywait(s)){
-    r = read(s, &data, 1);
-    if(r == -1){
-      if(errno == EAGAIN){
-        continue;
-      }
-      if(errno == EINTR){
-        continue;
-      }else{
-        lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
-        return(-1);
-      }
-    }
-    if(r == 0){
-      break;
-    }
-    if(data == '\r'){
-      continue;
-    }
-    if(data == '\n'){
-      break;
-    }
-    *buff = data;
-    buff++;
-    size--;
-    if(size == 0){
-      lprintf(0, "[error] %s: buffer short\n", __func__);
-      return(-1);
-    }
+  if(r = recv_stream(s, &(kd->head), sizeof(kd->head))){
+    return(r);
   }
-  *buff = 0;
+  if(kd->head.size > MAX_DATASIZE){
+    return(-1);
+  }
+  if(r = recv_stream(s, &(kd->data), kd->head.size)){
+    return(r);
+  }
   return(0);
 }
 
@@ -220,6 +197,30 @@ int send_dgram(int s, kdata *data, kaddr *addr)
 }
 
 int send_stream(int s, kdata *data)
+{
+  size_t   size;
+  uint8_t *buff;
+  size  = sizeof(khead);
+  size += data->head.size;
+  buff  = (uint8_t *)data;
+  while(send_readywait(s)){
+    int r = send(s, buff, size, 0);
+    if(r == -1){
+      if(errno == EINTR){
+        continue;
+      }
+      return(-1);
+    }
+    if(size == r){
+      break;
+    }
+    size -= r;
+    buff += r;
+  }
+  return(0);
+}
+
+int send_data_stream(int s, kdata *data)
 {
   size_t   size;
   uint8_t *buff;
@@ -493,6 +494,20 @@ int mtn_set_int(void *val, kdata *kd, int size)
   return(-1);
 }
 
+int mtn_set_data(void *buff, kdata *kd, size_t size)
+{
+  size_t max = MAX_DATASIZE - kd->head.size;
+  if(MAX_DATASIZE < kd->head.size){
+    return(0);
+  }
+  if(size > max){
+    size = max;
+  }
+  memcpy(kd->data.data + kd->head.size, buff, size);
+  kd->head.size += size;
+  return(size);
+}
+
 int mtn_set_stat(struct stat *st, kdata *kd)
 {
   int r = 0;
@@ -759,9 +774,21 @@ void rmstat(kstat *kst)
   free(kst);
 }
 
+kstat *newstat(const char *name)
+{
+  kstat *kst = NULL;
+  kst = malloc(sizeof(kstat));
+  memset(kst, 0, sizeof(kstat));
+  if(name){
+    kst->name = malloc(strlen(name) + 1);
+    strcpy(kst->name, name);
+  }
+  return(kst);
+}
+
 kstat *mkstat(kaddr *addr, kdata *data)
 {
-  char   buff[256];
+  char bf[PATH_MAX];
   struct passwd *pw;
   struct group  *gr;
   kstat *kst = NULL;
@@ -773,12 +800,11 @@ kstat *mkstat(kaddr *addr, kdata *data)
   if(len == 0){
     return(NULL);
   }
-  kst = malloc(sizeof(kstat));
-  memset(kst, 0, sizeof(kstat));
-  kst->member = get_member(addr, 1);
+  kst = newstat(NULL);
   kst->name = malloc(len);
   mtn_get_string(kst->name,  data);
   mtn_get_stat(&(kst->stat), data);
+  kst->member = get_member(addr, 1);
 
   len = strlen(kst->member->host);
   if(kopt.field_size[0] < len){
@@ -786,27 +812,27 @@ kstat *mkstat(kaddr *addr, kdata *data)
   }
 
   if(pw = getpwuid(kst->stat.st_uid)){
-    strcpy(buff, pw->pw_name);
+    strcpy(bf, pw->pw_name);
   }else{
-    sprintf(buff, "%d", kst->stat.st_uid);
+    sprintf(bf, "%d", kst->stat.st_uid);
   }  
-  len = strlen(buff);
+  len = strlen(bf);
   if(kopt.field_size[1] < len){
     kopt.field_size[1] = len;
   }
 
   if(gr = getgrgid(kst->stat.st_gid)){
-    strcpy(buff, gr->gr_name);
+    strcpy(bf, gr->gr_name);
   }else{
-    sprintf(buff, "%d", kst->stat.st_uid);
+    sprintf(bf, "%d", kst->stat.st_uid);
   }  
-  len = strlen(buff);
+  len = strlen(bf);
   if(kopt.field_size[2] < len){
     kopt.field_size[2] = len;
   }
 
-  sprintf(buff, "%llu", kst->stat.st_size);
-  len = strlen(buff);
+  sprintf(bf, "%llu", kst->stat.st_size);
+  len = strlen(bf);
   if(kopt.field_size[3] < len){
     kopt.field_size[3] = len;
   }
@@ -870,7 +896,7 @@ void mtn_choose_list(kdata *sdata, kdata *rdata, kaddr *addr)
 {
 }
 
-kmember *mtn_choose(char *path)
+kmember *mtn_choose(const char *path)
 {
   kdata data;
   data.head.type = MTNCMD_INFO;
@@ -885,14 +911,22 @@ void mtn_find_process(kdata *sdata, kdata *rdata, kaddr *addr)
   sdata->option = mgstat(sdata->option, mkstat(addr, rdata));
 }
 
-kstat *mtn_find(const char *path)
+kstat *mtn_find(const char *path, int flags)
 {
+  kstat *kst;
   kdata data;
   data.option    = NULL;
   data.head.type = MTNCMD_LIST;
-  data.head.size = strlen(path) + 1;
-  strcpy(data.data.data, path);
+  data.head.size = 0;
+  mtn_set_string((uint8_t *)path, &data);
   mtn_process(&data, (MTNPROCFUNC)mtn_find_process);
+  if(data.option == NULL){
+    if(flags & O_CREAT){
+      kst = newstat(path);
+      kst->member = mtn_choose(path);
+      return(kst);
+    }
+  }
   return(data.option);
 }
 
@@ -979,18 +1013,13 @@ int mtntool_set_close(int f, int s)
   return(0);
 }
 
-int mtn_create(const char *path, int flags, mode_t mode)
-{
-  return(-1);
-}
-
-int mtn_open(const char *path, int flags)
+int mtn_open(const char *path, int flags, mode_t mode)
 {
   int s = 0;
   kdata  sd;
   kdata  rd;
-  kstat *st;
-  st = mtn_find(path);
+  kstat *st = mtn_find(path, flags);
+
   if(st == NULL){
     lprintf(0, "error: node not found\n");
     errno = EACCES;
@@ -1008,12 +1037,13 @@ int mtn_open(const char *path, int flags)
     errno = EACCES;
     return(-1);
   }
-  lprintf(0, "connect: %s %s %s (%dM free)\n", path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  lprintf(0, "%s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.type = MTNCMD_OPEN;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_set_int(&flags, &sd, sizeof(flags));
+  mtn_set_int(&mode,  &sd, sizeof(mode));
   send_stream(s, &sd);
   recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
   recv_stream(s, rd.data.data, rd.head.size);
@@ -1057,7 +1087,28 @@ int mtn_read(int s, char *buf, size_t size, off_t offset)
 
 int mtn_write(int s, char *buf, size_t size, off_t offset)
 {
-  return(0);
+  int r = 0;
+  int    sz;
+  kdata  sd;
+  kdata  rd;
+  sz = size;
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.type = MTNCMD_WRITE;
+  while(size){
+    sd.head.size = 0;
+    mtn_set_int(&offset, &sd, sizeof(offset));
+    r = mtn_set_data(buf, &sd, size);
+    size   -= r;
+    buf    += r;
+    offset += r;
+    send_data_stream(s, &sd);
+    recv_data_stream(s, &rd);
+    if(rd.head.type == MTNRES_ERROR){
+      mtn_set_int(&errno, &rd, sizeof(errno));
+      return(-1);
+    }
+  }
+  return(sz);
 }
 
 int mtn_close(int s)
@@ -1066,6 +1117,46 @@ int mtn_close(int s)
     return(0);
   }
   close(s);
+  return(0);
+}
+
+int mtn_truncate(const char *path, off_t offset)
+{
+  int s = 0;
+  kdata  sd;
+  kdata  rd;
+  kstat *st = mtn_find(path, 0);
+
+  if(st == NULL){
+    lprintf(0, "error: node not found\n");
+    errno = EACCES;
+    return(-1);
+  }
+  s = create_socket(0, SOCK_STREAM);
+  if(s == -1){
+    lprintf(0, "error: %s\n", __func__);
+    errno = EACCES;
+    return(-1);
+  }
+  if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
+    lprintf(0, "error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    close(s);
+    errno = EACCES;
+    return(-1);
+  }
+  lprintf(0, "%s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.type = MTNCMD_TRUNCATE;
+  mtn_set_string((uint8_t *)path, &sd);
+  mtn_set_int(&offset, &sd, sizeof(offset));
+  send_data_stream(s, &sd);
+  recv_data_stream(s, &rd);
+  close(s);
+  if(rd.head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, &rd, sizeof(errno));
+    return(-1);
+  }
   return(0);
 }
 
@@ -1168,7 +1259,7 @@ int mtntool_get(char *path, char *file)
   int s = 0;
   kstat *st;
 
-  st = mtn_find(path);
+  st = mtn_find(path, 0);
   if(st == NULL){
     printf("error: node not found\n");
     return(1);

@@ -28,6 +28,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
+#include <sys/syscall.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
@@ -35,32 +36,33 @@
 #include <libgen.h>
 #include <pwd.h>
 #include <grp.h>
+#include <pthread.h>
 
-#define MTNRES_SUCCESS  0
-#define MTNRES_ERROR    1
-#define MTNCMD_NONE     0
-#define MTNCMD_HELLO    1
-#define MTNCMD_INFO     2
-#define MTNCMD_LIST     3
-#define MTNCMD_SET      4
-#define MTNCMD_GET      5
-#define MTNCMD_DEL      6
-#define MTNCMD_DATA     9
-#define MTNCMD_OPEN    10
-#define MTNCMD_READ    11
-#define MTNCMD_WRITE   12
-#define MTNCMD_CLOSE   13
-#define MTNCMD_MAX     99
+#define MTNRES_SUCCESS   0
+#define MTNRES_ERROR     1
+#define MTNCMD_NONE      0
+#define MTNCMD_HELLO     1
+#define MTNCMD_INFO      2
+#define MTNCMD_LIST      3
+#define MTNCMD_SET       4
+#define MTNCMD_GET       5
+#define MTNCMD_DEL       6
+#define MTNCMD_DATA      9
+#define MTNCMD_OPEN     10
+#define MTNCMD_READ     11
+#define MTNCMD_WRITE    12
+#define MTNCMD_CLOSE    13
+#define MTNCMD_TRUNCATE 14
+#define MTNCMD_MAX      99
 
-#define MTNTYPE_STRING  1
-#define MTNTYPE_UINT8   2
-#define MTNTYPE_UINT16  3
-#define MTNTYPE_UINT32  4
-#define MTNTYPE_UINT64  5
+#define MTNTYPE_STRING   1
+#define MTNTYPE_UINT8    2
+#define MTNTYPE_UINT16   3
+#define MTNTYPE_UINT32   4
+#define MTNTYPE_UINT64   5
 
 #define PROTOCOL_VERSION 1
 #define MAX_DATASIZE 32768
-
 
 typedef struct
 {
@@ -158,9 +160,11 @@ void kinit_option();
 char *mtn_get_v4addr(kaddr *addr);
 kstat *mtn_list(const char *path);
 kdir *mkkdir(const char *, kstat *, kdir *);
-int mtn_create(const char *, int, mode_t);
-int mtn_open(const char *, int);
+int mtn_open(const char *, int, mode_t);
 int mtn_close(int);
+int recv_stream(int, void *, size_t);
+int recv_data_stream(int, kdata *);
+int send_data_stream(int, kdata *);
 /*
 int send_readywait(int s);
 int create_socket(int port, int mode);
