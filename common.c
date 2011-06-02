@@ -735,29 +735,6 @@ void mtn_info()
   mtn_process(&data, (MTNPROCFUNC)mtn_info_process);
 }
 
-void rmkdir(kdir *kd)
-{
-  if(!kd){
-    return;
-  }
-  if(kd->next){
-    rmkdir(kd->next);
-    kd->next = NULL;
-  }
-  free(kd);
-}
-
-kdir *mkkdir(const char *path, kstat *ks, kdir *kd)
-{
-  kdir *nd = malloc(sizeof(kdir));
-  strcpy(nd->path, path);
-  nd->kst  = ks;
-  if(nd->next = kd){
-    kd->prev = nd;
-  }
-  return(nd);
-}
-
 void rmstat(kstat *kst)
 {
   if(!kst){
@@ -854,6 +831,33 @@ kstat *mgstat(kstat *krt, kstat *kst)
     krt = kst;
   }
   return krt;
+}
+
+void rmkdir(kdir *kd)
+{
+  if(!kd){
+    return;
+  }
+  rmstat(kd->kst);
+  kd->kst = NULL;
+  if(kd->prev){
+    kd->prev->next = kd->next;
+  }
+  if(kd->next){
+    kd->next->prev = kd->prev;
+  }
+  free(kd);
+}
+
+kdir *mkkdir(const char *path, kstat *ks, kdir *kd)
+{
+  kdir *nd = malloc(sizeof(kdir));
+  strcpy(nd->path, path);
+  nd->kst  = ks;
+  if(nd->next = kd){
+    kd->prev = nd;
+  }
+  return(nd);
 }
 
 void mtn_list_process(kdata *sdata, kdata *rdata, kaddr *addr)

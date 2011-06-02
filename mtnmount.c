@@ -8,11 +8,11 @@ pthread_mutex_t mtn_write_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static int mtnmount_getattr(const char *path, struct stat *stbuf)
 {
-  int res = 0;
-  char b[PATH_MAX];
-  char d[PATH_MAX];
-  char f[PATH_MAX];
-  kdir *kd = dir_cache;
+  int   res = 0;
+  char  b[PATH_MAX];
+  char  d[PATH_MAX];
+  char  f[PATH_MAX];
+  kdir  *kd  = NULL;
   kstat *krt = NULL;
   kstat *kst = NULL;
 
@@ -27,25 +27,20 @@ static int mtnmount_getattr(const char *path, struct stat *stbuf)
     stbuf->st_nlink = 2;
     return(0);
   }
-  while(kd){
+  for(kd=dir_cache;kd;kd=kd->next){
     if(strcmp(kd->path, d) == 0){
+      krt = kd->kst;
       break;
     }
-    kd = kd->next;
   }
-  if(kd){
-    krt = kd->kst;
-  }else{ 
+  if(krt == NULL){
     krt = mtn_list(path);
   }
   for(kst=krt;kst;kst=kst->next){  
     if(strcmp(kst->name, f) == 0){
-      break;
+      memcpy(stbuf, &(kst->stat), sizeof(struct stat));
+      return(0);
     }
-  }
-  if(kst){
-    memcpy(stbuf, &(kst->stat), sizeof(struct stat));
-    return(0);
   }
   return(-ENOENT);
 }
@@ -76,9 +71,22 @@ static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 static int mtnmount_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
-  int f;
+  kdir *kd;
+  char b[PATH_MAX];
+  char d[PATH_MAX];
+  strcpy(b, path);
+  strcpy(d, dirname(b));
+  for(kd=dir_cache;kd;kd=kd->next){
+    if(strcmp(kd->path, d) == 0){
+      if(dir_cache == kd){
+        dir_cache = kd->next;
+      }
+      rmkdir(kd);
+      break;
+    }
+  }
   lprintf(0, "%s: 1 path=%s fh=%llu mode=%o\n", __func__, path, fi->fh, mode);
-  f = mtn_open(path, fi->flags, mode);
+  int f = mtn_open(path, fi->flags, mode);
   if(f == -1){
     return(-errno);
   }
@@ -89,15 +97,54 @@ static int mtnmount_create(const char *path, mode_t mode, struct fuse_file_info 
 
 static int mtnmount_open(const char *path, struct fuse_file_info *fi)
 {
-  int f;
+  kdir *kd;
+  char b[PATH_MAX];
+  char d[PATH_MAX];
+  strcpy(b, path);
+  strcpy(d, dirname(b));
+  for(kd=dir_cache;kd;kd=kd->next){
+    if(strcmp(kd->path, d) == 0){
+      if(dir_cache == kd){
+        dir_cache = kd->next;
+      }
+      rmkdir(kd);
+      break;
+    }
+  }
   lprintf(0, "%s: 1 path=%s fh=%llu\n", __func__, path, fi->fh);
-  f = mtn_open(path, fi->flags, 0);
+  int f = mtn_open(path, fi->flags, 0);
   if(f == -1){
     return(-errno);
   }
   fi->fh = (uint64_t)f;
   lprintf(0, "%s: 2 path=%s fh=%llu\n", __func__, path, fi->fh);
   return(0); 
+}
+
+static int mtnmount_truncate(const char *path, off_t offset)
+{
+  kdir *kd;
+  char b[PATH_MAX];
+  char d[PATH_MAX];
+  char f[PATH_MAX];
+  strcpy(b, path);
+  strcpy(d, dirname(b));
+  strcpy(b, path);
+  strcpy(f, basename(b));
+  for(kd=dir_cache;kd;kd=kd->next){
+    if(strcmp(kd->path, d) == 0){
+      if(dir_cache == kd){
+        dir_cache = kd->next;
+      }
+      rmkdir(kd);
+      break;
+    }
+  }
+  lprintf(0, "%s: path=%s offset=%llu\n", __func__, path, offset);
+  if(mtn_truncate(path, offset) == -1){
+    return(-errno);
+  }
+  return(0);
 }
 
 static int mtnmount_release(const char *path, struct fuse_file_info *fi)
@@ -131,15 +178,6 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
   lprintf(0,"%s: 2 pid=%d tid=%d write=%d\n", __func__, getpid(), syscall(SYS_gettid), r);
   pthread_mutex_unlock(&mtn_write_mutex);
   return r;
-}
-
-static int mtnmount_truncate(const char *path, off_t offset)
-{
-  lprintf(0, "%s: path=%s offset=%llu\n", __func__, path, offset);
-  if(mtn_truncate(path, offset) == -1){
-    return(-errno);
-  }
-  return(0);
 }
 
 static int mtnmount_mkdir(const char *path, mode_t mode)
