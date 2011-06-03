@@ -165,10 +165,7 @@ int recv_data_stream(int s, kdata *kd)
   if(kd->head.size > MAX_DATASIZE){
     return(-1);
   }
-  if(r = recv_stream(s, &(kd->data), kd->head.size)){
-    return(r);
-  }
-  return(0);
+  return(recv_stream(s, &(kd->data), kd->head.size));
 }
 
 int send_dgram(int s, kdata *data, kaddr *addr)
@@ -934,89 +931,6 @@ kstat *mtn_find(const char *path, int flags)
   return(data.option);
 }
 
-int mtntool_set_open(char *path, struct stat *st)
-{
-  int f;
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  if(strcmp("-", path) == 0){
-    st->st_uid   = getuid();
-    st->st_gid   = getgid();
-    st->st_mode  = 0640;
-    st->st_atime = tv.tv_sec;
-    st->st_mtime = tv.tv_sec;
-  }else{
-    f = open(path, O_RDONLY);
-    if(f == -1){
-      printf("error: %s %s\n", strerror(errno), path);
-      return(-1);
-    }
-    fstat(f, st);
-  }
-  return(f);
-}
-
-int mtntool_set_stat(int s, char *path, struct stat *st)
-{
-  kdata data;
-  data.head.ver  = PROTOCOL_VERSION;
-  data.head.size = 0;
-  data.head.type = MTNCMD_SET;
-  mtn_set_string(path, &data);
-  mtn_set_stat(st, &data);
-  send_stream(s, &data);
-}
-
-int mtntool_set_write(int f, int s)
-{
-  int r;
-  kdata data;
-
-  while(r = read(f, data.data.data, sizeof(data.data.data))){
-    if(r == -1){
-      printf("error: %s\n", strerror(errno));
-      break;
-    }
-    data.head.ver  = PROTOCOL_VERSION;
-    data.head.size = r;
-    data.head.type = MTNCMD_DATA;
-    r = send_stream(s, &data);
-    if(r == -1){
-      printf("error: %s\n", strerror(errno));
-      break;
-    }
-  }
-  data.head.ver  = PROTOCOL_VERSION;
-  data.head.size = 0;
-  data.head.type = MTNCMD_DATA;
-  r = send_stream(s, &data);
-}
-
-int mtntool_set_close(int f, int s)
-{
-  kdata data;
-  if(f > 0){
-    close(f);
-  }
-  if(s < 0){
-    return(0);
-  }
-  if(recv_stream(s, (uint8_t *)&data, sizeof(data.head))){
-    printf("error: can't recv result data\n");
-  }else{
-    if(recv_stream(s, data.data.data, data.head.size)){
-      printf("error: can't recv result data\n");
-    }else{
-      if(data.head.type == MTNRES_ERROR){
-        memcpy(&errno, data.data.data, sizeof(errno)); 
-        printf("remote error: %s\n", strerror(errno));
-      }
-    }
-  }
-  close(s);
-  return(0);
-}
-
 int mtn_open(const char *path, int flags, mode_t mode)
 {
   int s = 0;
@@ -1164,130 +1078,38 @@ int mtn_truncate(const char *path, off_t offset)
   return(0);
 }
 
-int mtntool_set(char *save_path, char *file_path)
+int mtn_callcmd(const char *path, kdata *sd)
 {
-  int f = 0;
   int s = 0;
-  kdata data;
-  kmember *member; 
-  struct stat st;
+  kdata  rd;
+  kstat *st = mtn_find(path, 0);
 
-  member = mtn_choose(save_path);
-  if(member == NULL){
-    printf("error: node not found\n");
-    return(1);
-  }
-
-  f = mtntool_set_open(file_path, &st);
-  if(f == -1){
-    printf("error: %s\n", __func__);
-    return(1);
-  }
-
-  s = create_socket(0, SOCK_STREAM);
-  if(s == -1){
-    printf("error: %s\n", __func__);
-    mtntool_set_close(f, s);
-    return(1);
-  }
-
-  if(connect(s, &(member->addr.addr.addr), member->addr.len) == -1){
-    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(member->addr.addr.in.sin_addr), ntohs(member->addr.addr.in.sin_port));
-    mtntool_set_close(f, s);
-    return(1);
-  }
-  //printf("connect: %s %s (%dM free)\n", member->host, inet_ntoa(member->addr.addr.in.sin_addr), member->free);
-  mtntool_set_stat(s, save_path, &st);
-  mtntool_set_write(f, s);
-  mtntool_set_close(f, s);
-  return(0); 
-}
-
-int mtntool_get_open(char *path, kstat *st)
-{
-  int f;
-  if(strcmp("-", path) == 0){
-    f = 0;
-  }else{
-    f = creat(path, st->stat.st_mode);
-    if(f == -1){
-      printf("error: %s %s\n", strerror(errno), path);
-    }
-  }
-  return(f);
-}
-
-int mtntool_get_write(int f, int s, char *path)
-{
-  int r;
-  kdata sd;
-  kdata rd;
-  uint8_t *buff;
-  size_t size;
-
-  sd.head.ver  = PROTOCOL_VERSION;
-  sd.head.size = 0;
-  sd.head.type = MTNCMD_GET;
-  mtn_set_string(path, &sd);
-  send_stream(s, &sd);
-
-  sd.head.size = 0;
-  sd.head.type = MTNRES_SUCCESS;
-  while(is_loop){
-    recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
-    if(rd.head.size == 0){
-      break;
-    }else{
-      recv_stream(s, rd.data.data, rd.head.size);
-      write(f, rd.data.data, rd.head.size);
-    }
-  }
-  send_stream(s, &sd);
-  return(0);
-}
-
-int mtntool_get_close(int f, int s)
-{
-  if(f > 0){
-    close(f);
-  }
-  if(s > 0){
-    close(s);
-  }
-  return(0);
-}
-
-int mtntool_get(char *path, char *file)
-{
-  int f = 0;
-  int s = 0;
-  kstat *st;
-
-  st = mtn_find(path, 0);
   if(st == NULL){
-    printf("error: node not found\n");
-    return(1);
+    lprintf(0, "error: node not found\n");
+    errno = EACCES;
+    return(-1);
   }
-
   s = create_socket(0, SOCK_STREAM);
   if(s == -1){
-    printf("error: %s\n", __func__);
-    return(1);
+    lprintf(0, "error: %s\n", __func__);
+    errno = EACCES;
+    return(-1);
   }
-
   if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
-    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
-    mtntool_get_close(f, s);
-    return(1);
+    lprintf(0, "error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    close(s);
+    errno = EACCES;
+    return(-1);
   }
-  //printf("connect: %s %s %s (%dM free)\n", path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
-  f = mtntool_get_open(file, st);
-  if(f == -1){
-    printf("error: %s\n", __func__);
-    return(1);
+  lprintf(0, "%s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  sd->head.ver  = PROTOCOL_VERSION;
+  send_data_stream(s,  sd);
+  recv_data_stream(s, &rd);
+  close(s);
+  if(rd.head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, &rd, sizeof(errno));
+    return(-1);
   }
-  mtntool_get_write(f, s, path);
-  mtntool_get_close(f, s);
-  return(0); 
+  return(0);
 }
 

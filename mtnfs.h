@@ -53,6 +53,12 @@
 #define MTNCMD_WRITE    12
 #define MTNCMD_CLOSE    13
 #define MTNCMD_TRUNCATE 14
+#define MTNCMD_MKDIR    15
+#define MTNCMD_RMDIR    16
+#define MTNCMD_UNLINK   17
+#define MTNCMD_RENAME   18
+#define MTNCMD_CHMOD    19
+#define MTNCMD_CHOWN    20
 #define MTNCMD_MAX      99
 
 #define MTNTYPE_STRING   1
@@ -118,9 +124,11 @@ typedef struct kstat
 typedef struct ktask
 {
   uint8_t type;
+  uint8_t fin;
   int fd;
   DIR *dir;
   uint8_t path[PATH_MAX];
+  struct stat  stat;
   struct kaddr addr;
   struct kdata send;
   struct kdata recv;
@@ -165,6 +173,8 @@ int mtn_close(int);
 int recv_stream(int, void *, size_t);
 int recv_data_stream(int, kdata *);
 int send_data_stream(int, kdata *);
+kmember *mtn_choose(const char *);
+kstat *mtn_find(const char *, int);
 /*
 int send_readywait(int s);
 int create_socket(int port, int mode);

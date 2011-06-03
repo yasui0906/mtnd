@@ -109,6 +109,237 @@ int mtntool_list(char *path)
   return(0);
 }
 
+int mtntool_set(char *save_path, char *file_path)
+{
+  int f = 0;
+  int s = 0;
+  kdata data;
+  kmember *member; 
+  struct stat st;
+
+  member = mtn_choose(save_path);
+  if(member == NULL){
+    printf("%s: node not found\n", __func__);
+    return(1);
+  }
+
+  f = mtntool_set_open(file_path, &st);
+  if(f == -1){
+    printf("%s: %s %s\n", __func__, strerror(errno), file_path);
+    return(1);
+  }
+
+  s = create_socket(0, SOCK_STREAM);
+  if(s == -1){
+    printf("error: %s\n", __func__);
+    mtntool_set_close(f, s);
+    return(1);
+  }
+
+  if(connect(s, &(member->addr.addr.addr), member->addr.len) == -1){
+    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(member->addr.addr.in.sin_addr), ntohs(member->addr.addr.in.sin_port));
+    mtntool_set_close(f, s);
+    return(1);
+  }
+  //printf("connect: %s %s (%dM free)\n", member->host, inet_ntoa(member->addr.addr.in.sin_addr), member->free);
+  if(mtntool_set_stat(s, save_path, &st) == -1){
+    printf("%s: stat %s %s\n", __func__, strerror(errno), save_path);
+    mtntool_set_close(f, s);
+    return(1);
+  }
+  if(mtntool_set_write(f, s) == -1){
+    printf("%s: write %s %s\n", __func__, strerror(errno), save_path);
+    mtntool_set_close(f, s);
+    return(1);
+  }
+  mtntool_set_close(f, s);
+  return(0); 
+}
+
+int mtntool_get_open(char *path, kstat *st)
+{
+  int f;
+  if(strcmp("-", path) == 0){
+    f = 0;
+  }else{
+    f = creat(path, st->stat.st_mode);
+    if(f == -1){
+      printf("error: %s %s\n", strerror(errno), path);
+    }
+  }
+  return(f);
+}
+
+int mtntool_get_write(int f, int s, char *path)
+{
+  int r;
+  kdata sd;
+  kdata rd;
+  uint8_t *buff;
+  size_t size;
+
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.type = MTNCMD_GET;
+  mtn_set_string(path, &sd);
+  send_stream(s, &sd);
+
+  sd.head.size = 0;
+  sd.head.type = MTNRES_SUCCESS;
+  while(is_loop){
+    recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
+    if(rd.head.size == 0){
+      break;
+    }else{
+      recv_stream(s, rd.data.data, rd.head.size);
+      write(f, rd.data.data, rd.head.size);
+    }
+  }
+  send_stream(s, &sd);
+  return(0);
+}
+
+int mtntool_get_close(int f, int s)
+{
+  if(f > 0){
+    close(f);
+  }
+  if(s > 0){
+    close(s);
+  }
+  return(0);
+}
+
+int mtntool_get(char *path, char *file)
+{
+  int f = 0;
+  int s = 0;
+  kstat *st;
+
+  st = mtn_find(path, 0);
+  if(st == NULL){
+    printf("error: node not found\n");
+    return(1);
+  }
+
+  s = create_socket(0, SOCK_STREAM);
+  if(s == -1){
+    printf("error: %s\n", __func__);
+    return(1);
+  }
+
+  if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
+    printf("error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    mtntool_get_close(f, s);
+    return(1);
+  }
+  //printf("connect: %s %s %s (%dM free)\n", path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  f = mtntool_get_open(file, st);
+  if(f == -1){
+    printf("error: %s\n", __func__);
+    return(1);
+  }
+  mtntool_get_write(f, s, path);
+  mtntool_get_close(f, s);
+  return(0); 
+}
+
+int mtntool_set_open(char *path, struct stat *st)
+{
+  int f;
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  if(strcmp("-", path) == 0){
+    st->st_uid   = getuid();
+    st->st_gid   = getgid();
+    st->st_mode  = 0640;
+    st->st_atime = tv.tv_sec;
+    st->st_mtime = tv.tv_sec;
+  }else{
+    f = open(path, O_RDONLY);
+    if(f == -1){
+      return(-1);
+    }
+    fstat(f, st);
+  }
+  return(f);
+}
+
+int mtntool_set_stat(int s, char *path, struct stat *st)
+{
+  kdata sd;
+  kdata rd;
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.type = MTNCMD_SET;
+  mtn_set_string(path, &sd);
+  mtn_set_stat(st, &sd);
+  send_data_stream(s, &sd);
+  recv_data_stream(s, &rd);
+  if(rd.head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, &rd, sizeof(errno));
+    return(-1);
+  }
+  return(0);
+}
+
+int mtntool_set_write(int f, int s)
+{
+  int r;
+  kdata sd;
+  kdata rd;
+
+  sd.head.fin  = 0;
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.type = MTNCMD_SET;
+  while(r = read(f, sd.data.data, sizeof(sd.data.data))){
+    if(r == -1){
+      return(-1);
+    }
+    sd.head.size = r;
+    r = send_data_stream(s, &sd);
+    if(r == -1){
+      return(-1);
+    }
+    r = recv_data_stream(s, &rd);
+    if(r == -1){
+      return(-1);
+    }
+    if(rd.head.type == MTNRES_ERROR){
+      mtn_get_int(&errno, &rd, sizeof(errno));
+      return(-1);
+    }
+  }
+  sd.head.fin  = 1;
+  sd.head.size = 0;
+  sd.head.type = MTNCMD_SET;
+  r = send_stream(s, &sd);
+  if(r == -1){
+    return(-1);
+  }
+  r = recv_data_stream(s, &rd);
+  if(r == -1){
+    return(-1);
+  }
+  if(rd.head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, &rd, sizeof(errno));
+    return(-1);
+  }
+  return(0);
+}
+
+int mtntool_set_close(int f, int s)
+{
+  if(f > 0){
+    close(f);
+  }
+  if(s < 0){
+    return(0);
+  }
+  close(s);
+  return(0);
+}
+
 int main(int argc, char *argv[])
 {
   int r;
