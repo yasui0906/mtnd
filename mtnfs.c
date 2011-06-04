@@ -234,6 +234,28 @@ static void mtnfs_list_process(ktask *kt)
   lprintf(0,"%s: [debug] END\n", __func__);
 }
 
+static void mtnfs_stat_process(ktask *kt)
+{
+  lprintf(0,"%s: [debug] START\n", __func__);
+  char buff[PATH_MAX];
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(buff, &(kt->recv));
+  mtnfs_fix_path(buff);
+  sprintf(kt->path, "./%s", buff);
+  if(lstat(kt->path, &(kt->stat)) == -1){
+    lprintf(0, "%s: [error] %s %s\n", __func__, strerror(errno), kt->path);
+    kt->send.head.type = MTNRES_ERROR;
+  }else{
+    kt->send.head.type = MTNRES_SUCCESS;
+    dirbase(kt->path, NULL, buff);
+    mtn_set_string(buff, &(kt->send));
+    mtn_set_stat(&(kt->stat), &(kt->send));
+  }
+  lprintf(0,"%s: [debug] END\n", __func__);
+}
+
 void mtnfs_udp_process(int s)
 {
   lprintf(0,"%s: [debug] START\n", __func__);
@@ -262,6 +284,7 @@ void mtnfs_task_process(int s)
   taskfunc[MTNCMD_HELLO] = (MTNFSTASKFUNC)mtnfs_hello_process;
   taskfunc[MTNCMD_INFO]  = (MTNFSTASKFUNC)mtnfs_info_process;
   taskfunc[MTNCMD_LIST]  = (MTNFSTASKFUNC)mtnfs_list_process;
+  taskfunc[MTNCMD_STAT]  = (MTNFSTASKFUNC)mtnfs_stat_process;
   while(kt){
     kt->con = s;
     MTNFSTASKFUNC task = taskfunc[kt->type];
@@ -495,12 +518,26 @@ void mtnfs_child_truncate(ktask *kt)
 void mtnfs_child_mkdir(ktask *kt)
 {
   lprintf(0,"%s: [debug] START\n", __func__);
+  mtn_get_string(kt->path, &(kt->recv));
+  mtnfs_fix_path(kt->path);
+  if(mkdir(kt->path, 0777) == -1){
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }
+  lprintf(0,"%s: [debug] PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
   lprintf(0,"%s: [debug] END\n", __func__);
 }
 
 void mtnfs_child_rmdir(ktask *kt)
 {
   lprintf(0,"%s: [debug] START\n", __func__);
+  mtn_get_string(kt->path, &(kt->recv));
+  mtnfs_fix_path(kt->path);
+  if(rmdir(kt->path) == -1){
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }
+  lprintf(0,"%s: [debug] PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
   lprintf(0,"%s: [debug] END\n", __func__);
 }
 

@@ -53,10 +53,14 @@ void mtn_init_option()
 void dirbase(const char *path, char *d, char *f)
 {
   char b[PATH_MAX];
-  strcpy(b, path);
-  strcpy(d, dirname(b));
-  strcpy(b, path);
-  strcpy(f, basename(b));
+	if(d){
+		strcpy(b, path);
+		strcpy(d, dirname(b));
+	}
+	if(f){
+		strcpy(b, path);
+		strcpy(f, basename(b));
+	}
 }
 
 int send_readywait(int s)
@@ -916,6 +920,26 @@ kstat *mtn_list(const char *path)
   kopt.field_size[3] = 1;
   mtn_process(&data, (MTNPROCFUNC)mtn_list_process);
   return(data.option);
+}
+
+void mtn_stat_process(kdata *sd, kdata *rd, kaddr *addr)
+{
+  kstat *krt = sd->option;
+	if(rd->head.type == MTNRES_SUCCESS){
+		kstat *kst = mkstat(addr, rd);
+		sd->option = mgstat(krt, kst);
+	}
+}
+
+kstat *mtn_stat(const char *path)
+{
+  kdata sd;
+  sd.head.type = MTNCMD_STAT;
+  sd.head.size = 0;
+  sd.option    = NULL;
+  mtn_set_string((uint8_t *)path, &sd);
+  mtn_process(&sd, (MTNPROCFUNC)mtn_stat_process);
+  return(sd.option);
 }
 
 void mtn_choose_info(kdata *sdata, kdata *rdata, kaddr *addr)

@@ -43,24 +43,25 @@
 #define MTNCMD_NONE      0
 #define MTNCMD_HELLO     1
 #define MTNCMD_INFO      2
-#define MTNCMD_LIST      3
-#define MTNCMD_SET       4
-#define MTNCMD_GET       5
-#define MTNCMD_DEL       6
-#define MTNCMD_DATA      9
-#define MTNCMD_OPEN     10
-#define MTNCMD_READ     11
-#define MTNCMD_WRITE    12
-#define MTNCMD_CLOSE    13
-#define MTNCMD_TRUNCATE 14
-#define MTNCMD_MKDIR    15
-#define MTNCMD_RMDIR    16
-#define MTNCMD_UNLINK   17
-#define MTNCMD_RENAME   18
-#define MTNCMD_CHMOD    19
-#define MTNCMD_CHOWN    20
-#define MTNCMD_GETATTR  21
-#define MTNCMD_SETATTR  22
+#define MTNCMD_STAT      3
+#define MTNCMD_LIST      4
+#define MTNCMD_SET       5
+#define MTNCMD_GET       6
+#define MTNCMD_DEL       7
+#define MTNCMD_DATA      8
+#define MTNCMD_OPEN      9
+#define MTNCMD_READ     10
+#define MTNCMD_WRITE    11
+#define MTNCMD_CLOSE    12
+#define MTNCMD_TRUNCATE 13
+#define MTNCMD_MKDIR    14
+#define MTNCMD_RMDIR    15
+#define MTNCMD_UNLINK   16
+#define MTNCMD_RENAME   17
+#define MTNCMD_CHMOD    18
+#define MTNCMD_CHOWN    19
+#define MTNCMD_GETATTR  20
+#define MTNCMD_SETATTR  21
 #define MTNCMD_MAX      99
 
 #define MTNTYPE_STRING   1
@@ -145,6 +146,7 @@ typedef struct ktask
 typedef struct kdir
 {
   char path[PATH_MAX];
+  struct timeval tv;
   struct kstat *kst;
   struct kdir *prev;
   struct kdir *next;
@@ -162,7 +164,8 @@ typedef struct
   uint8_t  host[64];        //
   uint8_t *cwd;             //
   uint8_t  field_size[4];   // 表示幅
-  ktask   *task;            //
+  ktask   *task;            // 積みタスク
+  kdir    *dircache;        // ディレクトリキャッシュ
 }__attribute__((packed)) koption;
 
 
@@ -172,6 +175,7 @@ extern kmember *members;
 void lprintf(int l, char *fmt, ...);
 void kinit_option();
 char *mtn_get_v4addr(kaddr *addr);
+kstat *mtn_stat(const char *path);
 kstat *mtn_list(const char *path);
 kdir *mkkdir(const char *, kstat *, kdir *);
 int mtn_open(const char *, int, mode_t);
