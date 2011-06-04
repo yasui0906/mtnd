@@ -224,12 +224,14 @@ int send_data_stream(int s, kdata *data)
   size  = sizeof(khead);
   size += data->head.size;
   buff  = (uint8_t *)data;
+  lprintf(0, "%s: [info] size=%d\n", __func__, size);
   while(send_readywait(s)){
     int r = send(s, buff, size, 0);
     if(r == -1){
       if(errno == EINTR){
         continue;
       }
+      lprintf(0, "%s: [error] errno=%d\n", __func__, errno);
       return(-1);
     }
     if(size == r){
@@ -237,6 +239,24 @@ int send_data_stream(int s, kdata *data)
     }
     size -= r;
     buff += r;
+  }
+  return(0);
+}
+
+int send_recv_stream(int s, kdata *sd, kdata *rd)
+{
+  if(send_data_stream(s, sd) == -1){
+    lprintf(0, "%s: [error] send error %s\n", __func__, strerror(errno));
+    return(-1);
+  }
+  if(recv_data_stream(s, rd) == -1){
+    lprintf(0, "%s: [error] recv error %s\n", __func__, strerror(errno));
+    return(-1);
+  }
+  if(rd->head.type == MTNRES_ERROR){
+    lprintf(0, "%s: [error3] %s\n", __func__, strerror(errno));
+    mtn_get_int(&errno, rd, sizeof(errno));
+    return(-1);
   }
   return(0);
 }
@@ -637,6 +657,11 @@ kmember *get_member(kaddr *addr, int mkflag)
   return(NULL);
 }
 
+//-------------------------------------------------------------------
+//
+//
+//
+//-------------------------------------------------------------------
 void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
 {
   int r;
@@ -750,13 +775,18 @@ void rmstat(kstat *kst)
 
 kstat *newstat(const char *name)
 {
-  kstat *kst = NULL;
-  kst = malloc(sizeof(kstat));
+  char b[PATH_MAX];
+  char f[PATH_MAX];
+  kstat *kst = malloc(sizeof(kstat));
   memset(kst, 0, sizeof(kstat));
-  if(name){
-    kst->name = malloc(strlen(name) + 1);
-    strcpy(kst->name, name);
+  if(!name){
+    b[0] = 0;
+  }else{
+    strcpy(b, name);
   }
+  strcpy(f, basename(b));
+  kst->name = malloc(strlen(f) + 1);
+  strcpy(kst->name, f);
   return(kst);
 }
 
@@ -778,7 +808,7 @@ kstat *mkstat(kaddr *addr, kdata *data)
   kst->name = malloc(len);
   mtn_get_string(kst->name,  data);
   mtn_get_stat(&(kst->stat), data);
-  kst->member = get_member(addr, 1);
+  kst->member = get_member(addr,1);
 
   len = strlen(kst->member->host);
   if(kopt.field_size[0] < len){
@@ -912,7 +942,7 @@ void mtn_find_process(kdata *sdata, kdata *rdata, kaddr *addr)
   sdata->option = mgstat(sdata->option, mkstat(addr, rdata));
 }
 
-kstat *mtn_find(const char *path, int flags)
+kstat *mtn_find(const char *path, int create_flag)
 {
   kstat *kst;
   kdata data;
@@ -921,50 +951,66 @@ kstat *mtn_find(const char *path, int flags)
   data.head.size = 0;
   mtn_set_string((uint8_t *)path, &data);
   mtn_process(&data, (MTNPROCFUNC)mtn_find_process);
-  if(data.option == NULL){
-    if(flags & O_CREAT){
+  kst = data.option;
+  if(kst == NULL){
+    if(create_flag){
       kst = newstat(path);
       kst->member = mtn_choose(path);
-      return(kst);
     }
   }
-  return(data.option);
+  return(kst);
 }
 
-int mtn_open(const char *path, int flags, mode_t mode)
+int mtn_connect(const char *path, int create_flag)
 {
-  int s = 0;
-  kdata  sd;
-  kdata  rd;
-  kstat *st = mtn_find(path, flags);
-
+  int s;
+  kstat *st = mtn_find(path, create_flag);
   if(st == NULL){
-    lprintf(0, "error: node not found\n");
+    lprintf(0, "%s: [error] node not found\n", __func__);
     errno = EACCES;
     return(-1);
   }
   s = create_socket(0, SOCK_STREAM);
   if(s == -1){
-    lprintf(0, "error: %s\n", __func__);
+    lprintf(0, "%s: [error]\n", __func__);
     errno = EACCES;
     return(-1);
   }
   if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
-    lprintf(0, "error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    lprintf(0, "%s: [error] %s %s:%d\n", __func__, strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
     close(s);
     errno = EACCES;
     return(-1);
   }
   lprintf(0, "%s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  return(s);
+}
+
+//-------------------------------------------------------------------
+//
+//-------------------------------------------------------------------
+int mtn_open(const char *path, int flags, mode_t mode)
+{
+  kdata sd;
+  kdata rd;
+  int s = mtn_connect(path, ((flags & O_CREAT) != 0));
+  if(s == -1){
+    return(-1);
+  }
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.type = MTNCMD_OPEN;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_set_int(&flags, &sd, sizeof(flags));
   mtn_set_int(&mode,  &sd, sizeof(mode));
-  send_stream(s, &sd);
-  recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
-  recv_stream(s, rd.data.data, rd.head.size);
+  if(send_data_stream(s, &sd) == -1){
+    close(s);
+    return(-1);
+  }
+  if(recv_data_stream(s, &rd) == -1){
+    close(s);
+    return(-1);
+  }
   if(rd.head.type == MTNRES_ERROR){
     mtn_get_int(&errno, &rd, sizeof(errno));
     close(s);
@@ -999,7 +1045,7 @@ int mtn_read(int s, char *buf, size_t size, off_t offset)
   }
   sd.head.size = 0;
   sd.head.type = MTNRES_SUCCESS;
-  send_stream(s, &sd);
+  send_data_stream(s, &sd);
   return(r);
 }
 
@@ -1038,78 +1084,25 @@ int mtn_close(int s)
   return(0);
 }
 
-int mtn_truncate(const char *path, off_t offset)
+int mtn_callcmd(ktask *kt)
 {
-  int s = 0;
-  kdata  sd;
-  kdata  rd;
-  kstat *st = mtn_find(path, 0);
-
-  if(st == NULL){
-    lprintf(0, "error: node not found\n");
-    errno = EACCES;
-    return(-1);
+  kt->send.head.ver  = PROTOCOL_VERSION;
+  kt->send.head.type = kt->type;
+  if(kt->con){
+    kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
+    lprintf(0, "%s: 1 res=%d\n", __func__, kt->res);
+    return(kt->res);
   }
-  s = create_socket(0, SOCK_STREAM);
-  if(s == -1){
-    lprintf(0, "error: %s\n", __func__);
-    errno = EACCES;
-    return(-1);
+  kt->con = mtn_connect(kt->path, kt->create);
+  if(kt->con == -1){
+    kt->res = -1;
+    lprintf(0, "%s: [error] cat't connect %s\n", __func__, kt->path);
+  }else{
+    kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
+    close(kt->con);
+    lprintf(0, "%s: 2 res=%d\n", __func__, kt->res);
   }
-  if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
-    lprintf(0, "error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
-    close(s);
-    errno = EACCES;
-    return(-1);
-  }
-  lprintf(0, "%s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
-  sd.head.ver  = PROTOCOL_VERSION;
-  sd.head.size = 0;
-  sd.head.type = MTNCMD_TRUNCATE;
-  mtn_set_string((uint8_t *)path, &sd);
-  mtn_set_int(&offset, &sd, sizeof(offset));
-  send_data_stream(s, &sd);
-  recv_data_stream(s, &rd);
-  close(s);
-  if(rd.head.type == MTNRES_ERROR){
-    mtn_get_int(&errno, &rd, sizeof(errno));
-    return(-1);
-  }
-  return(0);
-}
-
-int mtn_callcmd(const char *path, kdata *sd)
-{
-  int s = 0;
-  kdata  rd;
-  kstat *st = mtn_find(path, 0);
-
-  if(st == NULL){
-    lprintf(0, "error: node not found\n");
-    errno = EACCES;
-    return(-1);
-  }
-  s = create_socket(0, SOCK_STREAM);
-  if(s == -1){
-    lprintf(0, "error: %s\n", __func__);
-    errno = EACCES;
-    return(-1);
-  }
-  if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
-    lprintf(0, "error: %s %s:%d\n", strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
-    close(s);
-    errno = EACCES;
-    return(-1);
-  }
-  lprintf(0, "%s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
-  sd->head.ver  = PROTOCOL_VERSION;
-  send_data_stream(s,  sd);
-  recv_data_stream(s, &rd);
-  close(s);
-  if(rd.head.type == MTNRES_ERROR){
-    mtn_get_int(&errno, &rd, sizeof(errno));
-    return(-1);
-  }
-  return(0);
+  kt->con = 0;
+  return(kt->res);
 }
 

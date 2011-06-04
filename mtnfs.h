@@ -59,6 +59,8 @@
 #define MTNCMD_RENAME   18
 #define MTNCMD_CHMOD    19
 #define MTNCMD_CHOWN    20
+#define MTNCMD_GETATTR  21
+#define MTNCMD_SETATTR  22
 #define MTNCMD_MAX      99
 
 #define MTNTYPE_STRING   1
@@ -123,17 +125,21 @@ typedef struct kstat
 
 typedef struct ktask
 {
+  int     fd;
+  int     con;
+  int     res;
+  DIR    *dir;
   uint8_t type;
   uint8_t fin;
-  int fd;
-  DIR *dir;
+  uint8_t create;
+  struct  stat  stat;
+  struct  kaddr addr;
+  struct  kdata send;
+  struct  kdata recv;
+  struct  kstat *kst;
+  struct  ktask *prev;
+  struct  ktask *next;
   uint8_t path[PATH_MAX];
-  struct stat  stat;
-  struct kaddr addr;
-  struct kdata send;
-  struct kdata recv;
-  struct ktask *prev;
-  struct ktask *next;
 }__attribute__((packed)) ktask;
 
 typedef struct kdir
@@ -175,6 +181,8 @@ int recv_data_stream(int, kdata *);
 int send_data_stream(int, kdata *);
 kmember *mtn_choose(const char *);
 kstat *mtn_find(const char *, int);
+int mtn_set_int(void *, kdata *, int);
+int mtn_get_int(void *, kdata *, int);
 /*
 int send_readywait(int s);
 int create_socket(int port, int mode);

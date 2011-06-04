@@ -3,7 +3,7 @@
  * Copyright (C) 2011 KLab Inc.
  */
 #include "mtnfs.h"
-typedef void (*MTNFSTASKFUNC)(int, ktask *);
+typedef void (*MTNFSTASKFUNC)(ktask *);
 MTNFSTASKFUNC task_func[MTNCMD_MAX];
 
 void version()
@@ -135,25 +135,25 @@ ktask *mtnfs_task_delete(ktask *task)
   return(nt);
 }
 
-static void mtnfs_hello_process(int s, ktask *kt)
+static void mtnfs_hello_process(ktask *kt)
 {
   lprintf(0,"%s: START\n", __func__);
   mtn_set_string(kopt.host, &(kt->send));
-  send_dgram(s, &(kt->send), &(kt->addr));
+  send_dgram(kt->con, &(kt->send), &(kt->addr));
   kt->fin = 1;
 }
 
-static void mtnfs_info_process(int s, ktask *kt)
+static void mtnfs_info_process(ktask *kt)
 {
   lprintf(1,"%s: START\n", __func__);
   uint32_t size = get_freesize();
   kt->send.head.fin = 1;
   mtn_set_int(&size, &(kt->send), sizeof(size));
-  send_dgram(s, &(kt->send), &(kt->addr));
+  send_dgram(kt->con, &(kt->send), &(kt->addr));
   kt->fin = 1;
 }
 
-static void mtnfs_list_process(int s, ktask *kt)
+static void mtnfs_list_process(ktask *kt)
 {
   lprintf(0,"%s: START\n", __func__);
   uint16_t len;
@@ -171,7 +171,7 @@ static void mtnfs_list_process(int s, ktask *kt)
         len  = mtn_set_string(ent->d_name, NULL);
         len += mtn_set_stat(&(kt->stat),   NULL);
         if(kt->send.head.size + len > kopt.max_packet_size){
-          send_dgram(s, &(kt->send), &(kt->addr));
+          send_dgram(kt->con, &(kt->send), &(kt->addr));
           memset(&(kt->send), 0, sizeof(kt->send));
           mtn_set_string(ent->d_name, &(kt->send));
           mtn_set_stat(&(kt->stat),   &(kt->send));
@@ -185,7 +185,7 @@ static void mtnfs_list_process(int s, ktask *kt)
     kt->fin = 1;
     kt->dir = NULL;
     kt->send.head.fin = 1;
-    send_dgram(s, &(kt->send), &(kt->addr));
+    send_dgram(kt->con, &(kt->send), &(kt->addr));
     return;
   }
 
@@ -198,7 +198,7 @@ static void mtnfs_list_process(int s, ktask *kt)
     lprintf(0, "%s: %s %s\n", __func__, strerror(errno), kt->path);
     kt->fin = 1;
     kt->send.head.fin = 1;
-    send_dgram(s, &(kt->send), &(kt->addr));
+    send_dgram(kt->con, &(kt->send), &(kt->addr));
     return;
   }
   if(S_ISREG(kt->stat.st_mode)){
@@ -206,7 +206,7 @@ static void mtnfs_list_process(int s, ktask *kt)
     mtn_set_stat(&(kt->stat), &(kt->send));
     kt->fin = 1;
     kt->send.head.fin = 1;
-    send_dgram(s, &(kt->send), &(kt->addr));
+    send_dgram(kt->con, &(kt->send), &(kt->addr));
     return;
   }
   if(S_ISDIR(kt->stat.st_mode)){
@@ -229,7 +229,7 @@ void mtnfs_udp_process(int s)
   int ver  = data.head.ver;
   int type = data.head.type;
   int size = data.head.size;
-  printf("type=%d size=%d ver=%d from=%s:%d\n", type, size, ver, inet_ntoa(addr.addr.in.sin_addr), ntohs(addr.addr.in.sin_port));
+  printf("%s: type=%d size=%d ver=%d from=%s:%d\n", __func__, type, size, ver, inet_ntoa(addr.addr.in.sin_addr), ntohs(addr.addr.in.sin_port));
   // for debug end
 }
 
@@ -237,9 +237,10 @@ void mtnfs_task_process(int s)
 {
   ktask *kt = kopt.task;
   while(kt){
+    kt->con = s;
     MTNFSTASKFUNC task = task_func[kt->type];
     if(task){
-      task(s, kt);
+      task(kt);
     }else{
       lprintf(0, "%s: Function Not Found %d\n", __func__, kt->type);
     }
@@ -248,9 +249,9 @@ void mtnfs_task_process(int s)
 }
 
 //------------------------------------------------------
-//
+// mtntool commands
 //------------------------------------------------------
-void mtnfs_child_get(int s, ktask *kt)
+void mtnfs_child_get(ktask *kt)
 {
   mtn_get_string(kt->path, &(kt->recv));
   lprintf(0,"%s: %s\n", __func__, kt->path);
@@ -274,13 +275,12 @@ void mtnfs_child_get(int s, ktask *kt)
         kt->fd = 0;
         break;
       }
-      send_data_stream(s, &(kt->send));
+      send_data_stream(kt->con, &(kt->send));
     }
   }
-  send_data_stream(s, &(kt->send));
 }
 
-void mtnfs_child_set(int s, ktask *kt)
+void mtnfs_child_set(ktask *kt)
 {
   int r;
   if(kt->fd){
@@ -315,10 +315,12 @@ void mtnfs_child_set(int s, ktask *kt)
       mtn_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
-  send_stream(s, &(kt->send));
 }
 
-void mtnfs_child_open(int s, ktask *kt)
+//------------------------------------------------------
+// mtnmount commands
+//------------------------------------------------------
+void mtnfs_child_open(ktask *kt)
 {
   int   flags;
   mode_t mode;
@@ -328,16 +330,16 @@ void mtnfs_child_open(int s, ktask *kt)
   mtnfs_fix_path(kt->path);
   kt->fd = open(kt->path, flags, mode);
   if(kt->fd == -1){
+    kt->fd = 0;
     kt->send.head.type = MTNRES_ERROR;
     mtn_set_int(&errno, &(kt->send), sizeof(errno));
-    lprintf(0, "%s: NG path=%s create=%d mode=%o\n", __func__, kt->path, ((flags & O_CREAT) != 0), mode);
+    lprintf(0, "%s: [info] NG path=%s create=%d mode=%o\n", __func__, kt->path, ((flags & O_CREAT) != 0), mode);
   }else{
-    lprintf(0, "%s: OK path=%s create=%d mode=%o\n", __func__, kt->path, ((flags & O_CREAT) != 0), mode);
+    lprintf(0, "%s: [info] PK path=%s create=%d mode=%o\n", __func__, kt->path, ((flags & O_CREAT) != 0), mode);
   }
-  send_stream(s, &(kt->send));
 }
 
-void mtnfs_child_read(int s, ktask *kt)
+void mtnfs_child_read(ktask *kt)
 {
   int r;
   size_t  size;
@@ -363,14 +365,13 @@ void mtnfs_child_read(int s, ktask *kt)
     size -= r;
     kt->send.head.fin  = 0;
     kt->send.head.size = r;
-    send_stream(s, &(kt->send));
+    send_data_stream(kt->con, &(kt->send));
   }
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  send_stream(s, &(kt->send));
 }
 
-void mtnfs_child_write(int s, ktask *kt)
+void mtnfs_child_write(ktask *kt)
 {
   int r;
   size_t  size;
@@ -393,19 +394,17 @@ void mtnfs_child_write(int s, ktask *kt)
     size -= r;
   }
   lprintf(0, "%s: 2 res=%d\n", __func__, (int)(kt->send.head.type));
-  send_stream(s, &(kt->send));
 }
 
-void mtnfs_child_close(int s, ktask *kt)
+void mtnfs_child_close(ktask *kt)
 {
   if(kt->fd){
     close(kt->fd);
     kt->fd = 0;
   }
-  send_stream(s, &(kt->send));
 }
 
-void mtnfs_child_truncate(int s, ktask *kt)
+void mtnfs_child_truncate(ktask *kt)
 {
   off_t offset;
   mtn_get_string(kt->path, &(kt->recv));
@@ -418,24 +417,52 @@ void mtnfs_child_truncate(int s, ktask *kt)
   }else{
     lprintf(0, "%s: OK path=%s offset=%llu\n", __func__, kt->path, offset);
   }
-  send_stream(s, &(kt->send));
 }
 
-void mtnfs_child_mkdir(int s, ktask *kt)
+void mtnfs_child_mkdir(ktask *kt)
 {
 }
 
-void mtnfs_child_error(int s, ktask *kt)
+void mtnfs_child_getattr(ktask *kt)
+{
+  lprintf(0, "%s: 0\n", __func__);
+  struct stat st;
+  if(kt->fd){
+    if(fstat(kt->fd, &st) == -1){
+      lprintf(0, "%s: 1\n", __func__);
+      kt->send.head.type = MTNRES_ERROR;
+      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    }else{
+      lprintf(0, "%s: 2\n", __func__);
+      mtn_set_stat(&st, &(kt->send));
+    }
+  }else{
+    mtn_get_string(kt->path, &(kt->recv));
+    if(lstat(kt->path, &st) == -1){
+      lprintf(0, "%s: 3\n", __func__);
+      kt->send.head.type = MTNRES_ERROR;
+      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    }else{
+      lprintf(0, "%s: 4\n", __func__);
+      mtn_set_stat(&st, &(kt->send));
+    }
+  }
+}
+
+void mtnfs_child_setattr(ktask *kt)
+{
+}
+
+void mtnfs_child_error(ktask *kt)
 {
   errno = EACCES;
-  lprintf(0, "%s: TYPE=%u\n", __func__, kt->recv.head.type);
+  lprintf(0, "%s: [error] TYPE=%u\n", __func__, kt->recv.head.type);
   kt->send.head.type = MTNRES_ERROR;
   mtn_set_int(&errno, &(kt->send), sizeof(errno));
 }
 
-void mtnfs_child(int s, kaddr *addr)
+void mtnfs_child(ktask *kt)
 {
-  ktask kt;
   MTNFSTASKFUNC call_func;
   MTNFSTASKFUNC func_list[MTNCMD_MAX];
   memset(func_list, 0, sizeof(func_list));
@@ -447,25 +474,28 @@ void mtnfs_child(int s, kaddr *addr)
   func_list[MTNCMD_CLOSE]    = mtnfs_child_close;
   func_list[MTNCMD_TRUNCATE] = mtnfs_child_truncate;
   func_list[MTNCMD_MKDIR]    = mtnfs_child_mkdir;
-  lprintf(0,"%s: PID=%d accept from %s:%d\n", __func__, getpid(), inet_ntoa(addr->addr.in.sin_addr), ntohs(addr->addr.in.sin_port));
-  while(is_loop && (kt.send.head.fin == 0)){
-    kt.send.head.ver  = PROTOCOL_VERSION;
-    kt.send.head.type = MTNRES_SUCCESS;
-    kt.send.head.size = 0;
-    int r = recv_data_stream(s, &(kt.recv));
-    if(r == -1){
-      lprintf(0, "%s: recv error\n", __func__);
+  func_list[MTNCMD_GETATTR]  = mtnfs_child_getattr;
+  func_list[MTNCMD_SETATTR]  = mtnfs_child_setattr;
+  lprintf(0,"%s: PID=%d accept from %s:%d\n", __func__, getpid(), inet_ntoa(kt->addr.addr.in.sin_addr), ntohs(kt->addr.addr.in.sin_port));
+  while(is_loop && (kt->fin == 0)){
+    kt->send.head.ver  = PROTOCOL_VERSION;
+    kt->send.head.type = MTNRES_SUCCESS;
+    kt->send.head.size = 0;
+    kt->res = recv_data_stream(kt->con, &(kt->recv));
+    if(kt->res == -1){
+      lprintf(0, "%s: [error] recv error\n", __func__);
       break;
     }
-    if(r == 1){
-      lprintf(0, "%s: remote close\n", __func__);
+    if(kt->res == 1){
+      lprintf(0, "%s: [info] remote close\n", __func__);
       break;
     }
-    lprintf(0,"%s: pid=%d type=%d size=%d\n", __func__, getpid(), kt.recv.head.type, kt.recv.head.size);
-    if(call_func = func_list[kt.recv.head.type]){
-      call_func(s, &kt);
+    lprintf(0,"%s: [info] pid=%d recv_type=%d recv_size=%d\n", __func__, getpid(), kt->recv.head.type, kt->recv.head.size);
+    if(call_func = func_list[kt->recv.head.type]){
+      call_func(kt);
+      send_stream(kt->con, &(kt->send));
     }else{
-      mtnfs_child_error(s, &kt);
+      mtnfs_child_error(kt);
     }
   }
   lprintf(0, "%s: PID=%d END\n", __func__, getpid());
@@ -473,34 +503,33 @@ void mtnfs_child(int s, kaddr *addr)
 
 void mtnfs_accept_process(int l)
 {
-  int s;
+  ktask kt;
   pid_t pid;
-  kaddr addr;
-  memset(&addr, 0, sizeof(addr));
-  addr.len = sizeof(addr.addr);
-  s = accept(l, &(addr.addr.addr), &(addr.len));
-  if(s == -1){
-    lprintf(0, "%s: %s\n", __func__, strerror(errno));
+  memset(&kt, 0, sizeof(kt));
+  kt.addr.len = sizeof(kt.addr.addr);
+  kt.con = accept(l, &(kt.addr.addr.addr), &(kt.addr.len));
+  if(kt.con == -1){
+    lprintf(0, "%s: [error] %s\n", __func__, strerror(errno));
     exit(0);
   }
 
   pid = fork();
   if(pid == -1){
-    lprintf(0, "%s: fork error\n", __func__);
-    close(s);
+    lprintf(0, "%s: [error] fork error %s\n", __func__, strerror(errno));
+    close(kt.con);
     return;
   }
   if(pid){
-    close(s);
+    close(kt.con);
     return;
   }
 
   //----- child process -----
-  lprintf(0, "%s: PID=%d CHILD START\n", __func__, getpid());
+  lprintf(0, "%s: [info] PID=%d CHILD START\n", __func__, getpid());
   close(l);
-  mtnfs_child(s, &addr);
-  close(s);
-  lprintf(0, "%s: PID=%d CHILD END\n", __func__, getpid());
+  mtnfs_child(&kt);
+  close(kt.con);
+  lprintf(0, "%s: [info] PID=%d CHILD END\n", __func__, getpid());
   exit(0);
 }
 
