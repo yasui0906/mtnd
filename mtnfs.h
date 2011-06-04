@@ -4,7 +4,7 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
-#define PACKAGE_VERSION "0.2"
+#define PACKAGE_VERSION "0.5"
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
 #include <stdio.h>
@@ -183,6 +183,7 @@ kmember *mtn_choose(const char *);
 kstat *mtn_find(const char *, int);
 int mtn_set_int(void *, kdata *, int);
 int mtn_get_int(void *, kdata *, int);
+void dirbase(const char *, char *, char *);
 /*
 int send_readywait(int s);
 int create_socket(int port, int mode);

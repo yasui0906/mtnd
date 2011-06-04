@@ -15,13 +15,14 @@ void usage()
   printf("usage: %s [OPTION] [PATH]\n", MODULE_NAME);
   printf("\n");
   printf("  OPTION\n");
-  printf("   -h      --help\n");
-  printf("   -V      --version\n");
-  printf("   -i      --info\n");
-  printf("   -l      --list\n");
-  printf("   -s      --set\n");
-  printf("   -g      --get\n");
-  printf("   -f path --file=path\n");
+  printf("   -h      --help      #\n");
+  printf("   -v      --version   #\n");
+  printf("   -i      --info      #\n");
+  printf("   -l      --list      #\n");
+  printf("   -s      --set       #\n");
+  printf("   -g      --get       #\n");
+  printf("   -d      --delete    #\n");
+  printf("   -f path --file=path #\n");
   printf("\n");
 }
 

@@ -23,15 +23,6 @@ void clear_dircache(const char *path){
   }
 }
 
-void dirbase(const char *path, char *d, char *f)
-{
-  char b[PATH_MAX];
-  strcpy(b, path);
-  strcpy(d, dirname(b));
-  strcpy(b, path);
-  strcpy(f, basename(b));
-}
-
 static int mtnmount_getattr(const char *path, struct stat *stbuf)
 {
   int   res = 0;
@@ -76,10 +67,10 @@ static int mtnmount_readlink(const char *path, char *buff, size_t size)
 static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
   lprintf(0, "%s: path=%s\n", __func__, path);
-  mtn_hello();
   kstat *krt = mtn_list(path);
   kstat *kst = krt;
 
+  mtn_hello();
   filler(buf, ".",  NULL, 0);
   filler(buf, "..", NULL, 0);
   while(kst){
@@ -93,26 +84,35 @@ static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 static int mtnmount_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
+  int  r = 0;
+  char d[PATH_MAX];
+  char f[PATH_MAX];
+
   lprintf(0, "%s: 1 path=%s fh=%llu mode=%o\n", __func__, path, fi->fh, mode);
-  clear_dircache(path);
-  int f = mtn_open(path, fi->flags, mode);
-  if(f == -1){
+  dirbase(path,d,f);
+  clear_dircache(d);
+  r = mtn_open(path, fi->flags, mode);
+  if(r == -1){
     return(-errno);
   }
-  fi->fh = (uint64_t)f;
+  fi->fh = (uint64_t)r;
   lprintf(0, "%s: 2 path=%s fh=%llu\n", __func__, path, fi->fh);
   return(0); 
 }
 
 static int mtnmount_open(const char *path, struct fuse_file_info *fi)
 {
+  int  r = 0;
+  char d[PATH_MAX];
+  char f[PATH_MAX];
   lprintf(0, "%s: 1 path=%s fh=%llu\n", __func__, path, fi->fh);
-  clear_dircache(path);
-  int f = mtn_open(path, fi->flags, 0);
-  if(f == -1){
+  dirbase(path,d,f);
+  clear_dircache(d);
+  r = mtn_open(path, fi->flags, 0);
+  if(r == -1){
     return(-errno);
   }
-  fi->fh = (uint64_t)f;
+  fi->fh = (uint64_t)r;
   lprintf(0, "%s: 2 path=%s fh=%llu\n", __func__, path, fi->fh);
   return(0); 
 }
@@ -170,14 +170,18 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
 static int mtnmount_mkdir(const char *path, mode_t mode)
 {
   ktask kt;
+  char d[PATH_MAX];
+  char f[PATH_MAX];
   lprintf(0, "%s: path=%s\n", __func__, path);
   memset(&kt, 0, sizeof(kt));
+  dirbase(path, d, f);
   strcpy(kt.path, path);
   kt.type = MTNCMD_MKDIR;
   mtn_set_string(path, &(kt.send));
   if(mtn_callcmd(&kt) == -1){
     return(-errno);
   }
+  clear_dircache(path);
   return(0);
 }
 
@@ -192,6 +196,7 @@ static int mtnmount_unlink(const char *path)
   if(mtn_callcmd(&kt) == -1){
     return(-errno);
   }
+  clear_dircache(path);
   return(0);
 }
 
@@ -206,6 +211,7 @@ static int mtnmount_rmdir(const char *path)
   if(mtn_callcmd(&kt) == -1){
     return(-errno);
   }
+  clear_dircache(path);
   return(0);
 }
 
@@ -220,6 +226,7 @@ static int mtnmount_chmod(const char *path, mode_t mode)
 {
   ktask kt;
   lprintf(0, "%s: path=%s\n", __func__, path);
+  clear_dircache(path);
   return(0);
 }
 

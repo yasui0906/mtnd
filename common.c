@@ -50,6 +50,15 @@ void mtn_init_option()
   kopt.max_packet_size = 1024;
 }
 
+void dirbase(const char *path, char *d, char *f)
+{
+  char b[PATH_MAX];
+  strcpy(b, path);
+  strcpy(d, dirname(b));
+  strcpy(b, path);
+  strcpy(f, basename(b));
+}
+
 int send_readywait(int s)
 {
   fd_set fds;
@@ -1086,11 +1095,12 @@ int mtn_close(int s)
 
 int mtn_callcmd(ktask *kt)
 {
+  lprintf(0, "%s: START\n", __func__);
   kt->send.head.ver  = PROTOCOL_VERSION;
   kt->send.head.type = kt->type;
   if(kt->con){
     kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
-    lprintf(0, "%s: 1 res=%d\n", __func__, kt->res);
+    lprintf(0, "%s: [info] res=%d\n", __func__, kt->res);
     return(kt->res);
   }
   kt->con = mtn_connect(kt->path, kt->create);
@@ -1100,9 +1110,10 @@ int mtn_callcmd(ktask *kt)
   }else{
     kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
     close(kt->con);
-    lprintf(0, "%s: 2 res=%d\n", __func__, kt->res);
+    lprintf(0, "%s: [info] res=%d\n", __func__, kt->res);
   }
   kt->con = 0;
+  lprintf(0, "%s: END\n", __func__);
   return(kt->res);
 }
 
