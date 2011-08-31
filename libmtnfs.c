@@ -3,40 +3,14 @@
  * Copyright (C) 2011 KLab Inc.
  */
 #include "mtnfs.h"
-typedef void (*MTNPROCFUNC)(kdata *send, kdata *recv, kaddr *addr);
-kmember *make_member(uint8_t *host, kaddr *addr);
-kmember *get_member(kaddr *addr, int mkflag);
+#include "common.h"
+typedef void (*MTNPROCFUNC)(kmember *member, kdata *send, kdata *recv, kaddr *addr);
+kmember *make_member(kmember *members, uint8_t *host, kaddr *addr);
+kmember *get_member(kmember *members, kaddr *addr, int mkflag);
+kmember *mtn_hello();
 
 int is_loop = 1;
 koption kopt;
-kmember *members = NULL;
-
-void lprintf(int l, char *fmt, ...)
-{
-  va_list arg;
-  struct timeval tv;
-  char b[1024];
-  char d[2048];
-  static char m[2048];
-  strcpy(d, m);
-  va_start(arg, fmt);
-  vsnprintf(b, sizeof(b), fmt, arg);
-  va_end(arg);
-  b[sizeof(b) - 1] = 0;
-  snprintf(m, sizeof(m), "%s%s", d, b);
-  m[sizeof(m) - 1] = 0;
-  m[sizeof(m) - 2] = '\n';
-  if(!strchr(m, '\n')){
-    return;
-  }
-#ifdef MTN_DEBUG
-  gettimeofday(&tv, NULL);
-  fprintf(stderr, "%02d.%06d %s", tv.tv_sec % 60, tv.tv_usec, m);
-#else
-  fprintf(stderr, "%s", m);
-#endif
-  m[0] = 0;
-}
 
 void mtn_init_option()
 {
@@ -44,23 +18,9 @@ void mtn_init_option()
   strcpy(kopt.mcast_addr, "224.0.0.110");	
   kopt.mcast_port = 6000;
   kopt.host[0]    = 0;
-  kopt.freesize   = 0;
-  kopt.datasize   = 0;
   kopt.debuglevel = 0;
   kopt.max_packet_size = 1024;
-}
-
-void dirbase(const char *path, char *d, char *f)
-{
-  char b[PATH_MAX];
-	if(d){
-		strcpy(b, path);
-		strcpy(d, dirname(b));
-	}
-	if(f){
-		strcpy(b, path);
-		strcpy(f, basename(b));
-	}
+  pthread_mutex_init(&(kopt.member_mutex), NULL);
 }
 
 int send_readywait(int s)
@@ -259,16 +219,11 @@ int send_data_stream(int s, kdata *data)
 int send_recv_stream(int s, kdata *sd, kdata *rd)
 {
   if(send_data_stream(s, sd) == -1){
-    lprintf(0, "%s: [error] send error %s\n", __func__, strerror(errno));
+    lprintf(0, "[error] %s: send error %s\n", __func__, strerror(errno));
     return(-1);
   }
   if(recv_data_stream(s, rd) == -1){
-    lprintf(0, "%s: [error] recv error %s\n", __func__, strerror(errno));
-    return(-1);
-  }
-  if(rd->head.type == MTNRES_ERROR){
-    lprintf(0, "%s: [error3] %s\n", __func__, strerror(errno));
-    mtn_get_int(&errno, rd, sizeof(errno));
+    lprintf(0, "[error] %s: recv error %s\n", __func__, strerror(errno));
     return(-1);
   }
   return(0);
@@ -282,7 +237,7 @@ int create_socket(int port, int mode)
   addr.sin_family      = AF_INET;
   addr.sin_port        = htons(port);
   addr.sin_addr.s_addr = INADDR_ANY;
-  s=socket(AF_INET, mode, 0);
+  s = socket(AF_INET, mode, 0);
   if(s == -1){
     lprintf(0, "%s: can't create socket\n", __func__);
     return(-1);
@@ -621,7 +576,7 @@ void get_mode_string(uint8_t *buff, mode_t mode)
   *buff = 0;
 }
 
-void clear_members()
+void clear_members(kmember *members)
 {
   kmember *member;
   while(members){
@@ -634,9 +589,9 @@ void clear_members()
   }
 }
 
-kmember *make_member(uint8_t *host, kaddr *addr)
+kmember *make_member(kmember *members, uint8_t *host, kaddr *addr)
 {
-  kmember *member = get_member(addr, 0);
+  kmember *member = get_member(members, addr, 0);
   if(member == NULL){
     member = malloc(sizeof(kmember));
     memset(member, 0, sizeof(kmember));
@@ -656,7 +611,18 @@ kmember *make_member(uint8_t *host, kaddr *addr)
   return(member);
 }
 
-kmember *get_member(kaddr *addr, int mkflag)
+kmember *copy_member(kmember *member)
+{
+  if(member == NULL){
+    return(NULL);
+  }
+  kmember *newmember = make_member(NULL, member->host, &(member->addr));
+  newmember->mark = member->mark;
+  newmember->free = member->free;
+  return(newmember);
+}
+
+kmember *get_member(kmember *members, kaddr *addr, int mkflag)
 {
   kmember *member;
   for(member=members;member;member=member->next){
@@ -665,9 +631,31 @@ kmember *get_member(kaddr *addr, int mkflag)
     }
   }
   if(mkflag){
-    return(make_member(NULL, addr));
+    return(make_member(members, NULL, addr));
   }
   return(NULL);
+}
+
+kmember *get_members(){
+  struct timeval tv;
+  kmember *member  = NULL;
+  kmember *members = NULL;
+  gettimeofday(&tv, NULL);
+  pthread_mutex_lock(&(kopt.member_mutex));
+  if(tv.tv_sec - 10 > kopt.member_tv.tv_sec){
+    kopt.members = NULL;
+  }
+  if(kopt.members == NULL){
+    if(tv.tv_sec - 10 > kopt.member_tv.tv_sec){
+      kopt.members = mtn_hello();
+      memcpy(&(kopt.member_tv), &tv, sizeof(struct timeval));
+    }
+  }
+  for(member=kopt.members;member;member=member->next){
+    members = make_member(members, member->host, &(member->addr));
+  }
+  pthread_mutex_unlock(&(kopt.member_mutex));
+  return(members);
 }
 
 //-------------------------------------------------------------------
@@ -675,7 +663,7 @@ kmember *get_member(kaddr *addr, int mkflag)
 //
 //
 //-------------------------------------------------------------------
-void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
+void mtn_process(kmember *members, kdata *sdata, MTNPROCFUNC mtn)
 {
   int r;
   kaddr addr;
@@ -684,7 +672,10 @@ void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
   struct timeval tv;
   kmember *member;
 
-  int s= create_socket(0, SOCK_DGRAM);
+  if((members == NULL) && (sdata->head.type != MTNCMD_HELLO)){
+    return;
+  }
+  int s = create_socket(0, SOCK_DGRAM);
   addr.len                     = sizeof(struct sockaddr_in);
   addr.addr.in.sin_family      = AF_INET;
   addr.addr.in.sin_port        = htons(kopt.mcast_port);
@@ -692,17 +683,17 @@ void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
   sdata->head.ver              = PROTOCOL_VERSION;
   send_dgram(s, sdata, &addr);
 
-  tv.tv_sec  = 5;
+  tv.tv_sec  = 2;
   tv.tv_usec = 0;
   while(is_loop){
     FD_ZERO(&fds);
     FD_SET(s, &fds);
     r = select(1024, &fds, NULL,  NULL, &tv);
-    if(sdata->head.type == MTNCMD_HELLO){
+    if(members == NULL){
       tv.tv_sec  = 0;
       tv.tv_usec = 100000;
     }else{
-      tv.tv_sec  = 5;
+      tv.tv_sec  = 2;
       tv.tv_usec = 0;
     }
     if(r == 0){
@@ -711,72 +702,87 @@ void mtn_process(kdata *sdata, MTNPROCFUNC mtn)
     if(r == -1){
       continue; /* error */
     }
-    if(FD_ISSET(s, &fds)){
-      memset(&addr, 0, sizeof(addr));
-      addr.len = sizeof(addr.addr);
-      if(recv_dgram(s, &rdata, &(addr.addr.addr), &(addr.len)) == 0){
-        mtn(sdata, &rdata, &addr);
-        if(sdata->head.type != MTNCMD_HELLO){
-          member = get_member(&addr, 1);
-          if(rdata.head.fin){
-            member->mark = 1;
-            for(member=members;member;member=member->next){
-              if(member->mark == 0){
-                break;
-              }
-            }
-            if(member == NULL){
-              tv.tv_sec  = 0;
-              tv.tv_usec = 100000;
-            }
+    if(!FD_ISSET(s, &fds)){
+      continue;
+    }
+    memset(&addr, 0, sizeof(addr));
+    addr.len = sizeof(addr.addr);
+    if(recv_dgram(s, &rdata, &(addr.addr.addr), &(addr.len))){
+      continue;
+    }
+    if(!members){
+      mtn(NULL, sdata, &rdata, &addr);
+    }else{
+      member = get_member(members, &addr, 1);
+      mtn(member, sdata, &rdata, &addr);
+      if(rdata.head.fin){
+        member->mark = 1;
+        for(member=members;member;member=member->next){
+          if(member->mark == 0){
+            break;
           }
+        }
+        if(member == NULL){
+          tv.tv_sec  = 0;
+          tv.tv_usec = 100000;
         }
       }
     }
   }
+  close(s);
 }
 
-void mtn_hello_process(kdata *sdata, kdata *rdata, kaddr *addr)
+void mtn_hello_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
   uint8_t host[1024];
+  kmember *members = (kmember *)(sdata->option);
   if(mtn_get_string(host, rdata) == -1){
     lprintf(0, "%s: mtn get error\n", __func__);
     return;
   }
-  make_member(host, addr);
+  sdata->option = make_member(members, host, addr);
 }
 
-void mtn_hello()
+kmember *mtn_hello()
 {
   kdata data;
-  clear_members();
+  kmember *members;
   data.head.type = MTNCMD_HELLO;
   data.head.size = 0;
-  mtn_process(&data, (MTNPROCFUNC)mtn_hello_process);
+  data.option = NULL;
+  mtn_process(NULL, &data, (MTNPROCFUNC)mtn_hello_process);
+  return((kmember *)(data.option));
 }
 
-void mtn_info_process(kdata *sdata, kdata *rdata, kaddr *addr)
+void mtn_info_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
-  kmember *member = get_member(addr, 1);
   mtn_get_int(&(member->free), rdata, sizeof(member->free));
-  printf("%s (%uM Free)\n", member->host, member->free);
+  printf("%s (%llu KBytes Free)\n", member->host, member->free / 1024);
 }
 
 void mtn_info()
 {
   kdata data;
-  data.head.type = MTNCMD_INFO;
-  data.head.size = 0;
-  mtn_process(&data, (MTNPROCFUNC)mtn_info_process);
+  kmember *members = get_members();
+  data.head.type   = MTNCMD_INFO;
+  data.head.size   = 0;
+  mtn_process(members, &data, (MTNPROCFUNC)mtn_info_process);
+  clear_members(members);
 }
 
-void rmstat(kstat *kst)
+kstat *rmstat(kstat *kst)
 {
+	kstat *r = NULL;
   if(!kst){
-    return;
+    return NULL;
   }
+  if(kst->prev){
+		kst->prev->next = kst->next;
+		kst->prev = NULL;
+	}
   if(kst->next){
-    rmstat(kst->next);
+		r = kst->next;
+		kst->next->prev = kst->prev;
     kst->next = NULL;
   }
   if(kst->name){
@@ -784,6 +790,14 @@ void rmstat(kstat *kst)
     kst->name = NULL;
   }
   free(kst);
+	return(r);
+}
+
+void rmstats(kstat *kst)
+{
+	while(kst){
+		kst = rmstat(kst);
+	}
 }
 
 kstat *newstat(const char *name)
@@ -803,7 +817,7 @@ kstat *newstat(const char *name)
   return(kst);
 }
 
-kstat *mkstat(kaddr *addr, kdata *data)
+kstat *mkstat(kmember *member, kaddr *addr, kdata *data)
 {
   char bf[PATH_MAX];
   struct passwd *pw;
@@ -811,7 +825,7 @@ kstat *mkstat(kaddr *addr, kdata *data)
   kstat *kst = NULL;
   size_t len = mtn_get_string(NULL, data);
   if(len == -1){
-    printf("%s: data error\n", __func__);
+    lprintf(0,"%s: data error\n", __func__);
     return(NULL);
   }
   if(len == 0){
@@ -821,12 +835,14 @@ kstat *mkstat(kaddr *addr, kdata *data)
   kst->name = malloc(len);
   mtn_get_string(kst->name,  data);
   mtn_get_stat(&(kst->stat), data);
-  kst->member = get_member(addr,1);
+  kst->member = copy_member(member);
 
-  len = strlen(kst->member->host);
-  if(kopt.field_size[0] < len){
-    kopt.field_size[0] = len;
-  }
+	if(kst->member->host){
+		len = strlen(kst->member->host);
+		if(kopt.field_size[0] < len){
+			kopt.field_size[0] = len;
+		}
+	}
 
   if(pw = getpwuid(kst->stat.st_uid)){
     strcpy(bf, pw->pw_name);
@@ -853,7 +869,7 @@ kstat *mkstat(kaddr *addr, kdata *data)
   if(kopt.field_size[3] < len){
     kopt.field_size[3] = len;
   }
-  if(kst->next = mkstat(addr, data)){
+  if(kst->next = mkstat(member, addr, data)){
     kst->next->prev = kst;
   }
   return kst;
@@ -873,12 +889,13 @@ kstat *mgstat(kstat *krt, kstat *kst)
   return krt;
 }
 
-void rmkdir(kdir *kd)
+kdir *rmkdir(kdir *kd)
 {
+	kdir *n;
   if(!kd){
     return;
   }
-  rmstat(kd->kst);
+  rmstats(kd->kst);
   kd->kst = NULL;
   if(kd->prev){
     kd->prev->next = kd->next;
@@ -886,7 +903,9 @@ void rmkdir(kdir *kd)
   if(kd->next){
     kd->next->prev = kd->prev;
   }
+	n = kd->next;
   free(kd);
+	return(n);
 }
 
 kdir *mkkdir(const char *path, kstat *ks, kdir *kd)
@@ -900,52 +919,60 @@ kdir *mkkdir(const char *path, kstat *ks, kdir *kd)
   return(nd);
 }
 
-void mtn_list_process(kdata *sdata, kdata *rdata, kaddr *addr)
+void mtn_list_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
   kstat *krt = sdata->option;
-  kstat *kst = mkstat(addr, rdata);
+  kstat *kst = mkstat(member, addr, rdata);
   sdata->option = mgstat(krt, kst);
 }
 
 kstat *mtn_list(const char *path)
 {
   kdata data;
-  data.head.type = MTNCMD_LIST;
-  data.head.size = 0;
-  data.option    = NULL;
+  kmember *members = get_members();
+  data.head.type   = MTNCMD_LIST;
+  data.head.size   = 0;
+  data.option      = NULL;
   mtn_set_string((uint8_t *)path, &data);
   kopt.field_size[0] = 1;
   kopt.field_size[1] = 1;
   kopt.field_size[2] = 1;
   kopt.field_size[3] = 1;
-  mtn_process(&data, (MTNPROCFUNC)mtn_list_process);
+  mtn_process(members, &data, (MTNPROCFUNC)mtn_list_process);
+  clear_members(members);
   return(data.option);
 }
 
-void mtn_stat_process(kdata *sd, kdata *rd, kaddr *addr)
+void mtn_stat_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 {
+	lprintf(0,"[debug] %s: START\n", __func__);
   kstat *krt = sd->option;
 	if(rd->head.type == MTNRES_SUCCESS){
-		kstat *kst = mkstat(addr, rd);
+		kstat *kst = mkstat(member, addr, rd);
 		sd->option = mgstat(krt, kst);
 	}
+	lprintf(0,"[debug] %s: END\n", __func__);
 }
 
 kstat *mtn_stat(const char *path)
 {
+	lprintf(0,"[debug] %s: START\n", __func__);
   kdata sd;
+  kmember *members = get_members();
+	memset(&sd, 0, sizeof(sd));
   sd.head.type = MTNCMD_STAT;
   sd.head.size = 0;
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
-  mtn_process(&sd, (MTNPROCFUNC)mtn_stat_process);
+  mtn_process(members, &sd, (MTNPROCFUNC)mtn_stat_process);
+  clear_members(members);
+	lprintf(0,"[debug] %s: END\n", __func__);
   return(sd.option);
 }
 
-void mtn_choose_info(kdata *sdata, kdata *rdata, kaddr *addr)
+void mtn_choose_info(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
   kmember *choose = sdata->option;
-  kmember *member = get_member(addr, 1);
   mtn_get_int(&(member->free), rdata, sizeof(member->free));
   if(choose == NULL){
     sdata->option = member;
@@ -963,34 +990,43 @@ void mtn_choose_list(kdata *sdata, kdata *rdata, kaddr *addr)
 kmember *mtn_choose(const char *path)
 {
   kdata data;
+  kmember *member;
+  kmember *members = get_members();
   data.head.type = MTNCMD_INFO;
   data.head.size = 0;
   data.option    = NULL;
-  mtn_process(&data, (MTNPROCFUNC)mtn_choose_info);
-  return(data.option);
+  mtn_process(members, &data, (MTNPROCFUNC)mtn_choose_info);
+  member = copy_member(data.option);
+  clear_members(members);
+  return(member);
 }
 
-void mtn_find_process(kdata *sdata, kdata *rdata, kaddr *addr)
+void mtn_find_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
-  sdata->option = mgstat(sdata->option, mkstat(addr, rdata));
+  sdata->option = mgstat(sdata->option, mkstat(member, addr, rdata));
 }
 
 kstat *mtn_find(const char *path, int create_flag)
 {
   kstat *kst;
   kdata data;
-  data.option    = NULL;
-  data.head.type = MTNCMD_LIST;
-  data.head.size = 0;
+  kmember *member;
+  kmember *members = get_members();
+  data.option      = NULL;
+  data.head.type   = MTNCMD_LIST;
+  data.head.size   = 0;
   mtn_set_string((uint8_t *)path, &data);
-  mtn_process(&data, (MTNPROCFUNC)mtn_find_process);
+  mtn_process(members, &data, (MTNPROCFUNC)mtn_find_process);
   kst = data.option;
   if(kst == NULL){
     if(create_flag){
-      kst = newstat(path);
-      kst->member = mtn_choose(path);
+      if(member = mtn_choose(path)){
+        kst = newstat(path);
+        kst->member = member;
+      }
     }
   }
+  clear_members(members);
   return(kst);
 }
 
@@ -999,23 +1035,23 @@ int mtn_connect(const char *path, int create_flag)
   int s;
   kstat *st = mtn_find(path, create_flag);
   if(st == NULL){
-    lprintf(0, "%s: [error] node not found\n", __func__);
+    lprintf(0, "[error] %s: node not found\n", __func__);
     errno = EACCES;
     return(-1);
   }
   s = create_socket(0, SOCK_STREAM);
   if(s == -1){
-    lprintf(0, "%s: [error]\n", __func__);
+    lprintf(0, "[error] %s:\n", __func__);
     errno = EACCES;
     return(-1);
   }
   if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
-    lprintf(0, "%s: [error] %s %s:%d\n", __func__, strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    lprintf(0, "[error] %s: %s %s:%d\n", __func__, strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
     close(s);
     errno = EACCES;
     return(-1);
   }
-  lprintf(0, "%s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  lprintf(0, "[debug] %s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
   return(s);
 }
 
@@ -1060,11 +1096,9 @@ int mtn_read(int s, char *buf, size_t size, off_t offset)
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.type = MTNCMD_READ;
-
   mtn_set_int(&size,   &sd, sizeof(size));
   mtn_set_int(&offset, &sd, sizeof(offset));
   send_stream(s, &sd);
-
   while(is_loop){
     recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
     if(rd.head.size == 0){
@@ -1078,7 +1112,7 @@ int mtn_read(int s, char *buf, size_t size, off_t offset)
   }
   sd.head.size = 0;
   sd.head.type = MTNRES_SUCCESS;
-  send_data_stream(s, &sd);
+  //send_data_stream(s, &sd);
   return(r);
 }
 
@@ -1110,34 +1144,41 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
 
 int mtn_close(int s)
 {
+  lprintf(0, "[debug] %s: START s=%d\n", __func__, s);
   if(s == 0){
     return(0);
   }
   close(s);
+  lprintf(0, "[debug] %s: END\n", __func__);
   return(0);
 }
 
 int mtn_callcmd(ktask *kt)
 {
-  lprintf(0, "%s: START\n", __func__);
+  lprintf(0, "[debug] %s: START\n", __func__);
   kt->send.head.ver  = PROTOCOL_VERSION;
   kt->send.head.type = kt->type;
+  lprintf(0, "[debug] %s: TYPE=%d\n", __func__, kt->send.head.type);
   if(kt->con){
     kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
-    lprintf(0, "%s: [info] res=%d\n", __func__, kt->res);
-    return(kt->res);
-  }
-  kt->con = mtn_connect(kt->path, kt->create);
-  if(kt->con == -1){
-    kt->res = -1;
-    lprintf(0, "%s: [error] cat't connect %s\n", __func__, kt->path);
+    lprintf(0, "[info]  %s: res=%d\n", __func__, kt->res);
   }else{
-    kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
-    close(kt->con);
-    lprintf(0, "%s: [info] res=%d\n", __func__, kt->res);
+    kt->con = mtn_connect(kt->path, kt->create);
+    if(kt->con == -1){
+      kt->res = -1;
+      lprintf(0, "[error] %s: cat't connect %s\n", __func__, kt->path);
+    }else{
+      kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
+      close(kt->con);
+      lprintf(0, "[info]  %s: res=%d\n", __func__, kt->res);
+    }
+    kt->con = 0;
   }
-  kt->con = 0;
-  lprintf(0, "%s: END\n", __func__);
+  if(kt->recv.head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, &(kt->recv), sizeof(errno));
+    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
+  }
+  lprintf(0, "[debug] %s: END\n", __func__);
   return(kt->res);
 }
 

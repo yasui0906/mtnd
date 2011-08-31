@@ -3,6 +3,7 @@
  * Copyright (C) 2011 KLab Inc.
  */
 #include "mtnfs.h"
+#include "common.h"
 
 void version()
 {
@@ -11,6 +12,9 @@ void version()
 
 void usage()
 {
+  printf("mode_t=%d\n", sizeof(mode_t));
+  printf("uid_t=%d\n", sizeof(uid_t));
+  printf("gid_t=%d\n", sizeof(gid_t));
   version();
   printf("usage: %s [OPTION] [PATH]\n", MODULE_NAME);
   printf("\n");
