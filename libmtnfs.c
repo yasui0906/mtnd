@@ -20,6 +20,7 @@ void mtn_init_option()
   kopt.host[0]    = 0;
   kopt.debuglevel = 0;
   kopt.max_packet_size = 1024;
+  pthread_mutex_init(&(kopt.cache_mutex),  NULL);
   pthread_mutex_init(&(kopt.member_mutex), NULL);
 }
 
@@ -889,6 +890,22 @@ kstat *mgstat(kstat *krt, kstat *kst)
   return krt;
 }
 
+kstat *copy_stats(kstat *kst)
+{
+  kstat *ks = NULL;
+  kstat *kr = NULL;
+  while(kst){
+    ks = newstat(kst->name);
+    memcpy(&(ks->stat), &(kst->stat), sizeof(struct stat));
+    if(ks->next = kr){
+      kr->prev = ks;
+    }
+    kr = ks;
+    kst=kst->next;
+  }
+  return(kr);
+}
+
 kdir *rmkdir(kdir *kd)
 {
 	kdir *n;
@@ -908,17 +925,71 @@ kdir *rmkdir(kdir *kd)
 	return(n);
 }
 
-kdir *mkkdir(const char *path, kstat *ks, kdir *kd)
+void addstat_dircache(kdir *kd, kstat *kst)
 {
-  kdir *nd = malloc(sizeof(kdir));
-  strcpy(nd->path, path);
-  nd->kst  = ks;
-  if(nd->next = kd){
-    kd->prev = nd;
+  struct timeval tv;
+  if(kst == NULL){
+    return;
   }
-  return(nd);
+  gettimeofday(&tv, NULL);
+  pthread_mutex_lock(&(kopt.cache_mutex));
+  if(kst->next = kd->kst){
+    kd->kst->prev = kst;
+  }
+  kd->kst = kst; 
+  memcpy(&(kd->tv), &tv, sizeof(struct timeval));
+  pthread_mutex_unlock(&(kopt.cache_mutex));
 }
 
+void setstat_dircache(kdir *kd, kstat *kst)
+{
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  pthread_mutex_lock(&(kopt.cache_mutex));
+  rmstats(kd->kst);
+  kd->kst = kst; 
+  memcpy(&(kd->tv), &tv, sizeof(struct timeval));
+  pthread_mutex_unlock(&(kopt.cache_mutex));
+}
+
+kstat *get_dircache(const char *path, kdir **pkd)
+{
+  kdir  *kd;
+  kstat *kst;
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  pthread_mutex_lock(&(kopt.cache_mutex));
+  for(kd=kopt.dircache;kd;kd=kd->next){
+    if(strcmp(kd->path, path) == 0){
+      if(kd->tv.tv_sec < tv.tv_sec - 30){
+        rmstats(kd->kst);
+        kd->kst = NULL;
+      }
+      break;
+    }
+  }
+  if(kd == NULL){
+    kd = malloc(sizeof(kdir));
+    strcpy(kd->path, path);
+    kd->kst = NULL;
+    if(kd->next = kopt.dircache){
+      kopt.dircache->prev = kd;
+    }
+    kopt.dircache = kd;
+  }
+  if(pkd){
+    *pkd = kd;
+  }
+  kst = copy_stats(kd->kst);
+  pthread_mutex_unlock(&(kopt.cache_mutex));
+  return(kst);
+}
+
+//----------------------------------------------------------------------------
+//
+//
+//
+//----------------------------------------------------------------------------
 void mtn_list_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
   kstat *krt = sdata->option;
@@ -1161,7 +1232,6 @@ int mtn_callcmd(ktask *kt)
   lprintf(0, "[debug] %s: TYPE=%d\n", __func__, kt->send.head.type);
   if(kt->con){
     kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
-    lprintf(0, "[info]  %s: res=%d\n", __func__, kt->res);
   }else{
     kt->con = mtn_connect(kt->path, kt->create);
     if(kt->con == -1){
@@ -1170,15 +1240,15 @@ int mtn_callcmd(ktask *kt)
     }else{
       kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
       close(kt->con);
-      lprintf(0, "[info]  %s: res=%d\n", __func__, kt->res);
     }
     kt->con = 0;
   }
-  if(kt->recv.head.type == MTNRES_ERROR){
+  if((kt->res == 0) && (kt->recv.head.type == MTNRES_ERROR)){
+    kt->res = -1;
     mtn_get_int(&errno, &(kt->recv), sizeof(errno));
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
   }
-  lprintf(0, "[debug] %s: END\n", __func__);
+  lprintf(0, "[debug] %s: END RES=%d\n", __func__, kt->res);
   return(kt->res);
 }
 
