@@ -22,6 +22,7 @@ void mtn_init_option()
   kopt.max_packet_size = 1024;
   pthread_mutex_init(&(kopt.cache_mutex),  NULL);
   pthread_mutex_init(&(kopt.member_mutex), NULL);
+  pthread_mutex_init(&(kopt.status_mutex), NULL);
 }
 
 int send_readywait(int s)
@@ -758,17 +759,16 @@ kmember *mtn_hello()
 void mtn_info_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
   mtn_get_int(&(member->free), rdata, sizeof(member->free));
-  printf("%s (%llu KBytes Free)\n", member->host, member->free / 1024);
 }
 
-void mtn_info()
+kmember *mtn_info()
 {
   kdata data;
   kmember *members = get_members();
   data.head.type   = MTNCMD_INFO;
   data.head.size   = 0;
   mtn_process(members, &data, (MTNPROCFUNC)mtn_info_process);
-  clear_members(members);
+  return(members);
 }
 
 kstat *rmstat(kstat *kst)
@@ -932,7 +932,7 @@ void addstat_dircache(const char *path, kstat *kst)
   if(kst == NULL){
     return;
   }
-  lprintf(0,"[debug] %s: START PATH=%s\n", __func__, path);
+  lprintf(0,"[debug] %s: CALL PATH=%s\n", __func__, path);
   pthread_mutex_lock(&(kopt.cache_mutex));
   kd = kopt.dircache;
   while(kd){
@@ -956,7 +956,7 @@ void addstat_dircache(const char *path, kstat *kst)
   kd->kst = kst; 
   gettimeofday(&(kd->tv), NULL);
   pthread_mutex_unlock(&(kopt.cache_mutex));
-  lprintf(0,"[debug] %s: END\n", __func__, path);
+  lprintf(0,"[debug] %s: EXIT\n", __func__, path);
 }
 
 void setstat_dircache(const char *path, kstat *kst)
@@ -1055,18 +1055,18 @@ kstat *mtn_list(const char *path)
 
 void mtn_stat_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 {
-	lprintf(0,"[debug] %s: START\n", __func__);
+	lprintf(0,"[debug] %s: CALL\n", __func__);
   kstat *krt = sd->option;
 	if(rd->head.type == MTNRES_SUCCESS){
 		kstat *kst = mkstat(member, addr, rd);
 		sd->option = mgstat(krt, kst);
 	}
-	lprintf(0,"[debug] %s: END\n", __func__);
+	lprintf(0,"[debug] %s: EXIT\n", __func__);
 }
 
 kstat *mtn_stat(const char *path)
 {
-	lprintf(0,"[debug] %s: START\n", __func__);
+	lprintf(0,"[debug] %s: CALL\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1076,7 +1076,7 @@ kstat *mtn_stat(const char *path)
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_stat_process);
   clear_members(members);
-	lprintf(0,"[debug] %s: END\n", __func__);
+	lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(sd.option);
 }
 
@@ -1254,18 +1254,18 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
 
 int mtn_close(int s)
 {
-  lprintf(0, "[debug] %s: START s=%d\n", __func__, s);
+  lprintf(0, "[debug] %s: CALL s=%d\n", __func__, s);
   if(s == 0){
     return(0);
   }
   close(s);
-  lprintf(0, "[debug] %s: END\n", __func__);
+  lprintf(0, "[debug] %s: EXIT\n", __func__);
   return(0);
 }
 
 int mtn_callcmd(ktask *kt)
 {
-  lprintf(0, "[debug] %s: START\n", __func__);
+  lprintf(0, "[debug] %s: CALL\n", __func__);
   kt->send.head.ver  = PROTOCOL_VERSION;
   kt->send.head.type = kt->type;
   lprintf(0, "[debug] %s: TYPE=%d\n", __func__, kt->send.head.type);
@@ -1287,7 +1287,51 @@ int mtn_callcmd(ktask *kt)
     mtn_get_int(&errno, &(kt->recv), sizeof(errno));
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
   }
-  lprintf(0, "[debug] %s: END RES=%d\n", __func__, kt->res);
+  lprintf(0, "[debug] %s: EXIT RES=%d\n", __func__, kt->res);
   return(kt->res);
+}
+
+//-------------------------------------------------------------------
+//
+// mtnstatus
+//
+//-------------------------------------------------------------------
+char *get_mtnstatus_members()
+{
+  int l;
+  char *p = NULL;
+  pthread_mutex_lock(&(kopt.status_mutex));
+  if(l = strlen(kopt.status.members)){
+    p = malloc(l);
+    memcpy(p, kopt.status.members, l);
+  }
+  pthread_mutex_unlock(&(kopt.status_mutex));
+  return(p); 
+}
+
+size_t mtnstatus_members()
+{
+  size_t size = 0;
+  char buff[1024];
+  kmember *member;
+  kmember *members;
+  pthread_mutex_lock(&(kopt.status_mutex));
+  members = mtn_info();
+  if(kopt.status.members == NULL){
+    kopt.status.members = malloc(1024);
+  }
+  kopt.status.members[0] = 0;
+  for(member=members;member;member=member->next){
+    sprintf(buff, "%s(%s) %llu Bytes Free\n", member->host, mtn_get_v4addr(&(member->addr)), member->free);
+    size += strlen(buff);
+    while((size + 1) > kopt.status.members_size){
+      kopt.status.members_size += 1024;
+      kopt.status.members = realloc(kopt.status.members, kopt.status.members_size);
+    }
+    strcat(kopt.status.members, buff);  
+  }
+  clear_members(members);
+  pthread_mutex_unlock(&(kopt.status_mutex));
+  return(size);
 }
 
