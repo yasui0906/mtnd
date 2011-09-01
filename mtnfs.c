@@ -414,12 +414,16 @@ void mtnfs_child_set(ktask *kt)
 //------------------------------------------------------
 void mtnfs_child_open(ktask *kt)
 {
+  char  d[PATH_MAX];
+  char  f[PATH_MAX];
   int   flags;
   mode_t mode;
   mtn_get_string(kt->path, &(kt->recv));
   mtn_get_int(&flags, &(kt->recv), sizeof(flags));
   mtn_get_int(&mode,  &(kt->recv), sizeof(mode));
   mtnfs_fix_path(kt->path);
+  dirbase(kt->path, d, f);
+  mkdir_ex(d);
   kt->fd = open(kt->path, flags, mode);
   if(kt->fd == -1){
     kt->fd = 0;

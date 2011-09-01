@@ -991,8 +991,10 @@ kstat *get_dircache(const char *path, int flag)
   kdir  *kd;
   kstat *kr;
   struct timeval tv;
+  lprintf(0,"[debug] %s: CALL\n", __func__);
   gettimeofday(&tv, NULL);
   pthread_mutex_lock(&(kopt.cache_mutex));
+  lprintf(0,"[debug] %s: LOCK\n", __func__);
   kd = kopt.dircache;
   while(kd){
     if(kd->tv.tv_sec < tv.tv_sec - 5){
@@ -1000,10 +1002,12 @@ kstat *get_dircache(const char *path, int flag)
       kd->kst  = NULL;
       kd->flag = 0;
     }
+    /*
     if(kd->tv.tv_sec < tv.tv_sec - 300){
       kd = rmkdir(kd);
       continue;
     }
+    */
     if(strcmp(kd->path, path) == 0){
       break;
     }
@@ -1020,7 +1024,9 @@ kstat *get_dircache(const char *path, int flag)
     kopt.dircache = kd;
   }
   kr = (!flag || kd->flag) ? copy_stats(kd->kst) : NULL;
+  lprintf(0,"[debug] %s: UNLOCK\n", __func__);
   pthread_mutex_unlock(&(kopt.cache_mutex));
+  lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(kr);
 }
 
@@ -1121,7 +1127,7 @@ kstat *mtn_find(const char *path, int create_flag)
   kstat *kst;
   kdata data;
   kmember *member;
-  kmember *members = get_members();
+  kmember *members = mtn_info();
   data.option      = NULL;
   data.head.type   = MTNCMD_LIST;
   data.head.size   = 0;
@@ -1161,7 +1167,7 @@ int mtn_connect(const char *path, int create_flag)
     errno = EACCES;
     return(-1);
   }
-  lprintf(0, "[debug] %s: connect %s %s %s (%dM free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  lprintf(0, "[debug] %s: connect %s %s %s (%llu free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
   return(s);
 }
 

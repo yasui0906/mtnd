@@ -200,11 +200,10 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
 
 static int mtnmount_mkdir(const char *path, mode_t mode)
 {
-  lprintf(0,"[debug] %s: CALL\n", __func__);
+  lprintf(0,"[debug] %s: CALL path=%s\n", __func__, path);
   ktask kt;
   char d[PATH_MAX];
   char f[PATH_MAX];
-  lprintf(0, "%s: path=%s\n", __func__, path);
   memset(&kt, 0, sizeof(kt));
   dirbase(path, d, f);
   strcpy(kt.path, path);
@@ -221,15 +220,18 @@ static int mtnmount_mkdir(const char *path, mode_t mode)
 static int mtnmount_unlink(const char *path)
 {
   ktask kt;
-  lprintf(0, "[debug] %s: CALL\n", __func__);
-  lprintf(0, "[debug] %s: path=%s\n", __func__, path);
+  char d[PATH_MAX];
+  char f[PATH_MAX];
+  lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
   memset(&kt, 0, sizeof(kt));
+  dirbase(path, d, f);
   strcpy(kt.path, path);
   kt.type = MTNCMD_UNLINK;
   mtn_set_string(path, &(kt.send));
   if(mtn_callcmd(&kt) == -1){
     return(-errno);
   }
+  setstat_dircache(d, NULL);
   lprintf(0, "[debug] %s: EXIT\n", __func__);
   return(0);
 }
@@ -237,9 +239,11 @@ static int mtnmount_unlink(const char *path)
 static int mtnmount_rmdir(const char *path)
 {
   ktask kt;
-  lprintf(0, "[debug] %s: CALL\n", __func__);
-  lprintf(0, "[debug] %s: path=%s\n", __func__, path);
+  char d[PATH_MAX];
+  char f[PATH_MAX];
+  lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
   memset(&kt, 0, sizeof(kt));
+  dirbase(path, d, f);
   strcpy(kt.path, path);
   kt.create = 1;
   kt.type = MTNCMD_RMDIR;
@@ -247,6 +251,7 @@ static int mtnmount_rmdir(const char *path)
   if(mtn_callcmd(&kt) == -1){
     return(-errno);
   }
+  setstat_dircache(d, NULL);
   lprintf(0, "[debug] %s: EXIT\n", __func__);
   return(0);
 }
@@ -347,7 +352,8 @@ static int mtnmount_removexattr(const char *path, const char *name)
 static int mtnmount_opendir(const char *path, struct fuse_file_info *fi)
 {
   ktask kt;
-  lprintf(0, "%s: path=%s\n", __func__, path);
+  lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
+  lprintf(0, "[debug] %s: EXIT path=%s\n", __func__, path);
   return(0);
 }
 
@@ -386,7 +392,8 @@ static int mtnmount_access (const char *path, int mode)
 static int mtnmount_ftruncate(const char *path, off_t offset, struct fuse_file_info *fi)
 {
   ktask kt;
-  lprintf(0, "%s: path=%s\n", __func__, path);
+  lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
+  lprintf(0, "[debug] %s: EXIT path=%s\n", __func__, path);
   return(0);
 }
 
