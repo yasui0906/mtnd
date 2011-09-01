@@ -897,6 +897,7 @@ kstat *copy_stats(kstat *kst)
   while(kst){
     ks = newstat(kst->name);
     memcpy(&(ks->stat), &(kst->stat), sizeof(struct stat));
+    ks->member = copy_member(kst->member);
     if(ks->next = kr){
       kr->prev = ks;
     }
@@ -925,51 +926,92 @@ kdir *rmkdir(kdir *kd)
 	return(n);
 }
 
-void addstat_dircache(kdir *kd, kstat *kst)
+void addstat_dircache(const char *path, kstat *kst)
 {
-  struct timeval tv;
+  kdir *kd;
   if(kst == NULL){
     return;
   }
-  gettimeofday(&tv, NULL);
+  lprintf(0,"[debug] %s: START PATH=%s\n", __func__, path);
   pthread_mutex_lock(&(kopt.cache_mutex));
+  kd = kopt.dircache;
+  while(kd){
+    if(strcmp(kd->path, path) == 0){
+      break;
+    }
+    kd = kd->next;
+  }
+  if(kd == NULL){
+    kd = malloc(sizeof(kdir));
+    memset(kd,0,sizeof(kdir));
+    strcpy(kd->path, path);
+    if(kd->next = kopt.dircache){
+      kopt.dircache->prev = kd;
+    }
+    kopt.dircache = kd;
+  }
   if(kst->next = kd->kst){
     kd->kst->prev = kst;
   }
   kd->kst = kst; 
-  memcpy(&(kd->tv), &tv, sizeof(struct timeval));
+  gettimeofday(&(kd->tv), NULL);
   pthread_mutex_unlock(&(kopt.cache_mutex));
+  lprintf(0,"[debug] %s: END\n", __func__, path);
 }
 
-void setstat_dircache(kdir *kd, kstat *kst)
+void setstat_dircache(const char *path, kstat *kst)
 {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
+  kdir *kd;
   pthread_mutex_lock(&(kopt.cache_mutex));
-  rmstats(kd->kst);
-  kd->kst = kst; 
-  memcpy(&(kd->tv), &tv, sizeof(struct timeval));
-  pthread_mutex_unlock(&(kopt.cache_mutex));
-}
-
-kstat *get_dircache(const char *path, kdir **pkd)
-{
-  kdir  *kd;
-  kstat *kst;
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  pthread_mutex_lock(&(kopt.cache_mutex));
-  for(kd=kopt.dircache;kd;kd=kd->next){
+  kd = kopt.dircache;
+  while(kd){
     if(strcmp(kd->path, path) == 0){
-      if(kd->tv.tv_sec < tv.tv_sec - 30){
-        rmstats(kd->kst);
-        kd->kst = NULL;
-      }
       break;
     }
+    kd = kd->next;
   }
   if(kd == NULL){
     kd = malloc(sizeof(kdir));
+    memset(kd,0,sizeof(kdir));
+    strcpy(kd->path, path);
+    if(kd->next = kopt.dircache){
+      kopt.dircache->prev = kd;
+    }
+    kopt.dircache = kd;
+  }
+  rmstats(kd->kst);
+  kd->kst  = kst;
+  kd->flag = 1;
+  gettimeofday(&(kd->tv), NULL);
+  pthread_mutex_unlock(&(kopt.cache_mutex));
+}
+
+kstat *get_dircache(const char *path, int flag)
+{
+  kdir  *kd;
+  kstat *kr;
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  pthread_mutex_lock(&(kopt.cache_mutex));
+  kd = kopt.dircache;
+  while(kd){
+    if(kd->tv.tv_sec < tv.tv_sec - 5){
+      rmstats(kd->kst);
+      kd->kst  = NULL;
+      kd->flag = 0;
+    }
+    if(kd->tv.tv_sec < tv.tv_sec - 300){
+      kd = rmkdir(kd);
+      continue;
+    }
+    if(strcmp(kd->path, path) == 0){
+      break;
+    }
+    kd = kd->next;
+  }
+  if(kd == NULL){
+    kd = malloc(sizeof(kdir));
+    memset(kd,0,sizeof(kdir));
     strcpy(kd->path, path);
     kd->kst = NULL;
     if(kd->next = kopt.dircache){
@@ -977,12 +1019,9 @@ kstat *get_dircache(const char *path, kdir **pkd)
     }
     kopt.dircache = kd;
   }
-  if(pkd){
-    *pkd = kd;
-  }
-  kst = copy_stats(kd->kst);
+  kr = (!flag || kd->flag) ? copy_stats(kd->kst) : NULL;
   pthread_mutex_unlock(&(kopt.cache_mutex));
-  return(kst);
+  return(kr);
 }
 
 //----------------------------------------------------------------------------

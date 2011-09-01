@@ -10,52 +10,43 @@ static int mtnmount_getattr(const char *path, struct stat *stbuf)
 {
   char  d[PATH_MAX];
   char  f[PATH_MAX];
-  kdir  *kd  = NULL;
   kstat *krt = NULL;
   kstat *kst = NULL;
 
-  lprintf(0,"[debug] %s: START\n", __func__);
   dirbase(path, d, f);
-  lprintf(0,"[debug] %s: dir=%s file=%s\n", __func__, d, f);
+  lprintf(0,"[debug] %s: START dir=%s file=%s\n", __func__, d, f);
   memset(stbuf, 0, sizeof(struct stat));
   if(strcmp(path, "/") == 0) {
     stbuf->st_mode  = S_IFDIR | 0755;
     stbuf->st_nlink = 2;
     return(0);
   }
-
-  lprintf(0,"[debug] %s: \n", __func__);
   if(strcmp(path, "/.mtnstatus") == 0) {
     stbuf->st_mode  = S_IFDIR | 0555;
     stbuf->st_nlink = 2;
     return(0);
   }
-
-  lprintf(0,"[debug] %s: \n", __func__);
   if(strcmp(path, "/.mtnstatus/members") == 0) {
     stbuf->st_mode = S_IFREG | 0444;
     return(0);
   }
 
-  lprintf(0,"[debug] %s: \n", __func__);
-  krt = get_dircache(d, &kd);
+  krt = get_dircache(d, 0);
   for(kst=krt;kst;kst=kst->next){
     if(strcmp(kst->name, f) == 0){
+      memcpy(stbuf, &(kst->stat), sizeof(struct stat));
       break;
     }
   }
   if(!kst){
-    lprintf(0,"[debug] %s: PATH=%s\n", __func__, path);
-    kst = mtn_stat(path);
-    addstat_dircache(kd, kst);
+    if(kst = mtn_stat(path)){
+      addstat_dircache(d, kst);
+      memcpy(stbuf, &(kst->stat), sizeof(struct stat));
+    }
   }
-  if(!kst){
-    lprintf(0,"[debug] %s: END NG\n", __func__);
-    return(-ENOENT);
-  }
-  memcpy(stbuf, &(kst->stat), sizeof(struct stat));
-  lprintf(0,"[debug] %s: END OK\n", __func__);
-  return(0);
+  rmstats(krt);
+  lprintf(0,"[debug] %s: END\n", __func__);
+  return(kst ? 0 : -ENOENT);
 }
 
 static int mtnmount_readlink(const char *path, char *buff, size_t size)
@@ -66,12 +57,10 @@ static int mtnmount_readlink(const char *path, char *buff, size_t size)
 
 static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
-  lprintf(0, "[debug] %s: START\n", __func__);
-  lprintf(0, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(0, "[debug] %s: START path=%s\n", __func__, path);
   kstat *krt = NULL;
   kstat *kst = NULL;
-  kdir  *kdc = NULL;
-  krt = get_dircache(path, &kdc);
+  krt = get_dircache(path,1);
   filler(buf, ".",  NULL, 0);
   filler(buf, "..", NULL, 0);
   if(strcmp("/", path) == 0){
@@ -82,7 +71,7 @@ static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
   }
   if(krt == NULL){
     krt = mtn_list(path);
-    setstat_dircache(kdc, krt);
+    setstat_dircache(path, krt);
   }
   for(kst=krt;kst;kst=kst->next){
     lprintf(0, "[debug] %s: name=%s\n", __func__, kst->name);
