@@ -66,26 +66,29 @@ static int mtnmount_getattr(const char *path, struct stat *stbuf)
 
 static int mtnmount_mkdir(const char *path, mode_t mode)
 {
+  int r;
   lprintf(0,"[debug] %s: CALL path=%s\n", __func__, path);
-  mtn_mkdir(path);
-  lprintf(0,"[debug] %s: EXIT\n", __func__);
-  return(0);
+  r = mtn_mkdir(path);
+  lprintf(0,"[debug] %s: EXIT r=%d\n", __func__, r);
+  return(r);
 }
 
 static int mtnmount_unlink(const char *path)
 {
+  int r;
   lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
-  mtn_rm(path);
-  lprintf(0, "[debug] %s: EXIT\n", __func__);
-  return(0);
+  r = mtn_rm(path);
+  lprintf(0, "[debug] %s: EXIT r=%d\n", __func__, r);
+  return(r);
 }
 
 static int mtnmount_rmdir(const char *path)
 {
+  int r;
   lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
-  mtn_rm(path);
-  lprintf(0, "[debug] %s: EXIT\n", __func__);
-  return(0);
+  r = mtn_rm(path);
+  lprintf(0, "[debug] %s: EXIT r=%d\n", __func__, r);
+  return(r);
 }
 
 static int mtnmount_readlink(const char *path, char *buff, size_t size)

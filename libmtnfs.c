@@ -15,7 +15,8 @@ koption kopt;
 void mtn_init_option()
 {
   memset((void *)&kopt, 0, sizeof(kopt));
-  strcpy(kopt.mcast_addr, "224.0.0.110");	
+  strcpy(kopt.mcast_addr,     "224.0.0.110");
+  strcpy(kopt.mtnstatus_path, "/.mtnstatus");
   kopt.mcast_port = 6000;
   kopt.host[0]    = 0;
   kopt.debuglevel = 0;
@@ -963,7 +964,6 @@ void addstat_dircache(const char *path, kstat *kst)
   if(kst == NULL){
     return;
   }
-  lprintf(0,"[debug] %s: CALL PATH=%s\n", __func__, path);
   pthread_mutex_lock(&(kopt.cache_mutex));
   kd = kopt.dircache;
   while(kd){
@@ -987,7 +987,6 @@ void addstat_dircache(const char *path, kstat *kst)
   kd->kst = kst; 
   gettimeofday(&(kd->tv), NULL);
   pthread_mutex_unlock(&(kopt.cache_mutex));
-  lprintf(0,"[debug] %s: EXIT\n", __func__, path);
 }
 
 void setstat_dircache(const char *path, kstat *kst)
@@ -1022,10 +1021,8 @@ kstat *get_dircache(const char *path, int flag)
   kdir  *kd;
   kstat *kr;
   struct timeval tv;
-  lprintf(0,"[debug] %s: CALL\n", __func__);
   gettimeofday(&tv, NULL);
   pthread_mutex_lock(&(kopt.cache_mutex));
-  lprintf(0,"[debug] %s: LOCK\n", __func__);
   kd = kopt.dircache;
   while(kd){
     if(kd->tv.tv_sec < tv.tv_sec - 5){
@@ -1058,9 +1055,7 @@ kstat *get_dircache(const char *path, int flag)
     kopt.dircache = kd;
   }
   kr = (!flag || kd->flag) ? copy_stats(kd->kst) : NULL;
-  lprintf(0,"[debug] %s: UNLOCK\n", __func__);
   pthread_mutex_unlock(&(kopt.cache_mutex));
-  lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(kr);
 }
 
@@ -1071,14 +1066,12 @@ kstat *get_dircache(const char *path, int flag)
 //----------------------------------------------------------------------------
 void mtn_list_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
   kstat *krt = sdata->option;
   kstat *kst = mkstat(member, addr, rdata);
   if(kst){
-	  lprintf(0, "[debug] %s: NAME=%s\n", __func__, kst->name);
+	  lprintf(0, "[debug] %s: %s NAME=%s\n", __func__, member->host, kst->name);
   }
   sdata->option = mgstat(krt, kst);
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
 }
 
 kstat *mtn_list(const char *path)
@@ -1100,13 +1093,11 @@ kstat *mtn_list(const char *path)
 
 void mtn_stat_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
   kstat *krt = sd->option;
 	if(rd->head.type == MTNRES_SUCCESS){
 		kstat *kst = mkstat(member, addr, rd);
 		sd->option = mgstat(krt, kst);
 	}
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
 }
 
 kstat *mtn_stat(const char *path)
@@ -1187,41 +1178,50 @@ kstat *mtn_find(const char *path, int create_flag)
 
 void mtn_mkdir_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
+	if(rd->head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, rd, sizeof(errno));
+	  lprintf(0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
+	}
 }
 
-void mtn_mkdir(const char *path)
+int mtn_mkdir(const char *path)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
+  if(strlen(path) > strlen(kopt.mtnstatus_path)){
+    if(memcmp(kopt.mtnstatus_path, path, strlen(kopt.mtnstatus_path)) == 0){
+      return(-EACCES);
+    }
+  }
   sd.head.type = MTNCMD_MKDIR;
   sd.head.size = 0;
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_mkdir_process);
   clear_members(members);
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
+  return(0);
 }
 
 void mtn_rm_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
 	if(rd->head.type == MTNRES_ERROR){
-    mtn_get_int(&errno, &rd, sizeof(errno));
+    mtn_get_int(&errno, rd, sizeof(errno));
 	  lprintf(0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
 	}
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
 }
 
-void mtn_rm(const char *path)
+int mtn_rm(const char *path)
 {
 	lprintf(0,"[debug] %s: CALL\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
+  if(strlen(path) > strlen(kopt.mtnstatus_path)){
+    if(memcmp(kopt.mtnstatus_path, path, strlen(kopt.mtnstatus_path)) == 0){
+      return(-EACCES);
+    }
+  }
   sd.head.type = MTNCMD_UNLINK;
   sd.head.size = 0;
   sd.option    = NULL;
@@ -1229,6 +1229,7 @@ void mtn_rm(const char *path)
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_rm_process);
   clear_members(members);
 	lprintf(0,"[debug] %s: EXIT\n", __func__);
+  return(0);
 }
 
 int mtn_connect(const char *path, int create_flag)
