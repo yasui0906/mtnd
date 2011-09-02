@@ -255,6 +255,50 @@ static void mtnfs_stat_process(ktask *kt)
   lprintf(0,"[debug] %s: END\n", __func__);
 }
 
+static void mtnfs_mkdir_process(ktask *kt)
+{
+  lprintf(0,"[debug] %s: CALL\n", __func__);
+  char buff[PATH_MAX];
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(buff, &(kt->recv));
+  mtnfs_fix_path(buff);
+  sprintf(kt->path, "./%s", buff);
+  kt->send.head.type = MTNRES_SUCCESS;
+  if(mkdir_ex(kt->path) == -1){
+    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }
+  lprintf(0,"[debug] %s: EXIT\n", __func__);
+}
+
+static void mtnfs_rm_process(ktask *kt)
+{
+  lprintf(0,"[debug] %s: CALL\n", __func__);
+  char buff[PATH_MAX];
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(buff, &(kt->recv));
+  mtnfs_fix_path(buff);
+  sprintf(kt->path, "./%s", buff);
+  kt->send.head.type = MTNRES_SUCCESS;
+  if(lstat(kt->path, &(kt->stat)) == -1){
+    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }else{
+    if(S_ISDIR(kt->stat.st_mode)){
+      rmdir(kt->path);
+    }else{
+      unlink(kt->path);
+    }
+  }
+  lprintf(0,"[debug] %s: EXIT\n", __func__);
+}
+
 void mtnfs_udp_process(int s)
 {
   lprintf(0,"[debug] %s: START\n", __func__);
@@ -280,10 +324,13 @@ void mtnfs_task_process(int s)
   ktask *kt = kopt.task;
   MTNFSTASKFUNC taskfunc[MTNCMD_MAX];
   memset(taskfunc, 0, sizeof(taskfunc));
-  taskfunc[MTNCMD_HELLO] = (MTNFSTASKFUNC)mtnfs_hello_process;
-  taskfunc[MTNCMD_INFO]  = (MTNFSTASKFUNC)mtnfs_info_process;
-  taskfunc[MTNCMD_LIST]  = (MTNFSTASKFUNC)mtnfs_list_process;
-  taskfunc[MTNCMD_STAT]  = (MTNFSTASKFUNC)mtnfs_stat_process;
+  taskfunc[MTNCMD_HELLO]  = (MTNFSTASKFUNC)mtnfs_hello_process;
+  taskfunc[MTNCMD_INFO]   = (MTNFSTASKFUNC)mtnfs_info_process;
+  taskfunc[MTNCMD_LIST]   = (MTNFSTASKFUNC)mtnfs_list_process;
+  taskfunc[MTNCMD_STAT]   = (MTNFSTASKFUNC)mtnfs_stat_process;
+  taskfunc[MTNCMD_MKDIR]  = (MTNFSTASKFUNC)mtnfs_mkdir_process;
+  taskfunc[MTNCMD_RMDIR]  = (MTNFSTASKFUNC)mtnfs_rm_process;
+  taskfunc[MTNCMD_UNLINK] = (MTNFSTASKFUNC)mtnfs_rm_process;
   while(kt){
     kt->con = s;
     MTNFSTASKFUNC task = taskfunc[kt->type];
@@ -414,10 +461,10 @@ void mtnfs_child_set(ktask *kt)
 //------------------------------------------------------
 void mtnfs_child_open(ktask *kt)
 {
-  char  d[PATH_MAX];
-  char  f[PATH_MAX];
-  int   flags;
+  int flags;
   mode_t mode;
+  char d[PATH_MAX];
+  char f[PATH_MAX];
   mtn_get_string(kt->path, &(kt->recv));
   mtn_get_int(&flags, &(kt->recv), sizeof(flags));
   mtn_get_int(&mode,  &(kt->recv), sizeof(mode));
