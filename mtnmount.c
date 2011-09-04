@@ -120,6 +120,7 @@ static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     lprintf(0, "[debug] %s: name=%s\n", __func__, kst->name);
     filler(buf, kst->name, NULL, 0);
   }
+  delstats(krt);
   lprintf(0, "[debug] %s: EXIT\n", __func__);
   return 0;
 }

@@ -1047,7 +1047,7 @@ void setstat_dircache(const char *path, kstat *kst)
     kopt.dircache = kd;
   }
   delstats(kd->kst);
-  kd->kst  = kst;
+  kd->kst  = copy_stats(kst);
   kd->flag = 1;
   gettimeofday(&(kd->tv), NULL);
   pthread_mutex_unlock(&(kopt.cache_mutex));
