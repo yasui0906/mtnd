@@ -5,6 +5,8 @@
 #include "mtnfs.h"
 #include "common.h"
 typedef void (*MTNPROCFUNC)(kmember *member, kdata *send, kdata *recv, kaddr *addr);
+void delstats(kstat *kst);
+void delmembers(kmember *members);
 kmember *make_member(kmember *members, uint8_t *host, kaddr *addr);
 kmember *get_member(kmember *members, kaddr *addr, int mkflag);
 kmember *mtn_hello();
@@ -579,25 +581,129 @@ void get_mode_string(uint8_t *buff, mode_t mode)
   *buff = 0;
 }
 
-void clear_members(kmember *members)
+//----------------------------------------------------------------
+// new
+//----------------------------------------------------------------
+kdir *newkdir(const char *path)
 {
-  kmember *member;
+  kdir *kd;
+  kd = malloc(sizeof(kdir));
+  memset(kd,0,sizeof(kdir));
+  strcpy(kd->path, path);
+  kcount(1,0,0);
+  return(kd);
+}
+
+kstat *newstat(const char *name)
+{
+  char b[PATH_MAX];
+  char f[PATH_MAX];
+  kstat *kst = malloc(sizeof(kstat));
+  memset(kst, 0, sizeof(kstat));
+  if(!name){
+    b[0] = 0;
+  }else{
+    strcpy(b, name);
+  }
+  strcpy(f, basename(b));
+  kst->name = malloc(strlen(f) + 1);
+  strcpy(kst->name, f);
+  kcount(0,1,0);
+  return(kst);
+}
+
+kmember *newmember()
+{
+  kmember *km;
+  km = malloc(sizeof(kmember));
+  memset(km,0,sizeof(kmember));
+  kcount(0,0,1);
+  return(km);
+}
+
+//----------------------------------------------------------------
+// del
+//----------------------------------------------------------------
+kdir *deldir(kdir *kd)
+{
+	kdir *n;
+  if(!kd){
+    return;
+  }
+  delstats(kd->kst);
+  kd->kst = NULL;
+  if(kd->prev){
+    kd->prev->next = kd->next;
+  }
+  if(kd->next){
+    kd->next->prev = kd->prev;
+  }
+	n = kd->next;
+  free(kd);
+  kcount(-1,0,0);
+	return(n);
+}
+
+kstat *delstat(kstat *kst)
+{
+	kstat *r = NULL;
+  if(!kst){
+    return NULL;
+  }
+  if(kst->prev){
+		kst->prev->next = kst->next;
+		kst->prev = NULL;
+	}
+  if(kst->next){
+		r = kst->next;
+		kst->next->prev = kst->prev;
+    kst->next = NULL;
+  }
+  if(kst->name){
+    free(kst->name);
+    kst->name = NULL;
+  }
+  delmembers(kst->member);
+  free(kst);
+  kcount(0, -1, 0);
+	return(r);
+}
+
+kmember *delmember(kmember *km)
+{
+  kmember *nm;
+  if(km->host){
+    free(km->host);
+    km->host = NULL;
+  }
+  nm = km->next;
+  free(km);
+  kcount(0, 0, -1);
+  return(nm);
+}
+
+void delstats(kstat *kst)
+{
+	while(kst){
+		kst = delstat(kst);
+	}
+}
+
+void delmembers(kmember *members)
+{
   while(members){
-    member  = members;
-    members = members->next;
-    if(member->host){
-      free(member->host);
-    }
-    free(member);
+    members = delmember(members);
   }
 }
 
+//----------------------------------------------------------------
+// make 
+//----------------------------------------------------------------
 kmember *make_member(kmember *members, uint8_t *host, kaddr *addr)
 {
   kmember *member = get_member(members, addr, 0);
   if(member == NULL){
-    member = malloc(sizeof(kmember));
-    memset(member, 0, sizeof(kmember));
+    member = newmember();
     memcpy(&(member->addr), addr, sizeof(kaddr));
     member->next = members;
     members = member;
@@ -611,18 +717,19 @@ kmember *make_member(kmember *members, uint8_t *host, kaddr *addr)
     memcpy(member->host, host, len);
   }
   member->mark = 0;
-  return(member);
+  return(members);
 }
 
-kmember *copy_member(kmember *member)
+kmember *copy_member(kmember *km)
 {
-  if(member == NULL){
+  kmember *nkm;
+  if(km == NULL){
     return(NULL);
   }
-  kmember *newmember = make_member(NULL, member->host, &(member->addr));
-  newmember->mark = member->mark;
-  newmember->free = member->free;
-  return(newmember);
+  nkm = make_member(NULL, km->host, &(km->addr));
+  nkm->mark = km->mark;
+  nkm->free = km->free;
+  return(nkm);
 }
 
 kmember *get_member(kmember *members, kaddr *addr, int mkflag)
@@ -643,9 +750,10 @@ kmember *get_members(){
   struct timeval tv;
   kmember *member  = NULL;
   kmember *members = NULL;
-  gettimeofday(&tv, NULL);
   pthread_mutex_lock(&(kopt.member_mutex));
+  gettimeofday(&tv, NULL);
   if(tv.tv_sec - 10 > kopt.member_tv.tv_sec){
+    delmembers(kopt.members);
     kopt.members = NULL;
   }
   if(kopt.members == NULL){
@@ -777,54 +885,6 @@ kmember *mtn_info()
   return(members);
 }
 
-kstat *rmstat(kstat *kst)
-{
-	kstat *r = NULL;
-  if(!kst){
-    return NULL;
-  }
-  if(kst->prev){
-		kst->prev->next = kst->next;
-		kst->prev = NULL;
-	}
-  if(kst->next){
-		r = kst->next;
-		kst->next->prev = kst->prev;
-    kst->next = NULL;
-  }
-  if(kst->name){
-    free(kst->name);
-    kst->name = NULL;
-  }
-  //clear_members(kst->member);
-  free(kst);
-	return(r);
-}
-
-void rmstats(kstat *kst)
-{
-	while(kst){
-		kst = rmstat(kst);
-	}
-}
-
-kstat *newstat(const char *name)
-{
-  char b[PATH_MAX];
-  char f[PATH_MAX];
-  kstat *kst = malloc(sizeof(kstat));
-  memset(kst, 0, sizeof(kstat));
-  if(!name){
-    b[0] = 0;
-  }else{
-    strcpy(b, name);
-  }
-  strcpy(f, basename(b));
-  kst->name = malloc(strlen(f) + 1);
-  strcpy(kst->name, f);
-  return(kst);
-}
-
 kstat *mkstat(kmember *member, kaddr *addr, kdata *data)
 {
   char bf[PATH_MAX];
@@ -897,15 +957,15 @@ kstat *mgstat(kstat *krt, kstat *kst)
       if(strcmp(rt->name, st->name) == 0){
         if(rt->stat.st_mtime < st->stat.st_mtime){
           memcpy(&(rt->stat), &(st->stat), sizeof(struct stat));
-          clear_members(rt->member);
+          delmembers(rt->member);
           rt->member = st->member;
           st->member = NULL;
         }
         if(st == kst){
-          kst = rmstat(st);
+          kst = delstat(st);
           st = kst;
         }else{
-          st = rmstat(st);
+          st = delstat(st);
         }
         continue;
       }
@@ -939,25 +999,6 @@ kstat *copy_stats(kstat *kst)
   return(kr);
 }
 
-kdir *rmkdir(kdir *kd)
-{
-	kdir *n;
-  if(!kd){
-    return;
-  }
-  rmstats(kd->kst);
-  kd->kst = NULL;
-  if(kd->prev){
-    kd->prev->next = kd->next;
-  }
-  if(kd->next){
-    kd->next->prev = kd->prev;
-  }
-	n = kd->next;
-  free(kd);
-	return(n);
-}
-
 void addstat_dircache(const char *path, kstat *kst)
 {
   kdir *kd;
@@ -973,9 +1014,7 @@ void addstat_dircache(const char *path, kstat *kst)
     kd = kd->next;
   }
   if(kd == NULL){
-    kd = malloc(sizeof(kdir));
-    memset(kd,0,sizeof(kdir));
-    strcpy(kd->path, path);
+    kd = newkdir(path);
     if(kd->next = kopt.dircache){
       kopt.dircache->prev = kd;
     }
@@ -1001,15 +1040,13 @@ void setstat_dircache(const char *path, kstat *kst)
     kd = kd->next;
   }
   if(kd == NULL){
-    kd = malloc(sizeof(kdir));
-    memset(kd,0,sizeof(kdir));
-    strcpy(kd->path, path);
+    kd = newkdir(path);
     if(kd->next = kopt.dircache){
       kopt.dircache->prev = kd;
     }
     kopt.dircache = kd;
   }
-  rmstats(kd->kst);
+  delstats(kd->kst);
   kd->kst  = kst;
   kd->flag = 1;
   gettimeofday(&(kd->tv), NULL);
@@ -1021,21 +1058,21 @@ kstat *get_dircache(const char *path, int flag)
   kdir  *kd;
   kstat *kr;
   struct timeval tv;
-  gettimeofday(&tv, NULL);
   pthread_mutex_lock(&(kopt.cache_mutex));
+  gettimeofday(&tv, NULL);
   kd = kopt.dircache;
   while(kd){
     if(kd->tv.tv_sec < tv.tv_sec - 5){
-      rmstats(kd->kst);
+      delstats(kd->kst);
       kd->kst  = NULL;
       kd->flag = 0;
     }
     if(kd->tv.tv_sec < tv.tv_sec - 300){
       if(kd == kopt.dircache){
-        kopt.dircache = rmkdir(kd);
+        kopt.dircache = deldir(kd);
         kd = kopt.dircache;
       }else{
-        kd = rmkdir(kd);
+        kd = deldir(kd);
       }
       continue;
     }
@@ -1045,10 +1082,7 @@ kstat *get_dircache(const char *path, int flag)
     kd = kd->next;
   }
   if(kd == NULL){
-    kd = malloc(sizeof(kdir));
-    memset(kd,0,sizeof(kdir));
-    strcpy(kd->path, path);
-    kd->kst = NULL;
+    kd = newkdir(path);
     if(kd->next = kopt.dircache){
       kopt.dircache->prev = kd;
     }
@@ -1068,9 +1102,6 @@ void mtn_list_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
   kstat *krt = sdata->option;
   kstat *kst = mkstat(member, addr, rdata);
-  if(kst){
-	  lprintf(0, "[debug] %s: %s NAME=%s\n", __func__, member->host, kst->name);
-  }
   sdata->option = mgstat(krt, kst);
 }
 
@@ -1087,7 +1118,7 @@ kstat *mtn_list(const char *path)
   kopt.field_size[2] = 1;
   kopt.field_size[3] = 1;
   mtn_process(members, &data, (MTNPROCFUNC)mtn_list_process);
-  clear_members(members);
+  delmembers(members);
   return(data.option);
 }
 
@@ -1111,7 +1142,7 @@ kstat *mtn_stat(const char *path)
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_stat_process);
-  clear_members(members);
+  delmembers(members);
 	lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(sd.option);
 }
@@ -1143,7 +1174,7 @@ kmember *mtn_choose(const char *path)
   data.option    = NULL;
   mtn_process(members, &data, (MTNPROCFUNC)mtn_choose_info);
   member = copy_member(data.option);
-  clear_members(members);
+  delmembers(members);
   return(member);
 }
 
@@ -1172,7 +1203,7 @@ kstat *mtn_find(const char *path, int create_flag)
       }
     }
   }
-  clear_members(members);
+  delmembers(members);
   return(kst);
 }
 
@@ -1199,7 +1230,7 @@ int mtn_mkdir(const char *path)
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_mkdir_process);
-  clear_members(members);
+  delmembers(members);
   return(0);
 }
 
@@ -1227,7 +1258,7 @@ int mtn_rm(const char *path)
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_rm_process);
-  clear_members(members);
+  delmembers(members);
 	lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(0);
 }
@@ -1385,6 +1416,15 @@ int mtn_callcmd(ktask *kt)
 // mtnstatus
 //
 //-------------------------------------------------------------------
+void kcount(int ddir, int dstat, int dmember)
+{
+  pthread_mutex_lock(&(kopt.status_mutex));
+  kopt.cdir    += ddir;
+  kopt.cstat   += dstat;
+  kopt.cmember += dmember;
+  pthread_mutex_unlock(&(kopt.status_mutex));
+}
+
 char *get_mtnstatus_members()
 {
   int l;
@@ -1428,7 +1468,7 @@ size_t mtnstatus_members()
   for(member=members;member;member=member->next){
     exsprintf(buff, size, "%s(%s) %llu Bytes Free\n", member->host, mtn_get_v4addr(&(member->addr)), member->free);
   }
-  clear_members(members);
+  delmembers(members);
   result = strlen(*buff);
   pthread_mutex_unlock(&(kopt.status_mutex));
   return(result);
@@ -1442,13 +1482,21 @@ size_t mtnstatus_debuginfo()
   char   **buff;
   size_t  *size;
   size_t result;
+  meminfo minfo;
+
   pthread_mutex_lock(&(kopt.status_mutex));
   buff = &(kopt.mtnstatus_debuginfo.buff);
   size = &(kopt.mtnstatus_debuginfo.size);
   if(*buff){
     **buff = 0;
   }
+  get_meminfo(&minfo);
   exsprintf(buff, size, "[DEBUG INFO]\n");
+  exsprintf(buff, size, "VSZ   : %llu KB\n", minfo.vsz / 1024);
+  exsprintf(buff, size, "RSS   : %llu KB\n", minfo.res / 1024);
+  exsprintf(buff, size, "DIR   : %d\n", kopt.cdir);
+  exsprintf(buff, size, "STAT  : %d\n", kopt.cstat);
+  exsprintf(buff, size, "MEMBER: %d\n", kopt.cmember);
   for(kd=kopt.dircache;kd;kd=kd->next){
     exsprintf(buff, size, "THIS=%p PREV=%p NEXT=%p FLAG=%d PATH=%s\n", kd, kd->prev, kd->next, kd->flag, kd->path);
     for(ks=kd->kst;ks;ks=ks->next){

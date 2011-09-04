@@ -59,7 +59,7 @@ static int mtnmount_getattr(const char *path, struct stat *stbuf)
       memcpy(stbuf, &(kst->stat), sizeof(struct stat));
     }
   }
-  rmstats(krt);
+  delstats(krt);
   lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(kst ? 0 : -ENOENT);
 }
