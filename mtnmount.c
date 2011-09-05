@@ -162,27 +162,41 @@ static int mtnmount_mkdir(const char *path, mode_t mode)
 static int mtnmount_unlink(const char *path)
 {
   int r;
+  char  d[PATH_MAX];
+  char  f[PATH_MAX];
+  dirbase(path,d,f);
   lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
   r = mtn_rm(path);
+  setstat_dircache(d, NULL);
   lprintf(0, "[debug] %s: EXIT r=%d\n", __func__, r);
   return(r);
 }
 
 static int mtnmount_rmdir(const char *path)
 {
-  int r;
+  int  r;
+  char d[PATH_MAX];
+  char f[PATH_MAX];
+  dirbase(path,d,f);
   lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
   r = mtn_rm(path);
+  setstat_dircache(d, NULL);
   lprintf(0, "[debug] %s: EXIT r=%d\n", __func__, r);
   return(r);
 }
 
 static int mtnmount_rename(const char *old_path, const char *new_path)
 {
-  int r;
-  lprintf(0, "[debug] %s: CALL old_path=%s new_path\n", __func__, old_path, new_path);
+  int  r;
+  char d0[PATH_MAX];
+  char d1[PATH_MAX];
+  dirbase(old_path, d0, NULL);
+  dirbase(new_path, d1, NULL);
+  lprintf(0, "[debug] %s: CALL old_path=%s new_path=%s\n", __func__, old_path, new_path);
   r = mtn_rename(old_path, new_path);
-  lprintf(0, "[debug] %s: EXIT old_path=%s new_path\n", __func__, old_path, new_path);
+  setstat_dircache(d0, NULL);
+  setstat_dircache(d1, NULL);
+  lprintf(0, "[debug] %s: EXIT old_path=%s new_path=%s\n", __func__, old_path, new_path);
   return(r);
 }
 
