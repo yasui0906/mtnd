@@ -318,6 +318,28 @@ static void mtnfs_rm_process(ktask *kt)
   lprintf(0,"[debug] %s: EXIT\n", __func__);
 }
 
+static void mtnfs_rename_process(ktask *kt)
+{
+  lprintf(0,"[debug] %s: CALL\n", __func__);
+  char obuff[PATH_MAX];
+  char nbuff[PATH_MAX];
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(obuff, &(kt->recv));
+  mtn_get_string(nbuff, &(kt->recv));
+  mtnfs_fix_path(obuff);
+  mtnfs_fix_path(nbuff);
+  sprintf(kt->path, "./%s", obuff);
+  kt->send.head.type = MTNRES_SUCCESS;
+  if(rename(obuff, nbuff) == -1){
+    lprintf(0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }
+  lprintf(0,"[debug] %s: EXIT\n", __func__);
+}
+
 void mtnfs_udp_process(int s)
 {
   lprintf(0,"[debug] %s: START\n", __func__);
@@ -350,6 +372,7 @@ void mtnfs_task_process(int s)
   taskfunc[MTNCMD_MKDIR]  = (MTNFSTASKFUNC)mtnfs_mkdir_process;
   taskfunc[MTNCMD_RMDIR]  = (MTNFSTASKFUNC)mtnfs_rm_process;
   taskfunc[MTNCMD_UNLINK] = (MTNFSTASKFUNC)mtnfs_rm_process;
+  taskfunc[MTNCMD_RENAME] = (MTNFSTASKFUNC)mtnfs_rename_process;
   while(kt){
     kt->con = s;
     MTNFSTASKFUNC task = taskfunc[kt->type];

@@ -132,15 +132,18 @@ static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     filler(buf, "members",   NULL, 0);
     filler(buf, "debuginfo", NULL, 0);
   }else{
+    lprintf(0, "[debug] %s: EXEC\n", __func__);
     krt = get_dircache(path,1);
     if(krt == NULL){
       krt = mtn_list(path);
       setstat_dircache(path, krt);
     }
+    lprintf(0, "[debug] %s: EXEC\n", __func__);
     for(kst=krt;kst;kst=kst->next){
       lprintf(0, "[debug] %s: name=%s\n", __func__, kst->name);
       filler(buf, kst->name, NULL, 0);
     }
+    lprintf(0, "[debug] %s: EXEC\n", __func__);
     delstats(krt);
   }
   lprintf(0, "[debug] %s: EXIT\n", __func__);
@@ -174,6 +177,15 @@ static int mtnmount_rmdir(const char *path)
   return(r);
 }
 
+static int mtnmount_rename(const char *old_path, const char *new_path)
+{
+  int r;
+  lprintf(0, "[debug] %s: CALL old_path=%s new_path\n", __func__, old_path, new_path);
+  r = mtn_rename(old_path, new_path);
+  lprintf(0, "[debug] %s: EXIT old_path=%s new_path\n", __func__, old_path, new_path);
+  return(r);
+}
+
 static int mtnmount_readlink(const char *path, char *buff, size_t size)
 {
   lprintf(0, "[debug] %s: path=%s\n", __func__, path);
@@ -185,9 +197,8 @@ static int mtnmount_create(const char *path, mode_t mode, struct fuse_file_info 
   int  r = 0;
   char d[PATH_MAX];
   char f[PATH_MAX];
-
+  dirbase(path,d,f);
   lprintf(0, "[debug] %s: CALL path=%s fh=%llu mode=%o\n", __func__, path, fi->fh, mode);
-  dirbase(path, d, f);
   r = mtn_open(path, fi->flags, mode);
   if(r == -1){
     return(-errno);
@@ -316,13 +327,6 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
   r = mtn_write((int)(fi->fh), buf, size, offset); 
   pthread_mutex_unlock(&(mtn_wmutex[fi->fh]));
   return r;
-}
-
-static int mtnmount_rename(const char *old_path, const char *new_path)
-{
-  ktask kt;
-  lprintf(0, "%s: old=%s new=%s\n", __func__, old_path, new_path);
-  return(0);
 }
 
 static int mtnmount_chmod(const char *path, mode_t mode)

@@ -662,13 +662,13 @@ kstat *delstat(kstat *kst)
   }
   if(kst->prev){
 		kst->prev->next = kst->next;
-		kst->prev = NULL;
 	}
   if(kst->next){
 		r = kst->next;
 		kst->next->prev = kst->prev;
-    kst->next = NULL;
   }
+  kst->prev = NULL;
+  kst->next = NULL;
   if(kst->name){
     free(kst->name);
     kst->name = NULL;
@@ -909,7 +909,7 @@ kstat *mkstat(kmember *member, kaddr *addr, kdata *data)
   kstat *kst = NULL;
   size_t len = mtn_get_string(NULL, data);
   if(len == -1){
-    lprintf(0,"%s: data error\n", __func__);
+    lprintf(0,"[error] %s: data error\n", __func__);
     return(NULL);
   }
   if(len == 0){
@@ -1111,7 +1111,7 @@ kstat *get_dircache(const char *path, int flag)
 
 //----------------------------------------------------------------------------
 //
-//
+// UDP
 //
 //----------------------------------------------------------------------------
 void mtn_list_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
@@ -1282,6 +1282,44 @@ int mtn_rm(const char *path)
   return(0);
 }
 
+void mtn_rename_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
+{
+	if(rd->head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, rd, sizeof(errno));
+	  lprintf(0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
+	}
+}
+
+int mtn_rename(const char *opath, const char *npath)
+{
+	lprintf(0,"[debug] %s: CALL\n", __func__);
+  kdata sd;
+  kmember *members = get_members();
+	memset(&sd, 0, sizeof(sd));
+  if(strlen(opath) > strlen(kopt.mtnstatus_path)){
+    if(memcmp(kopt.mtnstatus_path, opath, strlen(kopt.mtnstatus_path)) == 0){
+      return(-EACCES);
+    }
+  }
+  if(strlen(npath) > strlen(kopt.mtnstatus_path)){
+    if(memcmp(kopt.mtnstatus_path, npath, strlen(kopt.mtnstatus_path)) == 0){
+      return(-EACCES);
+    }
+  }
+  sd.head.type = MTNCMD_RENAME;
+  sd.head.size = 0;
+  sd.option    = NULL;
+  mtn_set_string((uint8_t *)opath, &sd);
+  mtn_set_string((uint8_t *)npath, &sd);
+  mtn_process(members, &sd, (MTNPROCFUNC)mtn_rename_process);
+  delmembers(members);
+	lprintf(0,"[debug] %s: EXIT\n", __func__);
+  return(0);
+}
+
+//-------------------------------------------------------------------
+// TCP
+//-------------------------------------------------------------------
 int mtn_connect(const char *path, int create_flag)
 {
   int s;
@@ -1312,9 +1350,6 @@ int mtn_connect(const char *path, int create_flag)
   return(s);
 }
 
-//-------------------------------------------------------------------
-//
-//-------------------------------------------------------------------
 int mtn_open(const char *path, int flags, mode_t mode)
 {
   kdata sd;
@@ -1438,23 +1473,22 @@ int mtn_callcmd(ktask *kt)
 // mtnstatus
 //
 //-------------------------------------------------------------------
-void kcount(int ddir, int dstat, int dmember)
+void kcount(int ddelta, int sdelta, int mdelta)
 {
   pthread_mutex_lock(&(kopt.count_mutex));
-  kopt.dcount    += ddir;
-  kopt.scount   += dstat;
-  kopt.mcount += dmember;
+  kopt.dcount += ddelta;
+  kopt.scount += sdelta;
+  kopt.mcount += mdelta;
   pthread_mutex_unlock(&(kopt.count_mutex));
 }
 
 char *get_mtnstatus_members()
 {
-  int l;
   char *p = NULL;
   pthread_mutex_lock(&(kopt.status_mutex));
-  if(l = strlen(kopt.mtnstatus_members.buff)){
-    p = malloc(l);
-    memcpy(p, kopt.mtnstatus_members.buff, l);
+  if(kopt.mtnstatus_members.buff){
+    p = malloc(kopt.mtnstatus_members.size);
+    strcpy(p, kopt.mtnstatus_members.buff);
   }
   pthread_mutex_unlock(&(kopt.status_mutex));
   return(p); 
@@ -1462,12 +1496,11 @@ char *get_mtnstatus_members()
 
 char *get_mtnstatus_debuginfo()
 {
-  int l;
   char *p = NULL;
   pthread_mutex_lock(&(kopt.status_mutex));
-  if(l = strlen(kopt.mtnstatus_debuginfo.buff)){
-    p = malloc(l);
-    memcpy(p, kopt.mtnstatus_debuginfo.buff, l);
+  if(kopt.mtnstatus_debuginfo.buff){
+    p = malloc(kopt.mtnstatus_debuginfo.size);
+    strcpy(p, kopt.mtnstatus_debuginfo.buff);
   }
   pthread_mutex_unlock(&(kopt.status_mutex));
   return(p); 
@@ -1478,6 +1511,8 @@ size_t mtnstatus_members()
   char   **buff;
   size_t  *size;
   size_t result;
+  uint64_t dsize;
+  uint64_t dfree;
   kmember *member;
   kmember *members;
   pthread_mutex_lock(&(kopt.status_mutex));
@@ -1488,7 +1523,9 @@ size_t mtnstatus_members()
   }
   members = mtn_info();
   for(member=members;member;member=member->next){
-    exsprintf(buff, size, "%s(%s) %llu Bytes Free\n", member->host, mtn_get_v4addr(&(member->addr)), member->dfree * member->bsize);
+    dsize = member->dsize * member->fsize / 1024 / 1024;
+    dfree = member->dfree * member->bsize / 1024 / 1024;
+    exsprintf(buff, size, "%s(%s) %2d%% %llu/%lluMB\n", member->host, mtn_get_v4addr(&(member->addr)), dfree * 100 / dsize, dfree, dsize);
   }
   delmembers(members);
   result = strlen(*buff);
