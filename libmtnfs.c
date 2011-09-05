@@ -18,12 +18,15 @@ void mtn_init_option()
 {
   memset((void *)&kopt, 0, sizeof(kopt));
   strcpy(kopt.mcast_addr,     "224.0.0.110");
-  strcpy(kopt.mtnstatus_path, "/.mtnstatus");
+  strcpy(kopt.mtnstatus_name, ".mtnstatus");
+  strcpy(kopt.mtnstatus_path, "/");
+  strcat(kopt.mtnstatus_path, kopt.mtnstatus_name);
   kopt.mcast_port = 6000;
   kopt.host[0]    = 0;
   kopt.debuglevel = 0;
   kopt.max_packet_size = 1024;
   pthread_mutex_init(&(kopt.cache_mutex),  NULL);
+  pthread_mutex_init(&(kopt.count_mutex),  NULL);
   pthread_mutex_init(&(kopt.member_mutex), NULL);
   pthread_mutex_init(&(kopt.status_mutex), NULL);
 }
@@ -515,6 +518,9 @@ int mtn_set_stat(struct stat *st, kdata *kd)
     r = mtn_set_int(&(st->st_gid),   kd, sizeof(st->st_gid));
     if(r == -1){return(-1);}else{l+=r;}
 
+    r = mtn_set_int(&(st->st_blocks),kd, sizeof(st->st_blocks));
+    if(r == -1){return(-1);}else{l+=r;}
+
     r = mtn_set_int(&(st->st_atime), kd, sizeof(st->st_atime));
     if(r == -1){return(-1);}else{l+=r;}
 
@@ -539,12 +545,16 @@ int mtn_get_stat(struct stat *st, kdata *kd)
     if(mtn_get_int(&(st->st_gid),   kd, sizeof(st->st_gid)) == -1){
       return(-1);
     }
+    if(mtn_get_int(&(st->st_blocks),kd, sizeof(st->st_blocks)) == -1){
+      return(-1);
+    }
     if(mtn_get_int(&(st->st_atime), kd, sizeof(st->st_atime)) == -1){
       return(-1);
     }
     if(mtn_get_int(&(st->st_mtime), kd, sizeof(st->st_mtime)) == -1){
       return(-1);
     }
+    st->st_nlink = S_ISDIR(st->st_mode) ? 2 : 1;
     return(0);
   }
   return(-1);
@@ -728,7 +738,10 @@ kmember *copy_member(kmember *km)
   }
   nkm = make_member(NULL, km->host, &(km->addr));
   nkm->mark = km->mark;
-  nkm->free = km->free;
+  nkm->bsize = km->bsize;
+  nkm->fsize = km->fsize;
+  nkm->dsize = km->dsize;
+  nkm->dfree = km->dfree;
   return(nkm);
 }
 
@@ -872,7 +885,10 @@ kmember *mtn_hello()
 
 void mtn_info_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
-  mtn_get_int(&(member->free), rdata, sizeof(member->free));
+  mtn_get_int(&(member->bsize), rdata, sizeof(member->bsize));
+  mtn_get_int(&(member->fsize), rdata, sizeof(member->fsize));
+  mtn_get_int(&(member->dsize), rdata, sizeof(member->dsize));
+  mtn_get_int(&(member->dfree), rdata, sizeof(member->dfree));
 }
 
 kmember *mtn_info()
@@ -1150,11 +1166,14 @@ kstat *mtn_stat(const char *path)
 void mtn_choose_info(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
   kmember *choose = sdata->option;
-  mtn_get_int(&(member->free), rdata, sizeof(member->free));
+  mtn_get_int(&(member->bsize), rdata, sizeof(member->bsize));
+  mtn_get_int(&(member->fsize), rdata, sizeof(member->fsize));
+  mtn_get_int(&(member->dsize), rdata, sizeof(member->dsize));
+  mtn_get_int(&(member->dfree), rdata, sizeof(member->dfree));
   if(choose == NULL){
     sdata->option = member;
   }else{
-    if(member->free > choose->free){
+    if((member->dfree * member->bsize) > (choose->dfree * choose->bsize)){
       sdata->option = member;
     }
   }
@@ -1266,6 +1285,7 @@ int mtn_rm(const char *path)
 int mtn_connect(const char *path, int create_flag)
 {
   int s;
+  uint64_t dfree;
   kstat *st = mtn_find(path, create_flag);
   if(st == NULL){
     lprintf(0, "[error] %s: node not found\n", __func__);
@@ -1275,16 +1295,20 @@ int mtn_connect(const char *path, int create_flag)
   s = create_socket(0, SOCK_STREAM);
   if(s == -1){
     lprintf(0, "[error] %s:\n", __func__);
+    delstats(st);
     errno = EACCES;
     return(-1);
   }
   if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
     lprintf(0, "[error] %s: %s %s:%d\n", __func__, strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
     close(s);
+    delstats(st);
     errno = EACCES;
     return(-1);
   }
-  lprintf(0, "[debug] %s: connect %s %s %s (%llu free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), st->member->free);
+  dfree = st->member->dfree * st->member->bsize;
+  lprintf(0, "[debug] %s: connect %s %s %s (%llu free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), dfree);
+  delstats(st);
   return(s);
 }
 
@@ -1374,13 +1398,11 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
 
 int mtn_close(int s)
 {
+  int r;
   lprintf(0, "[debug] %s: CALL s=%d\n", __func__, s);
-  if(s == 0){
-    return(0);
-  }
-  close(s);
+  r = (s == 0) ? 0 : close(s);
   lprintf(0, "[debug] %s: EXIT\n", __func__);
-  return(0);
+  return(r);
 }
 
 int mtn_callcmd(ktask *kt)
@@ -1418,11 +1440,11 @@ int mtn_callcmd(ktask *kt)
 //-------------------------------------------------------------------
 void kcount(int ddir, int dstat, int dmember)
 {
-  pthread_mutex_lock(&(kopt.status_mutex));
-  kopt.cdir    += ddir;
-  kopt.cstat   += dstat;
-  kopt.cmember += dmember;
-  pthread_mutex_unlock(&(kopt.status_mutex));
+  pthread_mutex_lock(&(kopt.count_mutex));
+  kopt.dcount    += ddir;
+  kopt.scount   += dstat;
+  kopt.mcount += dmember;
+  pthread_mutex_unlock(&(kopt.count_mutex));
 }
 
 char *get_mtnstatus_members()
@@ -1466,7 +1488,7 @@ size_t mtnstatus_members()
   }
   members = mtn_info();
   for(member=members;member;member=member->next){
-    exsprintf(buff, size, "%s(%s) %llu Bytes Free\n", member->host, mtn_get_v4addr(&(member->addr)), member->free);
+    exsprintf(buff, size, "%s(%s) %llu Bytes Free\n", member->host, mtn_get_v4addr(&(member->addr)), member->dfree * member->bsize);
   }
   delmembers(members);
   result = strlen(*buff);
@@ -1494,9 +1516,9 @@ size_t mtnstatus_debuginfo()
   exsprintf(buff, size, "[DEBUG INFO]\n");
   exsprintf(buff, size, "VSZ   : %llu KB\n", minfo.vsz / 1024);
   exsprintf(buff, size, "RSS   : %llu KB\n", minfo.res / 1024);
-  exsprintf(buff, size, "DIR   : %d\n", kopt.cdir);
-  exsprintf(buff, size, "STAT  : %d\n", kopt.cstat);
-  exsprintf(buff, size, "MEMBER: %d\n", kopt.cmember);
+  exsprintf(buff, size, "DIR   : %d\n", kopt.dcount);
+  exsprintf(buff, size, "STAT  : %d\n", kopt.scount);
+  exsprintf(buff, size, "MEMBER: %d\n", kopt.mcount);
   for(kd=kopt.dircache;kd;kd=kd->next){
     exsprintf(buff, size, "THIS=%p PREV=%p NEXT=%p FLAG=%d PATH=%s\n", kd, kd->prev, kd->next, kd->flag, kd->path);
     for(ks=kd->kst;ks;ks=ks->next){

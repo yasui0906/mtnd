@@ -42,16 +42,22 @@ int mkdir_ex(const char *path)
   return(mkdir(path, 0755));
 }
 
-uint64_t get_diskfree()
+int get_diskfree(uint32_t *bsize, uint32_t *fsize, uint64_t *dsize, uint64_t *dfree)
 {
   uint64_t size = 0;
   struct statvfs vf;
+
   if(statvfs(".", &vf) == -1){
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
-    return(0);
+    return(-1);
   }
-  size = vf.f_bfree * vf.f_bsize;
-  return(size);
+  lprintf(0, "[debug] %s: bsize=%u frsize=%u\n",  __func__, vf.f_bsize, vf.f_frsize);
+  lprintf(0, "[debug] %s: disk=%llu free=%llu\n", __func__, vf.f_blocks * vf.f_bsize, vf.f_bfree * vf.f_frsize);
+  *bsize = vf.f_bsize;
+  *fsize = vf.f_frsize;
+  *dsize = vf.f_blocks;
+  *dfree = vf.f_bfree;
+  return(0);
 }
 
 uint64_t get_datasize(char *path)
@@ -84,11 +90,17 @@ uint64_t get_datasize(char *path)
 
 void start_message(const char *msg)
 {
+  uint32_t bsize;
+  uint32_t fsize;
+  uint64_t dsize;
+  uint64_t dfree;
+  get_diskfree(&bsize, &fsize, &dsize, &dfree);
   lprintf(0, "%s", msg);
   version();
   lprintf(0, "host: %s\n", kopt.host);
   lprintf(0, "base: %s\n", kopt.cwd);
-  lprintf(0, "free: %llu [KB]\n", get_diskfree() / 1024);
+  lprintf(0, "size: %llu [KB]\n", fsize * dsize / 1024);
+  lprintf(0, "free: %llu [KB]\n", bsize * dfree / 1024);
 }
 
 char *mtnfs_fix_path(char *path){
@@ -159,10 +171,17 @@ static void mtnfs_hello_process(ktask *kt)
 
 static void mtnfs_info_process(ktask *kt)
 {
+  uint32_t bsize;
+  uint32_t fsize;
+  uint64_t dsize;
+  uint64_t dfree;
   lprintf(1,"[debug] %s: START\n", __func__);
-  uint64_t size = get_diskfree();
+  get_diskfree(&bsize, &fsize, &dsize, &dfree);
   kt->send.head.fin = 1;
-  mtn_set_int(&size, &(kt->send), sizeof(size));
+  mtn_set_int(&bsize, &(kt->send), sizeof(bsize));
+  mtn_set_int(&fsize, &(kt->send), sizeof(fsize));
+  mtn_set_int(&dsize, &(kt->send), sizeof(dsize));
+  mtn_set_int(&dfree, &(kt->send), sizeof(dfree));
   kt->fin = 1;
   lprintf(1,"[debug] %s: END\n", __func__);
 }
