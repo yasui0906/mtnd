@@ -340,6 +340,50 @@ static void mtnfs_rename_process(ktask *kt)
   lprintf(0,"[debug] %s: EXIT\n", __func__);
 }
 
+static void mtnfs_symlink_process(ktask *kt)
+{
+  lprintf(0,"[debug] %s: CALL\n", __func__);
+  char oldpath[PATH_MAX];
+  char newpath[PATH_MAX];
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(oldpath, &(kt->recv));
+  mtn_get_string(newpath, &(kt->recv));
+  mtnfs_fix_path(newpath);
+  kt->send.head.type = MTNRES_SUCCESS;
+  if(symlink(oldpath, newpath) == -1){
+    lprintf(0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }
+  lprintf(0,"[debug] %s: EXIT o=%s n=%s\n", __func__, oldpath, newpath);
+}
+
+static void mtnfs_readlink_process(ktask *kt)
+{
+  lprintf(0,"[debug] %s: CALL\n", __func__);
+  ssize_t size;
+  char newpath[PATH_MAX];
+  char oldpath[PATH_MAX];
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(newpath, &(kt->recv));
+  mtnfs_fix_path(newpath);
+  kt->send.head.type = MTNRES_SUCCESS;
+  size = readlink(newpath, oldpath, PATH_MAX);
+  if(size == -1){
+    lprintf(0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }else{
+    oldpath[size] = 0;
+    mtn_set_string(oldpath, &(kt->send));
+  }
+  lprintf(0,"[debug] %s: EXIT o=%s n=%s\n", __func__, oldpath, newpath);
+}
+
 void mtnfs_udp_process(int s)
 {
   lprintf(0,"[debug] %s: START\n", __func__);
@@ -365,14 +409,16 @@ void mtnfs_task_process(int s)
   ktask *kt = kopt.task;
   MTNFSTASKFUNC taskfunc[MTNCMD_MAX];
   memset(taskfunc, 0, sizeof(taskfunc));
-  taskfunc[MTNCMD_HELLO]  = (MTNFSTASKFUNC)mtnfs_hello_process;
-  taskfunc[MTNCMD_INFO]   = (MTNFSTASKFUNC)mtnfs_info_process;
-  taskfunc[MTNCMD_LIST]   = (MTNFSTASKFUNC)mtnfs_list_process;
-  taskfunc[MTNCMD_STAT]   = (MTNFSTASKFUNC)mtnfs_stat_process;
-  taskfunc[MTNCMD_MKDIR]  = (MTNFSTASKFUNC)mtnfs_mkdir_process;
-  taskfunc[MTNCMD_RMDIR]  = (MTNFSTASKFUNC)mtnfs_rm_process;
-  taskfunc[MTNCMD_UNLINK] = (MTNFSTASKFUNC)mtnfs_rm_process;
-  taskfunc[MTNCMD_RENAME] = (MTNFSTASKFUNC)mtnfs_rename_process;
+  taskfunc[MTNCMD_HELLO]    = (MTNFSTASKFUNC)mtnfs_hello_process;
+  taskfunc[MTNCMD_INFO]     = (MTNFSTASKFUNC)mtnfs_info_process;
+  taskfunc[MTNCMD_LIST]     = (MTNFSTASKFUNC)mtnfs_list_process;
+  taskfunc[MTNCMD_STAT]     = (MTNFSTASKFUNC)mtnfs_stat_process;
+  taskfunc[MTNCMD_MKDIR]    = (MTNFSTASKFUNC)mtnfs_mkdir_process;
+  taskfunc[MTNCMD_RMDIR]    = (MTNFSTASKFUNC)mtnfs_rm_process;
+  taskfunc[MTNCMD_UNLINK]   = (MTNFSTASKFUNC)mtnfs_rm_process;
+  taskfunc[MTNCMD_RENAME]   = (MTNFSTASKFUNC)mtnfs_rename_process;
+  taskfunc[MTNCMD_SYMLINK]  = (MTNFSTASKFUNC)mtnfs_symlink_process;
+  taskfunc[MTNCMD_READLINK] = (MTNFSTASKFUNC)mtnfs_readlink_process;
   while(kt){
     kt->con = s;
     MTNFSTASKFUNC task = taskfunc[kt->type];

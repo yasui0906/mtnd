@@ -14,7 +14,6 @@ static int mtnmount_getattr(const char *path, struct stat *stbuf)
   char  d[PATH_MAX];
   char  f[PATH_MAX];
   dirbase(path,d,f);
-  lprintf(0,"[debug] %s: CALL dir=%s file=%s\n", __func__, d, f);
   memset(stbuf, 0, sizeof(struct stat));
   if(strcmp(path, "/") == 0) {
     stbuf->st_mode  = S_IFDIR | 0755;
@@ -57,7 +56,6 @@ static int mtnmount_getattr(const char *path, struct stat *stbuf)
     }
   }
   delstats(krt);
-  lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(kst ? 0 : -ENOENT);
 }
 
@@ -132,18 +130,15 @@ static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     filler(buf, "members",   NULL, 0);
     filler(buf, "debuginfo", NULL, 0);
   }else{
-    lprintf(0, "[debug] %s: EXEC\n", __func__);
     krt = get_dircache(path,1);
     if(krt == NULL){
       krt = mtn_list(path);
       setstat_dircache(path, krt);
     }
-    lprintf(0, "[debug] %s: EXEC\n", __func__);
     for(kst=krt;kst;kst=kst->next){
       lprintf(0, "[debug] %s: name=%s\n", __func__, kst->name);
       filler(buf, kst->name, NULL, 0);
     }
-    lprintf(0, "[debug] %s: EXEC\n", __func__);
     delstats(krt);
   }
   lprintf(0, "[debug] %s: EXIT\n", __func__);
@@ -185,6 +180,27 @@ static int mtnmount_rmdir(const char *path)
   return(r);
 }
 
+static int mtnmount_symlink(const char *oldpath, const char *newpath)
+{
+  int  r = 0;
+  char d[PATH_MAX];
+  dirbase(newpath, d, NULL);
+  lprintf(0, "[debug] %s: CALL oldpath=%s newpath=%s\n", __func__, oldpath, newpath);
+  r = mtn_symlink(oldpath, newpath);
+  setstat_dircache(d, NULL);
+  lprintf(0, "[debug] %s: EXIT r=%d\n", __func__, r);
+  return(r);
+}
+
+static int mtnmount_readlink(const char *path, char *buff, size_t size)
+{
+  int  r = 0;
+  lprintf(0, "[debug] %s: CALL path=%s\n", __func__, path);
+  r = mtn_readlink(path, buff, size);
+  lprintf(0, "[debug] %s: EXIT path=%s\n", __func__, path);
+  return(r);
+}
+
 static int mtnmount_rename(const char *old_path, const char *new_path)
 {
   int  r;
@@ -198,12 +214,6 @@ static int mtnmount_rename(const char *old_path, const char *new_path)
   setstat_dircache(d1, NULL);
   lprintf(0, "[debug] %s: EXIT old_path=%s new_path=%s\n", __func__, old_path, new_path);
   return(r);
-}
-
-static int mtnmount_readlink(const char *path, char *buff, size_t size)
-{
-  lprintf(0, "[debug] %s: path=%s\n", __func__, path);
-  return 0;
 }
 
 static int mtnmount_create(const char *path, mode_t mode, struct fuse_file_info *fi)
@@ -538,6 +548,7 @@ static struct fuse_operations mtn_oper = {
   .release     = mtnmount_release,
   .unlink      = mtnmount_unlink,
   .rmdir       = mtnmount_rmdir,
+  .symlink     = mtnmount_symlink,
   .mkdir       = mtnmount_mkdir,
   .rename      = mtnmount_rename,
   .chmod       = mtnmount_chmod,

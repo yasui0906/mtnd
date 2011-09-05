@@ -1149,7 +1149,6 @@ void mtn_stat_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 kstat *mtn_stat(const char *path)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1159,7 +1158,6 @@ kstat *mtn_stat(const char *path)
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_stat_process);
   delmembers(members);
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(sd.option);
 }
 
@@ -1314,6 +1312,72 @@ int mtn_rename(const char *opath, const char *npath)
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_rename_process);
   delmembers(members);
 	lprintf(0,"[debug] %s: EXIT\n", __func__);
+  return(0);
+}
+
+void mtn_symlink_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
+{
+	if(rd->head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, rd, sizeof(errno));
+	  lprintf(0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
+	}
+}
+
+int mtn_symlink(const char *oldpath, const char *newpath)
+{
+	lprintf(0,"[debug] %s: CALL\n", __func__);
+  kdata sd;
+  kmember *members = get_members();
+	memset(&sd, 0, sizeof(sd));
+  if(strlen(newpath) > strlen(kopt.mtnstatus_path)){
+    if(memcmp(kopt.mtnstatus_path, newpath, strlen(kopt.mtnstatus_path)) == 0){
+      return(-EACCES);
+    }
+  }
+  sd.head.type = MTNCMD_SYMLINK;
+  sd.head.size = 0;
+  sd.option    = NULL;
+  mtn_set_string((uint8_t *)oldpath, &sd);
+  mtn_set_string((uint8_t *)newpath, &sd);
+  mtn_process(members, &sd, (MTNPROCFUNC)mtn_symlink_process);
+  delmembers(members);
+	lprintf(0,"[debug] %s: EXIT\n", __func__);
+  return(0);
+}
+
+void mtn_readlink_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
+{
+  size_t size;
+	if(rd->head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, rd, sizeof(errno));
+	  lprintf(0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
+	}else{
+    if(sd->option == NULL){
+      size = mtn_get_string(NULL, rd);
+      sd->option = malloc(size);
+      mtn_get_string(sd->option, rd);
+    }
+  }
+}
+
+int mtn_readlink(const char *path, char *buff, size_t size)
+{
+  kdata sd;
+  kmember *members = get_members();
+	memset(&sd, 0, sizeof(sd));
+  if(strlen(path) > strlen(kopt.mtnstatus_path)){
+    if(memcmp(kopt.mtnstatus_path, path, strlen(kopt.mtnstatus_path)) == 0){
+      return(-EACCES);
+    }
+  }
+  sd.head.type = MTNCMD_READLINK;
+  sd.head.size = 0;
+  sd.option    = NULL;
+  mtn_set_string((uint8_t *)path, &sd);
+  mtn_process(members, &sd, (MTNPROCFUNC)mtn_readlink_process);
+  delmembers(members);
+  snprintf(buff, size, "%s", sd.option);
+  free(sd.option);
   return(0);
 }
 
