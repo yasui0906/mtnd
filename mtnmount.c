@@ -216,6 +216,30 @@ static int mtnmount_rename(const char *old_path, const char *new_path)
   return(r);
 }
 
+static int mtnmount_chmod(const char *path, mode_t mode)
+{
+  char  d[PATH_MAX];
+  char  f[PATH_MAX];
+  dirbase(path,d,f);
+  lprintf(0, "[debug] %s: CALL\n", __func__);
+  mtn_chmod(path, mode);
+  setstat_dircache(d, NULL);
+  lprintf(0, "[debug] %s: EXIT\n", __func__);
+  return(0);
+}
+
+static int mtnmount_chown(const char *path, uid_t uid, gid_t gid)
+{
+  char  d[PATH_MAX];
+  char  f[PATH_MAX];
+  dirbase(path,d,f);
+  lprintf(0, "[debug] %s: CALL\n", __func__);
+  mtn_chown(path, uid, gid);
+  setstat_dircache(d, NULL);
+  lprintf(0, "[debug] %s: EXIT\n", __func__);
+  return(0);
+}
+
 static int mtnmount_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
   int  r = 0;
@@ -351,43 +375,6 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
   r = mtn_write((int)(fi->fh), buf, size, offset); 
   pthread_mutex_unlock(&(mtn_wmutex[fi->fh]));
   return r;
-}
-
-static int mtnmount_chmod(const char *path, mode_t mode)
-{
-  ktask kt;
-  lprintf(0, "[debug] %s: CALL\n", __func__);
-  lprintf(0, "%s: path=%s\n", __func__, path);
-  memset(&kt, 0, sizeof(kt));
-  strcpy(kt.path, path);
-  mtn_set_string(path, &(kt.send));
-  mtn_set_int32(&mode, &(kt.send));
-  if(mtn_callcmd(&kt) == -1){
-    return(-errno);
-  }
-  lprintf(0, "[debug] %s: EXIT\n", __func__);
-  return(0);
-}
-
-static int mtnmount_chown(const char *path, uid_t uid, gid_t gid)
-{
-  ktask kt;
-  uint32_t val;
-  lprintf(0, "[debug] %s: CALL\n", __func__);
-  lprintf(0, "%s: path=%s\n", __func__, path);
-  memset(&kt, 0, sizeof(kt));
-  strcpy(kt.path, path);
-  mtn_set_string(path, &(kt.send));
-  val = (uint32_t)uid;
-  mtn_set_int32(&val, &(kt.send));
-  val = (uint32_t)gid;
-  mtn_set_int32(&val, &(kt.send));
-  kt.type = MTNCMD_CHOWN;
-  if(mtn_callcmd(&kt) == -1){
-    return(-errno);
-  }
-  lprintf(0, "[debug] %s: EXIT\n", __func__);
-  return(0);
 }
 
 static int mtnmount_statfs(const char *path, struct statvfs *sv)

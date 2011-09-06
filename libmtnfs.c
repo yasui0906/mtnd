@@ -591,6 +591,17 @@ void get_mode_string(uint8_t *buff, mode_t mode)
   *buff = 0;
 }
 
+int is_mtnstatus(const char *path)
+{
+  int len = strlen(kopt.mtnstatus_path);
+  if(strlen(path) > len){
+    if(memcmp(path, kopt.mtnstatus_path, len) == 0){
+      return(1);
+    }
+  }
+  return(0);
+}
+
 //----------------------------------------------------------------
 // new
 //----------------------------------------------------------------
@@ -1064,7 +1075,7 @@ void setstat_dircache(const char *path, kstat *kst)
   }
   delstats(kd->kst);
   kd->kst  = copy_stats(kst);
-  kd->flag = 1;
+  kd->flag = (kst == NULL) ? 0 : 1;
   gettimeofday(&(kd->tv), NULL);
   pthread_mutex_unlock(&(kopt.cache_mutex));
 }
@@ -1378,6 +1389,59 @@ int mtn_readlink(const char *path, char *buff, size_t size)
   delmembers(members);
   snprintf(buff, size, "%s", sd.option);
   free(sd.option);
+  return(0);
+}
+
+void mtn_chmod_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
+{
+	if(rd->head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, rd, sizeof(errno));
+	  lprintf(0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
+  }
+}
+
+int mtn_chmod(const char *path, mode_t mode)
+{
+  kdata   sd;
+  kmember *m;
+  if(is_mtnstatus(path)){
+    return(-EACCES);
+  }
+  m = get_members();
+	memset(&sd, 0, sizeof(sd));
+  sd.head.type = MTNCMD_CHMOD;
+  sd.head.size = 0;
+  mtn_set_string((uint8_t *)path, &sd);
+  mtn_set_int(&mode, &sd, sizeof(mode));
+  mtn_process(m, &sd, (MTNPROCFUNC)mtn_chmod_process);
+  delmembers(m);
+  return(0);
+}
+
+void mtn_chown_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
+{
+	if(rd->head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, rd, sizeof(errno));
+	  lprintf(0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
+  }
+}
+
+int mtn_chown(const char *path, uid_t uid, gid_t gid)
+{
+  kdata   sd;
+  kmember *m;
+  if(is_mtnstatus(path)){
+    return(-EACCES);
+  }
+  m = get_members();
+	memset(&sd, 0, sizeof(sd));
+  sd.head.type = MTNCMD_CHOWN;
+  sd.head.size = 0;
+  mtn_set_string((uint8_t *)path, &sd);
+  mtn_set_int(&uid, &sd, sizeof(uid));
+  mtn_set_int(&gid, &sd, sizeof(gid));
+  mtn_process(m, &sd, (MTNPROCFUNC)mtn_chown_process);
+  delmembers(m);
   return(0);
 }
 

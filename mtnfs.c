@@ -384,6 +384,48 @@ static void mtnfs_readlink_process(ktask *kt)
   lprintf(0,"[debug] %s: EXIT o=%s n=%s\n", __func__, oldpath, newpath);
 }
 
+static void mtnfs_chmod_process(ktask *kt)
+{
+  mode_t mode;
+  char path[PATH_MAX];
+  lprintf(0,"[debug] %s: CALL\n", __func__);
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(path, &(kt->recv));
+  mtn_get_int(&mode, &(kt->recv), sizeof(mode));
+  mtnfs_fix_path(path);
+  kt->send.head.type = MTNRES_SUCCESS;
+  if(chmod(path, mode) == -1){
+    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }
+  lprintf(0,"[debug] %s: EXIT\n", __func__);
+}
+
+static void mtnfs_chown_process(ktask *kt)
+{
+  uid_t uid;
+  gid_t gid;
+  char path[PATH_MAX];
+  lprintf(0,"[debug] %s: CALL\n", __func__);
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(path, &(kt->recv));
+  mtn_get_int(&uid, &(kt->recv), sizeof(uid));
+  mtn_get_int(&gid, &(kt->recv), sizeof(gid));
+  mtnfs_fix_path(path);
+  kt->send.head.type = MTNRES_SUCCESS;
+  if(chown(path, uid, gid) == -1){
+    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }
+  lprintf(0,"[debug] %s: EXIT\n", __func__);
+}
+
 void mtnfs_udp_process(int s)
 {
   lprintf(0,"[debug] %s: START\n", __func__);
@@ -419,6 +461,8 @@ void mtnfs_task_process(int s)
   taskfunc[MTNCMD_RENAME]   = (MTNFSTASKFUNC)mtnfs_rename_process;
   taskfunc[MTNCMD_SYMLINK]  = (MTNFSTASKFUNC)mtnfs_symlink_process;
   taskfunc[MTNCMD_READLINK] = (MTNFSTASKFUNC)mtnfs_readlink_process;
+  taskfunc[MTNCMD_CHMOD]    = (MTNFSTASKFUNC)mtnfs_chmod_process;
+  taskfunc[MTNCMD_CHOWN]    = (MTNFSTASKFUNC)mtnfs_chown_process;
   while(kt){
     kt->con = s;
     MTNFSTASKFUNC task = taskfunc[kt->type];
