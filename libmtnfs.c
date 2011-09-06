@@ -301,16 +301,19 @@ int create_msocket(int port)
   return(s);
 }
 
-char *mtn_get_v4addr(kaddr *addr)
+char *v4addr(kaddr *addr, char *buff, socklen_t size)
 {
-  static char *dummy="0.0.0.0";
   if(!addr){
-    return(dummy);
+    strcpy(buff, "0.0.0.0");
+    return(buff);
   }
-  return(inet_ntoa(addr->addr.in.sin_addr));
+  if(inet_ntop(AF_INET, &(addr->addr.in.sin_addr), buff, size) == NULL){
+    strcpy(buff, "0.0.0.0");
+  }
+  return(buff);
 }
 
-int mtn_get_v4port(kaddr *addr)
+int v4port(kaddr *addr)
 {
   return(ntohs(addr->addr.in.sin_port));
 }
@@ -591,15 +594,28 @@ void get_mode_string(uint8_t *buff, mode_t mode)
   *buff = 0;
 }
 
-int is_mtnstatus(const char *path)
+int is_mtnstatus(const char *path, char *buff)
 {
   int len = strlen(kopt.mtnstatus_path);
-  if(strlen(path) > len){
-    if(memcmp(path, kopt.mtnstatus_path, len) == 0){
-      return(1);
+  if(strlen(path) < len){
+    return(0);
+  }
+  if(memcmp(path, kopt.mtnstatus_path, len)){
+    return(0);
+  }
+  if(path[len] == 0){
+    if(buff){
+      *buff = 0;
+    }
+  }else{
+    if(path[len] != '/'){
+      return(0);
+    }
+    if(buff){
+      strcpy(buff, path + len + 1);
     }
   }
-  return(0);
+  return(1);
 }
 
 //----------------------------------------------------------------
@@ -1404,7 +1420,7 @@ int mtn_chmod(const char *path, mode_t mode)
 {
   kdata   sd;
   kmember *m;
-  if(is_mtnstatus(path)){
+  if(is_mtnstatus(path, NULL)){
     return(-EACCES);
   }
   m = get_members();
@@ -1430,7 +1446,7 @@ int mtn_chown(const char *path, uid_t uid, gid_t gid)
 {
   kdata   sd;
   kmember *m;
-  if(is_mtnstatus(path)){
+  if(is_mtnstatus(path, NULL)){
     return(-EACCES);
   }
   m = get_members();
@@ -1445,6 +1461,33 @@ int mtn_chown(const char *path, uid_t uid, gid_t gid)
   return(0);
 }
 
+void mtn_utime_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
+{
+	if(rd->head.type == MTNRES_ERROR){
+    mtn_get_int(&errno, rd, sizeof(errno));
+	  lprintf(0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
+  }
+}
+
+int mtn_utime(const char *path, time_t act, time_t mod)
+{
+  kdata   sd;
+  kmember *m;
+  if(is_mtnstatus(path, NULL)){
+    return(-EACCES);
+  }
+  m = get_members();
+	memset(&sd, 0, sizeof(sd));
+  sd.head.type = MTNCMD_UTIME;
+  sd.head.size = 0;
+  mtn_set_string((uint8_t *)path, &sd);
+  mtn_set_int(&act, &sd, sizeof(act));
+  mtn_set_int(&mod, &sd, sizeof(mod));
+  mtn_process(m, &sd, (MTNPROCFUNC)mtn_utime_process);
+  delmembers(m);
+  return(0);
+}
+
 //-------------------------------------------------------------------
 // TCP
 //-------------------------------------------------------------------
@@ -1452,6 +1495,7 @@ int mtn_connect(const char *path, int create_flag)
 {
   int s;
   uint64_t dfree;
+  char ipstr[64];
   kstat *st = mtn_find(path, create_flag);
   if(st == NULL){
     lprintf(0, "[error] %s: node not found\n", __func__);
@@ -1465,15 +1509,16 @@ int mtn_connect(const char *path, int create_flag)
     errno = EACCES;
     return(-1);
   }
+  v4addr(&(st->member->addr), ipstr, sizeof(ipstr));
   if(connect(s, &(st->member->addr.addr.addr), st->member->addr.len) == -1){
-    lprintf(0, "[error] %s: %s %s:%d\n", __func__, strerror(errno), inet_ntoa(st->member->addr.addr.in.sin_addr), ntohs(st->member->addr.addr.in.sin_port));
+    lprintf(0, "[error] %s: %s %s:%d\n", __func__, strerror(errno), ipstr, v4port(&(st->member->addr)));
     close(s);
     delstats(st);
     errno = EACCES;
     return(-1);
   }
-  dfree = st->member->dfree * st->member->bsize;
-  lprintf(0, "[debug] %s: connect %s %s %s (%llu free)\n", __func__, path, st->member->host, inet_ntoa(st->member->addr.addr.in.sin_addr), dfree);
+  dfree = st->member->dfree * st->member->bsize / 1024 / 1024;
+  lprintf(0, "[debug] %s: %s %s (%lluM free) PATH=%s\n", __func__, st->member->host, ipstr, dfree, path);
   delstats(st);
   return(s);
 }
@@ -1562,18 +1607,14 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
 int mtn_close(int s)
 {
   int r;
-  lprintf(0, "[debug] %s: CALL s=%d\n", __func__, s);
   r = (s == 0) ? 0 : close(s);
-  lprintf(0, "[debug] %s: EXIT\n", __func__);
   return(r);
 }
 
 int mtn_callcmd(ktask *kt)
 {
-  lprintf(0, "[debug] %s: CALL\n", __func__);
   kt->send.head.ver  = PROTOCOL_VERSION;
   kt->send.head.type = kt->type;
-  lprintf(0, "[debug] %s: TYPE=%d\n", __func__, kt->send.head.type);
   if(kt->con){
     kt->res = send_recv_stream(kt->con, &(kt->send), &(kt->recv));
   }else{
@@ -1592,7 +1633,6 @@ int mtn_callcmd(ktask *kt)
     mtn_get_int(&errno, &(kt->recv), sizeof(errno));
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
   }
-  lprintf(0, "[debug] %s: EXIT RES=%d\n", __func__, kt->res);
   return(kt->res);
 }
 
@@ -1641,6 +1681,7 @@ size_t mtnstatus_members()
   size_t result;
   uint64_t dsize;
   uint64_t dfree;
+  char ipstr[64];
   kmember *member;
   kmember *members;
   pthread_mutex_lock(&(kopt.status_mutex));
@@ -1653,7 +1694,7 @@ size_t mtnstatus_members()
   for(member=members;member;member=member->next){
     dsize = member->dsize * member->fsize / 1024 / 1024;
     dfree = member->dfree * member->bsize / 1024 / 1024;
-    exsprintf(buff, size, "%s(%s) %2d%% %llu/%lluMB\n", member->host, mtn_get_v4addr(&(member->addr)), dfree * 100 / dsize, dfree, dsize);
+    exsprintf(buff, size, "%s(%s) %2d%% %llu/%lluMB\n", member->host, v4addr(&(member->addr), ipstr, sizeof(ipstr)), dfree * 100 / dsize, dfree, dsize);
   }
   delmembers(members);
   result = strlen(*buff);

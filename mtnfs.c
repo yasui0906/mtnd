@@ -426,6 +426,27 @@ static void mtnfs_chown_process(ktask *kt)
   lprintf(0,"[debug] %s: EXIT\n", __func__);
 }
 
+static void mtnfs_utime_process(ktask *kt)
+{
+  struct utimbuf ut;
+  char path[PATH_MAX];
+  lprintf(0,"[debug] %s: CALL\n", __func__);
+  kt->fin = 1;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(path, &(kt->recv));
+  mtn_get_int(&(ut.actime),  &(kt->recv), sizeof(ut.actime));
+  mtn_get_int(&(ut.modtime), &(kt->recv), sizeof(ut.modtime));
+  mtnfs_fix_path(path);
+  kt->send.head.type = MTNRES_SUCCESS;
+  if(utime(path, &ut) == -1){
+    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+    kt->send.head.type = MTNRES_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }
+  lprintf(0,"[debug] %s: EXIT\n", __func__);
+}
+
 void mtnfs_udp_process(int s)
 {
   lprintf(0,"[debug] %s: START\n", __func__);
@@ -463,6 +484,7 @@ void mtnfs_task_process(int s)
   taskfunc[MTNCMD_READLINK] = (MTNFSTASKFUNC)mtnfs_readlink_process;
   taskfunc[MTNCMD_CHMOD]    = (MTNFSTASKFUNC)mtnfs_chmod_process;
   taskfunc[MTNCMD_CHOWN]    = (MTNFSTASKFUNC)mtnfs_chown_process;
+  taskfunc[MTNCMD_UTIME]    = (MTNFSTASKFUNC)mtnfs_utime_process;
   while(kt){
     kt->con = s;
     MTNFSTASKFUNC task = taskfunc[kt->type];
