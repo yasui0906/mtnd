@@ -6,6 +6,16 @@
 pthread_mutex_t *mtn_rmutex;
 pthread_mutex_t *mtn_wmutex;
 
+void usage()
+{
+  fprintf(stderr, "usage: mtnmount mountpoint [options]\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "mtnfs options:\n");
+  fprintf(stderr, "    -m IPADDR              Multicast Address(default: 224.0.0.110)\n");
+  fprintf(stderr, "    -p PORT                Server Port(default: 6000)\n");
+  fprintf(stderr, "\n");
+}
+
 static int mtnmount_getattr(const char *path, struct stat *stbuf)
 {
   kstat *krt = NULL;
@@ -531,16 +541,50 @@ static struct fuse_operations mtn_oper = {
   //.poll        = mtnmount_poll,
 };
 
+struct cmdoption {
+  char *addr;
+  char *port;
+};
+#define MTNFS_OPT_KEY(t, p, v) { t, offsetof(struct cmdoption, p), v }
+
+static struct fuse_opt mtnmount_opts[] = {
+  MTNFS_OPT_KEY("-m %s", addr, 1),
+  MTNFS_OPT_KEY("-p %s", port, 1),
+  FUSE_OPT_KEY("-h",     0),
+  FUSE_OPT_KEY("--help", 0),
+  FUSE_OPT_END
+};
+
+static int mtnmount_opt_parse(void *data, const char *arg, int key, struct fuse_args *outargs)
+{
+  struct cmdoption *opts = data;
+  if(key == 0){
+    usage();
+    return fuse_opt_add_arg(outargs, "-ho");
+  }
+  return(1);
+}
+
 int main(int argc, char *argv[])
 {
   int i;
+  struct cmdoption opts;
+  struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+
   mtn_init_option();
+  memset(&opts, 0, sizeof(opts));
+  fuse_opt_parse(&args, &opts, mtnmount_opts, mtnmount_opt_parse);
+  if(opts.port){
+    kopt.mcast_port = atoi(opts.port);
+  }
+  if(opts.addr){
+    strcpy(kopt.mcast_addr, opts.addr);
+  }
   mtn_rmutex = malloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
   mtn_wmutex = malloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
   for(i=0;i<MTN_OPENLIMIT;i++){
     pthread_mutex_init(&(mtn_rmutex[i]), NULL);
     pthread_mutex_init(&(mtn_wmutex[i]), NULL);
   }
-  return fuse_main(argc, argv, &mtn_oper, NULL);
+  return fuse_main(args.argc, args.argv, &mtn_oper, NULL);
 }
-
