@@ -23,8 +23,11 @@ void mtn_init_option()
   strcat(kopt.mtnstatus_path, kopt.mtnstatus_name);
   kopt.mcast_port = 6000;
   kopt.host[0]    = 0;
+  kopt.daemonize  = 1;
   kopt.debuglevel = 0;
   kopt.max_packet_size = 1024;
+  getcwd(kopt.cwd, PATH_MAX);
+  pthread_mutex_init(&(kopt.debug_mutex),  NULL);
   pthread_mutex_init(&(kopt.cache_mutex),  NULL);
   pthread_mutex_init(&(kopt.count_mutex),  NULL);
   pthread_mutex_init(&(kopt.member_mutex), NULL);
@@ -811,8 +814,6 @@ kmember *get_members(){
 
 //-------------------------------------------------------------------
 //
-//
-//
 //-------------------------------------------------------------------
 void mtn_process(kmember *members, kdata *sdata, MTNPROCFUNC mtn)
 {
@@ -1150,6 +1151,7 @@ void mtn_list_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 
 kstat *mtn_list(const char *path)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata data;
   kmember *members = get_members();
   data.head.type   = MTNCMD_LIST;
@@ -1176,6 +1178,7 @@ void mtn_stat_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 kstat *mtn_stat(const char *path)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1210,6 +1213,7 @@ void mtn_choose_list(kdata *sdata, kdata *rdata, kaddr *addr)
 
 kmember *mtn_choose(const char *path)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata data;
   kmember *member;
   kmember *members = get_members();
@@ -1229,6 +1233,7 @@ void mtn_find_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 
 kstat *mtn_find(const char *path, int create_flag)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kstat *kst;
   kdata data;
   kmember *member;
@@ -1261,6 +1266,7 @@ void mtn_mkdir_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 int mtn_mkdir(const char *path)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1288,7 +1294,7 @@ void mtn_rm_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 int mtn_rm(const char *path)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
+	lprintf(2, "[debug] %s: path=%s\n", __func__, path);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1303,7 +1309,6 @@ int mtn_rm(const char *path)
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_rm_process);
   delmembers(members);
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(0);
 }
 
@@ -1317,7 +1322,7 @@ void mtn_rename_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 int mtn_rename(const char *opath, const char *npath)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1338,7 +1343,6 @@ int mtn_rename(const char *opath, const char *npath)
   mtn_set_string((uint8_t *)npath, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_rename_process);
   delmembers(members);
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(0);
 }
 
@@ -1352,7 +1356,7 @@ void mtn_symlink_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 int mtn_symlink(const char *oldpath, const char *newpath)
 {
-	lprintf(0,"[debug] %s: CALL\n", __func__);
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1368,7 +1372,6 @@ int mtn_symlink(const char *oldpath, const char *newpath)
   mtn_set_string((uint8_t *)newpath, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_symlink_process);
   delmembers(members);
-	lprintf(0,"[debug] %s: EXIT\n", __func__);
   return(0);
 }
 
@@ -1389,6 +1392,7 @@ void mtn_readlink_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 int mtn_readlink(const char *path, char *buff, size_t size)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1418,6 +1422,7 @@ void mtn_chmod_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 int mtn_chmod(const char *path, mode_t mode)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata   sd;
   kmember *m;
   if(is_mtnstatus(path, NULL)){
@@ -1444,6 +1449,7 @@ void mtn_chown_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 int mtn_chown(const char *path, uid_t uid, gid_t gid)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata   sd;
   kmember *m;
   if(is_mtnstatus(path, NULL)){
@@ -1471,6 +1477,7 @@ void mtn_utime_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 int mtn_utime(const char *path, time_t act, time_t mod)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata   sd;
   kmember *m;
   if(is_mtnstatus(path, NULL)){
@@ -1497,6 +1504,8 @@ int mtn_connect(const char *path, int create_flag)
   uint64_t dfree;
   char ipstr[64];
   kstat *st = mtn_find(path, create_flag);
+
+	lprintf(2, "[debug] %s:\n", __func__);
   if(st == NULL){
     lprintf(0, "[error] %s: node not found\n", __func__);
     errno = EACCES;
@@ -1518,13 +1527,14 @@ int mtn_connect(const char *path, int create_flag)
     return(-1);
   }
   dfree = st->member->dfree * st->member->bsize / 1024 / 1024;
-  lprintf(0, "[debug] %s: %s %s (%lluM free) PATH=%s\n", __func__, st->member->host, ipstr, dfree, path);
+  lprintf(2, "[debug] %s: %s %s (%lluM free) PATH=%s\n", __func__, st->member->host, ipstr, dfree, path);
   delstats(st);
   return(s);
 }
 
 int mtn_open(const char *path, int flags, mode_t mode)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   kdata sd;
   kdata rd;
   int s = mtn_connect(path, ((flags & O_CREAT) != 0));
@@ -1606,6 +1616,7 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
 
 int mtn_close(int s)
 {
+	lprintf(2, "[debug] %s:\n", __func__);
   int r;
   r = (s == 0) ? 0 : close(s);
   return(r);
@@ -1674,6 +1685,19 @@ char *get_mtnstatus_debuginfo()
   return(p); 
 }
 
+char *get_mtnstatus_debuglevel()
+{
+  char *p = NULL;
+  pthread_mutex_lock(&(kopt.debug_mutex));
+  if(kopt.mtnstatus_debuglevel.buff){
+    p = malloc(kopt.mtnstatus_debuglevel.size);
+    strcpy(p, kopt.mtnstatus_debuglevel.buff);
+  }
+  pthread_mutex_unlock(&(kopt.debug_mutex));
+  return(p); 
+}
+
+
 size_t mtnstatus_members()
 {
   char   **buff;
@@ -1697,7 +1721,7 @@ size_t mtnstatus_members()
     exsprintf(buff, size, "%s(%s) %2d%% %llu/%lluMB\n", member->host, v4addr(&(member->addr), ipstr, sizeof(ipstr)), dfree * 100 / dsize, dfree, dsize);
   }
   delmembers(members);
-  result = strlen(*buff);
+  result = (*buff == NULL) ? 0 : strlen(*buff);
   pthread_mutex_unlock(&(kopt.status_mutex));
   return(result);
 }
@@ -1734,5 +1758,22 @@ size_t mtnstatus_debuginfo()
   result = strlen(*buff);
   pthread_mutex_unlock(&(kopt.status_mutex));
   return(result);
+}
+
+size_t mtnstatus_debuglevel()
+{
+  char  **buff;
+  size_t *size;
+  size_t   len;
+
+  pthread_mutex_lock(&(kopt.debug_mutex));
+  buff = &(kopt.mtnstatus_debuglevel.buff);
+  size = &(kopt.mtnstatus_debuglevel.size);
+  if(*buff){
+    **buff = 0;
+  }
+  len = exsprintf(buff, size, "%d\n", kopt.debuglevel);
+  pthread_mutex_unlock(&(kopt.debug_mutex));
+  return(len);
 }
 

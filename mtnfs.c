@@ -51,8 +51,8 @@ int get_diskfree(uint32_t *bsize, uint32_t *fsize, uint64_t *dsize, uint64_t *df
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
-  lprintf(0, "[debug] %s: bsize=%u frsize=%u\n",  __func__, vf.f_bsize, vf.f_frsize);
-  lprintf(0, "[debug] %s: disk=%llu free=%llu\n", __func__, vf.f_blocks * vf.f_bsize, vf.f_bfree * vf.f_frsize);
+  //lprintf(0, "[debug] %s: bsize=%u frsize=%u\n",  __func__, vf.f_bsize, vf.f_frsize);
+  //lprintf(0, "[debug] %s: disk=%llu free=%llu\n", __func__, vf.f_blocks * vf.f_bsize, vf.f_bfree * vf.f_frsize);
   *bsize = vf.f_bsize;
   *fsize = vf.f_frsize;
   *dsize = vf.f_blocks;
@@ -97,6 +97,7 @@ void start_message(const char *msg)
   get_diskfree(&bsize, &fsize, &dsize, &dfree);
   lprintf(0, "%s", msg);
   version();
+  lprintf(0, "pid : %d\n", getpid());
   lprintf(0, "host: %s\n", kopt.host);
   lprintf(0, "base: %s\n", kopt.cwd);
   lprintf(0, "size: %llu [KB]\n", fsize * dsize / 1024);
@@ -642,10 +643,8 @@ void mtnfs_child_read(ktask *kt)
   int r;
   size_t  size;
   off_t offset;
-  lprintf(0,"[debug] %s: START\n", __func__);
   mtn_get_int(&size,   &(kt->recv), sizeof(size));
   mtn_get_int(&offset, &(kt->recv), sizeof(offset));
-  lprintf(0,"[debug] %s: path=%s size=%d off=%llu\n", __func__, kt->path, size, offset);
 
   lseek(kt->fd, offset, SEEK_SET);
   while(size){
@@ -654,7 +653,6 @@ void mtnfs_child_read(ktask *kt)
     }else{
       r = read(kt->fd, kt->send.data.data, MAX_DATASIZE);
     }
-    lprintf(0,"[debug] %s: read=%d\n", __func__, r);
     if(r == 0){
       break;
     }
@@ -668,7 +666,6 @@ void mtnfs_child_read(ktask *kt)
   }
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  lprintf(0,"[debug] %s: END\n", __func__);
 }
 
 void mtnfs_child_write(ktask *kt)
@@ -677,11 +674,9 @@ void mtnfs_child_write(ktask *kt)
   void   *buff;
   off_t offset;
 
-  lprintf(0,"[debug] %s: START\n", __func__);
   mtn_get_int(&offset, &(kt->recv), sizeof(offset));
   size = kt->recv.head.size;
   buff = kt->recv.data.data;
-  lprintf(0,"[debug] %s: path=%s size=%d off=%llu\n", __func__, kt->path, size, offset);
   lseek(kt->fd, offset, SEEK_SET);
   while(size){
     kt->res = write(kt->fd, buff, size);
@@ -693,8 +688,6 @@ void mtnfs_child_write(ktask *kt)
     buff += kt->res;
     size -= kt->res;
   }
-  lprintf(0,"[debug] %s: res=%d\n", __func__, (int)(kt->send.head.type));
-  lprintf(0,"[debug] %s: END\n", __func__);
 }
 
 void mtnfs_child_close(ktask *kt)
@@ -882,7 +875,7 @@ void mtnfs_child(ktask *kt)
       lprintf(0, "[info]  %s: remote close\n", __func__);
       break;
     }
-    lprintf(0,"[info]  %s: pid=%d recv_type=%d recv_size=%d\n", __func__, getpid(), kt->recv.head.type, kt->recv.head.size);
+    //lprintf(0,"[info]  %s: pid=%d recv_type=%d recv_size=%d\n", __func__, getpid(), kt->recv.head.type, kt->recv.head.size);
     if(call_func = func_list[kt->recv.head.type]){
       call_func(kt);
     }else{
@@ -956,8 +949,38 @@ void do_loop(int m, int l)
   }
 }
 
-void do_daemon(int m, int l)
+void do_daemon()
 {
+  int pid;
+
+  if(!kopt.daemonize){
+    return;
+  }
+  pid = fork();
+  if(pid == -1){
+    fprintf(stderr, "%s: can't fork()\n", __func__);
+    exit(1); 
+  }
+  if(pid){
+    _exit(0);
+  }
+  setsid();
+  pid=fork();
+  if(pid == -1){
+    fprintf(stderr, "%s: can't fork()\n", __func__);
+    exit(1); 
+  }
+  if(pid){
+    _exit(0);
+  }
+
+  /*----- daemon process -----*/
+  close(2);
+  close(1);
+  close(0);
+  open("/dev/null",O_RDWR); /* new stdin  */
+  dup(0);                   /* new stdout */
+  dup(0);                   /* new stderr */
 }
 
 void signal_handler(int n)
@@ -1006,6 +1029,7 @@ void set_sig_handler()
 struct option *get_optlist()
 {
   static struct option opt[]={
+      "pid",     1, NULL, 'P',
       "help",    0, NULL, 'h',
       "version", 0, NULL, 'v',
       "export",  1, NULL, 'e',
@@ -1018,6 +1042,7 @@ int main(int argc, char *argv[])
 {
   int r;
   int daemonize = 1;
+  char buff[PATH_MAX];
   if(argc < 2){
     usage();
     exit(0);
@@ -1025,7 +1050,7 @@ int main(int argc, char *argv[])
   set_sig_handler();
   mtn_init_option();
   gethostname(kopt.host, sizeof(kopt.host));
-  while((r = getopt_long(argc, argv, "hvne:l:f:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "hvne:l:f:p:P:", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -1036,7 +1061,7 @@ int main(int argc, char *argv[])
         exit(0);
 
       case 'n':
-        daemonize = 0;
+        kopt.daemonize = 0;
         break;
 
       case 'f':
@@ -1052,12 +1077,26 @@ int main(int argc, char *argv[])
       case 'l':
         break;
 
+      case 'p':
+        kopt.mcast_port = atoi(optarg);
+        break;
+
+      case 'P':
+        strcpy(kopt.pid, optarg);
+        break;
+
       case '?':
         usage();
         exit(1);
     }
   }
-  kopt.cwd = getcwd(NULL, 0);
+  if((*kopt.pid != '/') && (*kopt.pid != 0)){
+    sprintf(buff, "%s/%s", kopt.cwd, kopt.pid);
+    strcpy(kopt.pid, buff);
+  }
+  do_daemon();
+  mkpidfile();
+  getcwd(kopt.cwd, PATH_MAX);
   start_message("======= mtnfs start =======\n");
   int m = create_msocket(6000);
   int l = create_lsocket(6000);
@@ -1065,11 +1104,8 @@ int main(int argc, char *argv[])
     lprintf(0, "%s: listen error\n", __func__);
     exit(1);
   }
-  if(daemonize){
-    do_daemon(m, l);
-  }else{
-    do_loop(m ,l);
-  }
+  do_loop(m ,l);
+  rmpidfile();
   lprintf(0, "mtnfs finished\n");
   return(0);
 }
