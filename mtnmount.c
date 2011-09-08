@@ -387,8 +387,8 @@ static int mtnmount_statfs(const char *path, struct statvfs *sv)
   sv->f_bavail = 0;
   for(m=km;m;m=m->next){
     sv->f_blocks += (m->dsize * m->fsize) / sv->f_frsize;
-    sv->f_bfree  += (m->dfree * m->bsize) / sv->f_bsize;
-    sv->f_bavail += (m->dfree * m->bsize) / sv->f_bsize;
+    sv->f_bfree  += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
+    sv->f_bavail += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
   }
   delmembers(km);
   return(0);
@@ -409,7 +409,7 @@ static int mtnmount_releasedir(const char *path, struct fuse_file_info *fi)
 static void *mtnmount_init(struct fuse_conn_info *conn)
 {
   lprintf(0, "========================\n");
-  lprintf(0, "%s ver.%s START\n", MODULE_NAME, PACKAGE_VERSION);
+  lprintf(0, "%s start (ver %s)\n", MODULE_NAME, PACKAGE_VERSION);
   lprintf(0, "MulticastIP: %s\n", kopt.mcast_addr);
   lprintf(0, "PortNumber : %d\n", kopt.mcast_port);
   lprintf(0, "DebugLevel : %d\n", kopt.debuglevel);

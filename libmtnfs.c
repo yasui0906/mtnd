@@ -17,14 +17,15 @@ koption kopt;
 void mtn_init_option()
 {
   memset((void *)&kopt, 0, sizeof(kopt));
-  strcpy(kopt.mcast_addr,     "224.0.0.110");
   strcpy(kopt.mtnstatus_name, ".mtnstatus");
   strcpy(kopt.mtnstatus_path, "/");
   strcat(kopt.mtnstatus_path, kopt.mtnstatus_name);
+  strcpy(kopt.mcast_addr,     "224.0.0.110");
   kopt.mcast_port = 6000;
   kopt.host[0]    = 0;
   kopt.daemonize  = 1;
   kopt.debuglevel = 0;
+  kopt.free_limit = atoikmg("2G");
   kopt.max_packet_size = 1024;
   getcwd(kopt.cwd, PATH_MAX);
   pthread_mutex_init(&(kopt.debug_mutex),  NULL);
@@ -917,6 +918,7 @@ void mtn_info_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
   mtn_get_int(&(member->fsize), rdata, sizeof(member->fsize));
   mtn_get_int(&(member->dsize), rdata, sizeof(member->dsize));
   mtn_get_int(&(member->dfree), rdata, sizeof(member->dfree));
+  mtn_get_int(&(member->limit), rdata, sizeof(member->limit));
 }
 
 kmember *mtn_info()

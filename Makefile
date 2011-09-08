@@ -1,6 +1,7 @@
 all: mtnfs.c mtntool.c mtnfs.h libmtnfs fuse
 	gcc -DMODULE_NAME=\"mtntool\" -o mtntool mtntool.c common.c libmtnfs.a
 	gcc -DMODULE_NAME=\"mtnfs\"   -o mtnfs   mtnfs.c   common.c libmtnfs.a
+	gcc -DMODULE_NAME=\"mtntest\" -o mtntest mtntest.c common.c libmtnfs.a
 
 fuse: mtnmount.c mtnfs.h 
 	gcc -DMODULE_NAME=\"mtnmount\" -lfuse -o mtnmount mtnmount.c common.c libmtnfs.a -I/usr/klab/app/fuse/include -L/usr/klab/app/fuse/lib
