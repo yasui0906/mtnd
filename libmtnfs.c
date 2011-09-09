@@ -13,6 +13,33 @@ kmember *mtn_hello();
 
 int is_loop = 1;
 koption kopt;
+char *mtncmdstr[]={
+  "NONE",
+  "HELLO",
+  "INFO",
+  "STAT",
+  "LIST",
+  "SET",
+  "GET",
+  "DEL",
+  "DATA",
+  "OPEN",
+  "READ",
+  "WRITE",
+  "CLOSE",
+  "TRUNCATE",
+  "MKDIR",
+  "RMDIR",
+  "UNLINK",
+  "RENAME",
+  "CHMOD",
+  "CHOWN",
+  "GETATTR",
+  "SETATTR",
+  "SYMLINK",
+  "READLINK",
+  "UTIME",
+};
 
 void mtn_init_option()
 {
@@ -28,11 +55,21 @@ void mtn_init_option()
   kopt.free_limit = atoikmg("2G");
   kopt.max_packet_size = 1024;
   getcwd(kopt.cwd, PATH_MAX);
+  gethostname(kopt.host, sizeof(kopt.host));
+  pthread_mutex_init(&(kopt.alloc_mutex),  NULL);
   pthread_mutex_init(&(kopt.debug_mutex),  NULL);
   pthread_mutex_init(&(kopt.cache_mutex),  NULL);
   pthread_mutex_init(&(kopt.count_mutex),  NULL);
   pthread_mutex_init(&(kopt.member_mutex), NULL);
   pthread_mutex_init(&(kopt.status_mutex), NULL);
+  
+  FILE *fp;
+  char buff[256];
+  fp = fopen("/proc/sys/net/core/rmem_max", "r");
+  if(fread(buff, 1, 256, fp) > 0){
+    kopt.rcvbuf = atoi(buff);
+  }
+  fclose(fp);
 }
 
 int send_readywait(int s)
@@ -251,15 +288,20 @@ int create_socket(int port, int mode)
   addr.sin_addr.s_addr = INADDR_ANY;
   s = socket(AF_INET, mode, 0);
   if(s == -1){
-    lprintf(0, "%s: can't create socket\n", __func__);
+    lprintf(0, "[error] %s: can't create socket\n", __func__);
     return(-1);
   }
+  if(kopt.rcvbuf){
+    if(setsockopt(s, SOL_SOCKET, SO_RCVBUF, (void *)&(kopt.rcvbuf), sizeof(kopt.rcvbuf)) == -1){
+      lprintf(0, "[error] %s: %s setsockopt SO_RCVBUF error\n", __func__, strerror(errno));
+    }
+  }
   if(setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (void *)&reuse, sizeof(reuse)) == -1){
-    lprintf(0, "%s: SO_REUSEADDR error\n", __func__);
+    lprintf(0, "[error] %s: SO_REUSEADDR error\n", __func__);
     return(-1);
   }
   if(bind(s, (struct sockaddr*)&addr, sizeof(addr)) == -1){
-    lprintf(0, "%s: bind error\n", __func__);
+    lprintf(0, "[error] %s: bind error\n", __func__);
     return(-1);
   }
   return(s);
@@ -628,7 +670,7 @@ int is_mtnstatus(const char *path, char *buff)
 kdir *newkdir(const char *path)
 {
   kdir *kd;
-  kd = malloc(sizeof(kdir));
+  kd = xmalloc(sizeof(kdir));
   memset(kd,0,sizeof(kdir));
   strcpy(kd->path, path);
   kcount(1,0,0);
@@ -639,7 +681,7 @@ kstat *newstat(const char *name)
 {
   char b[PATH_MAX];
   char f[PATH_MAX];
-  kstat *kst = malloc(sizeof(kstat));
+  kstat *kst = xmalloc(sizeof(kstat));
   memset(kst, 0, sizeof(kstat));
   if(!name){
     b[0] = 0;
@@ -647,7 +689,7 @@ kstat *newstat(const char *name)
     strcpy(b, name);
   }
   strcpy(f, basename(b));
-  kst->name = malloc(strlen(f) + 1);
+  kst->name = xmalloc(strlen(f) + 1);
   strcpy(kst->name, f);
   kcount(0,1,0);
   return(kst);
@@ -656,7 +698,7 @@ kstat *newstat(const char *name)
 kmember *newmember()
 {
   kmember *km;
-  km = malloc(sizeof(kmember));
+  km = xmalloc(sizeof(kmember));
   memset(km,0,sizeof(kmember));
   kcount(0,0,1);
   return(km);
@@ -680,7 +722,7 @@ kdir *deldir(kdir *kd)
     kd->next->prev = kd->prev;
   }
 	n = kd->next;
-  free(kd);
+  xfree(kd);
   kcount(-1,0,0);
 	return(n);
 }
@@ -701,11 +743,11 @@ kstat *delstat(kstat *kst)
   kst->prev = NULL;
   kst->next = NULL;
   if(kst->name){
-    free(kst->name);
+    xfree(kst->name);
     kst->name = NULL;
   }
   delmembers(kst->member);
-  free(kst);
+  xfree(kst);
   kcount(0, -1, 0);
 	return(r);
 }
@@ -714,11 +756,11 @@ kmember *delmember(kmember *km)
 {
   kmember *nm;
   if(km->host){
-    free(km->host);
+    xfree(km->host);
     km->host = NULL;
   }
   nm = km->next;
-  free(km);
+  xfree(km);
   kcount(0, 0, -1);
   return(nm);
 }
@@ -752,9 +794,9 @@ kmember *make_member(kmember *members, uint8_t *host, kaddr *addr)
   if(host){
     int len = strlen(host) + 1;
     if(member->host){
-      free(member->host);
+      xfree(member->host);
     }
-    member->host = malloc(len);
+    member->host = xmalloc(len);
     memcpy(member->host, host, len);
   }
   member->mark = 0;
@@ -946,7 +988,7 @@ kstat *mkstat(kmember *member, kaddr *addr, kdata *data)
     return(NULL);
   }
   kst = newstat(NULL);
-  kst->name = malloc(len);
+  kst->name = xmalloc(len);
   mtn_get_string(kst->name,  data);
   mtn_get_stat(&(kst->stat), data);
   kst->member = copy_member(member);
@@ -1386,7 +1428,7 @@ void mtn_readlink_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 	}else{
     if(sd->option == NULL){
       size = mtn_get_string(NULL, rd);
-      sd->option = malloc(size);
+      sd->option = xmalloc(size);
       mtn_get_string(sd->option, rd);
     }
   }
@@ -1410,7 +1452,7 @@ int mtn_readlink(const char *path, char *buff, size_t size)
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_readlink_process);
   delmembers(members);
   snprintf(buff, size, "%s", sd.option);
-  free(sd.option);
+  xfree(sd.option);
   return(0);
 }
 
@@ -1668,7 +1710,7 @@ char *get_mtnstatus_members()
   char *p = NULL;
   pthread_mutex_lock(&(kopt.status_mutex));
   if(kopt.mtnstatus_members.buff){
-    p = malloc(kopt.mtnstatus_members.size);
+    p = xmalloc(kopt.mtnstatus_members.size);
     strcpy(p, kopt.mtnstatus_members.buff);
   }
   pthread_mutex_unlock(&(kopt.status_mutex));
@@ -1680,7 +1722,7 @@ char *get_mtnstatus_debuginfo()
   char *p = NULL;
   pthread_mutex_lock(&(kopt.status_mutex));
   if(kopt.mtnstatus_debuginfo.buff){
-    p = malloc(kopt.mtnstatus_debuginfo.size);
+    p = xmalloc(kopt.mtnstatus_debuginfo.size);
     strcpy(p, kopt.mtnstatus_debuginfo.buff);
   }
   pthread_mutex_unlock(&(kopt.status_mutex));
@@ -1692,7 +1734,7 @@ char *get_mtnstatus_debuglevel()
   char *p = NULL;
   pthread_mutex_lock(&(kopt.debug_mutex));
   if(kopt.mtnstatus_debuglevel.buff){
-    p = malloc(kopt.mtnstatus_debuglevel.size);
+    p = xmalloc(kopt.mtnstatus_debuglevel.size);
     strcpy(p, kopt.mtnstatus_debuglevel.buff);
   }
   pthread_mutex_unlock(&(kopt.debug_mutex));
@@ -1748,9 +1790,11 @@ size_t mtnstatus_debuginfo()
   exsprintf(buff, size, "[DEBUG INFO]\n");
   exsprintf(buff, size, "VSZ   : %llu KB\n", minfo.vsz / 1024);
   exsprintf(buff, size, "RSS   : %llu KB\n", minfo.res / 1024);
+  exsprintf(buff, size, "MALLOC: %d\n", kopt.malloc);
   exsprintf(buff, size, "DIR   : %d\n", kopt.dcount);
   exsprintf(buff, size, "STAT  : %d\n", kopt.scount);
   exsprintf(buff, size, "MEMBER: %d\n", kopt.mcount);
+  exsprintf(buff, size, "RCVBUF: %d\n", kopt.rcvbuf);
   for(kd=kopt.dircache;kd;kd=kd->next){
     exsprintf(buff, size, "THIS=%p PREV=%p NEXT=%p FLAG=%d PATH=%s\n", kd, kd->prev, kd->next, kd->flag, kd->path);
     for(ks=kd->kst;ks;ks=ks->next){

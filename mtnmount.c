@@ -310,14 +310,14 @@ static int mtnmount_release(const char *path, struct fuse_file_info *fi)
   lprintf(1, "[debug] %s: path=%s fh=%llu\n", __func__, path, fi->fh);
   if(is_mtnstatus(path, f)){
     if(strcmp("members", f) == 0){
-      free((void *)(fi->fh));
+      xfree((void *)(fi->fh));
       fi->fh = 0;
     }else if(strcmp("debuginfo", f) == 0){
-      free((void *)(fi->fh));
+      xfree((void *)(fi->fh));
       fi->fh = 0;
     }else if(strcmp("debuglevel", f) == 0){
       set_debuglevel(atoi((char *)(fi->fh)));
-      free((void *)(fi->fh));
+      xfree((void *)(fi->fh));
       fi->fh = 0;
     }else{
       r = -EBADF;
@@ -366,7 +366,7 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
     lprintf(1, "[debug] %s: path=%s\n", __func__, path);
   }
   if(is_mtnstatus(path, NULL)){
-    fi->fh = (uint64_t)realloc((void *)(fi->fh), size);
+    fi->fh = (uint64_t)xrealloc((void *)(fi->fh), size);
     memcpy((void *)(fi->fh), buf, size);
     return(size); 
   }
@@ -617,8 +617,8 @@ int main(int argc, char *argv[])
       sprintf(kopt.pid, "%s/%s", kopt.cwd, opts.pid);
     }
   }
-  mtn_rmutex = malloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
-  mtn_wmutex = malloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
+  mtn_rmutex = xmalloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
+  mtn_wmutex = xmalloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
   for(i=0;i<MTN_OPENLIMIT;i++){
     pthread_mutex_init(&(mtn_rmutex[i]), NULL);
     pthread_mutex_init(&(mtn_wmutex[i]), NULL);
