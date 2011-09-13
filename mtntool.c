@@ -358,7 +358,7 @@ int main(int argc, char *argv[])
   file_path[0] = 0;
   mtn_init_option();
 
-  mode = MTNCMD_NONE;
+  mode = MTNCMD_MAX;
   while((r = getopt_long(argc, argv, "f:sglhvi", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':

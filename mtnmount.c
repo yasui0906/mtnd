@@ -113,7 +113,7 @@ static int mtnmount_fgetattr(const char *path, struct stat *st, struct fuse_file
   strcpy(kt.path, path);
   kt.type = MTNCMD_GETATTR;
   kt.con  = fi->fh;
-  mtn_set_string(path, &(kt.send));
+  mtn_set_string((uint8_t *)path, &(kt.send));
   if(mtn_callcmd(&kt) == -1){
     return(-errno);
   }
@@ -285,9 +285,11 @@ static int mtnmount_open(const char *path, struct fuse_file_info *fi)
 
 static int mtnmount_truncate(const char *path, off_t offset)
 {
+  int r;
   ktask kt;
   char f[PATH_MAX];
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(9, "[debug] %s: IN\n", __func__);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   if(is_mtnstatus(path, f)){
     if(strcmp("debuglevel", f) == 0){
       return(0);
@@ -298,9 +300,11 @@ static int mtnmount_truncate(const char *path, off_t offset)
   strcpy(kt.path, path);
   kt.type   = MTNCMD_TRUNCATE;
   kt.create = 1;
-  mtn_set_string(path, &(kt.send));
+  mtn_set_string((uint8_t *)path, &(kt.send));
   mtn_set_int(&offset, &(kt.send), sizeof(offset));
-  return((mtn_callcmd(&kt) == -1) ? -errno : 0);
+  r = (mtn_callcmd(&kt) == -1) ? -errno : 0;
+  lprintf(9, "[debug] %s: OUT\n", __func__);
+  return(r);
 }
 
 static int mtnmount_release(const char *path, struct fuse_file_info *fi)
@@ -390,7 +394,7 @@ static int mtnmount_statfs(const char *path, struct statvfs *sv)
     sv->f_bfree  += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
     sv->f_bavail += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
   }
-  delmembers(km);
+  del_members(km);
   return(0);
 }
 

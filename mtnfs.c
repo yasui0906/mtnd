@@ -5,6 +5,7 @@
 #include "mtnfs.h"
 #include "common.h"
 typedef void (*MTNFSTASKFUNC)(ktask *);
+MTNFSTASKFUNC taskfunc[MTNCMD_MAX];
 
 void version()
 {
@@ -22,7 +23,7 @@ void usage()
   printf("   -n         # no daemon\n");
   printf("   -e dir     # export dir\n");
   printf("   -m addr    # mcast addr\n");
-  printf("   -p port    # TCP/UDP port\n");
+  printf("   -p port    # TCP/UDP port(default: 6000)\n");
   printf("   -D num     # debug level\n");
   printf("   -l size    # limit size (MB)\n");
   printf("   --pid=path # pid file(ex: /var/run/mtnfs.pid)\n");
@@ -154,30 +155,74 @@ ktask *mtnfs_task_delete(ktask *task)
 //-------------------------------------------------------------------
 // UDP PROSESS
 //-------------------------------------------------------------------
+static void mtnfs_startup_process(ktask *kt)
+{
+  int len;
+  kmember *mb;
+  lprintf(9, "[debug] %s: IN mcount=%d\n", __func__, get_members_count(kopt.members));
+  kt->addr.addr.in.sin_port = htons(kopt.mcast_port);
+  kopt.members = add_member(kopt.members, &(kt->addr), NULL);
+  mb = get_member(kopt.members, &(kt->addr));
+  if(mb->host == NULL){
+    len = mtn_get_string(NULL, &(kt->recv));
+    mb->host = xmalloc(len);
+    mtn_get_string(mb->host, &(kt->recv));
+    lprintf(8, "[debug] %s: host=%s\n", __func__, mb->host);
+  }
+  gettimeofday(&(mb->tv),NULL);
+  kt->fin = 1;
+  kt->send.head.type = MTNCMD_STARTUP;
+  kt->send.head.size = 0;
+  kt->send.head.flag = 1;
+  mtn_set_string(kopt.host, &(kt->send));
+  lprintf(9, "[debug] %s: OUT mcount=%d\n", __func__, get_members_count(kopt.members));
+}
+
+static void mtnfs_shutdown_process(ktask *kt)
+{
+  kmember *mb;
+  lprintf(9, "[debug] %s: IN mcount=%d\n", __func__, get_members_count(kopt.members));
+  kt->addr.addr.in.sin_port = htons(kopt.mcast_port);
+  if(mb = get_member(kopt.members, &(kt->addr))){
+    lprintf(8, "[debug] %s: host=%s\n", __func__, mb->host);
+    if(mb == kopt.members){
+      mb = del_member(mb);
+      kopt.members = mb;
+    }else{
+      mb = del_member(mb);
+    }
+  }
+  kt->fin = 1;
+  lprintf(9, "[debug] %s: OUT mcount=%d\n", __func__, get_members_count(kopt.members));
+}
+
 static void mtnfs_hello_process(ktask *kt)
 {
-  lprintf(9, "[debug] %s: IN\n", __func__);
+  uint32_t mcount;
+  lprintf(0, "[debug] %s: IN\n", __func__);
+  mcount = get_members_count(kopt.members);
   mtn_set_string(kopt.host, &(kt->send));
+  mtn_set_int(&mcount, &(kt->send), sizeof(mcount));
   kt->fin = 1;
-  lprintf(9, "[debug] %s: OUT\n", __func__);
+  lprintf(0, "[debug] %s: mcount=%d OUT\n", __func__, mcount);
 }
 
 static void mtnfs_info_process(ktask *kt)
 {
-  uint32_t bsize;
-  uint32_t fsize;
-  uint64_t dsize;
-  uint64_t dfree;
-  uint64_t limit;
+  meminfo mi;
+  kmember mb;
   lprintf(9, "[debug] %s: IN\n", __func__);
-  limit = kopt.free_limit;
-  get_diskfree(&bsize, &fsize, &dsize, &dfree);
+  get_meminfo(&mi);
+  mb.limit = kopt.free_limit;
+  get_diskfree(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
+  mtn_set_int(&(mb.bsize), &(kt->send), sizeof(mb.bsize));
+  mtn_set_int(&(mb.fsize), &(kt->send), sizeof(mb.fsize));
+  mtn_set_int(&(mb.dsize), &(kt->send), sizeof(mb.dsize));
+  mtn_set_int(&(mb.dfree), &(kt->send), sizeof(mb.dfree));
+  mtn_set_int(&(mb.limit), &(kt->send), sizeof(mb.limit));
+  mtn_set_int(&(mi.vsz),   &(kt->send), sizeof(mi.vsz));
+  mtn_set_int(&(mi.res),   &(kt->send), sizeof(mi.res));
   kt->send.head.fin = 1;
-  mtn_set_int(&bsize, &(kt->send), sizeof(bsize));
-  mtn_set_int(&fsize, &(kt->send), sizeof(fsize));
-  mtn_set_int(&dsize, &(kt->send), sizeof(dsize));
-  mtn_set_int(&dfree, &(kt->send), sizeof(dfree));
-  mtn_set_int(&limit, &(kt->send), sizeof(limit));
   kt->fin = 1;
   lprintf(9, "[debug] %s: OUT\n", __func__);
 }
@@ -304,15 +349,19 @@ static void mtnfs_rm_process(ktask *kt)
   mtnfs_fix_path(buff);
   sprintf(kt->path, "./%s", buff);
   kt->send.head.type = MTNRES_SUCCESS;
-  if(lstat(kt->path, &(kt->stat)) == -1){
-    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
-    kt->send.head.type = MTNRES_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
-  }else{
+  if(lstat(kt->path, &(kt->stat)) != -1){
     if(S_ISDIR(kt->stat.st_mode)){
-      rmdir(kt->path);
+      if(rmdir(kt->path) == -1){
+        lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+        kt->send.head.type = MTNRES_ERROR;
+        mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      }
     }else{
-      unlink(kt->path);
+      if(unlink(kt->path) == -1){
+        lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+        kt->send.head.type = MTNRES_ERROR;
+        mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      }
     }
   }
   lprintf(9, "[debug] %s: OUT\n", __func__);
@@ -333,9 +382,11 @@ static void mtnfs_rename_process(ktask *kt)
   sprintf(kt->path, "./%s", obuff);
   kt->send.head.type = MTNRES_SUCCESS;
   if(rename(obuff, nbuff) == -1){
-    lprintf(0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
-    kt->send.head.type = MTNRES_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    if(errno != ENOENT){
+      lprintf(0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
+      kt->send.head.type = MTNRES_ERROR;
+      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    }
   }
   lprintf(9, "[debug] %s: OUT\n", __func__);
 }
@@ -397,9 +448,11 @@ static void mtnfs_chmod_process(ktask *kt)
   mtnfs_fix_path(path);
   kt->send.head.type = MTNRES_SUCCESS;
   if(chmod(path, mode) == -1){
-    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
-    kt->send.head.type = MTNRES_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    if(errno != ENOENT){
+      lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+      kt->send.head.type = MTNRES_ERROR;
+      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    }
   }
   lprintf(9, "[debug] %s: OUT\n", __func__);
 }
@@ -419,9 +472,11 @@ static void mtnfs_chown_process(ktask *kt)
   mtnfs_fix_path(path);
   kt->send.head.type = MTNRES_SUCCESS;
   if(chown(path, uid, gid) == -1){
-    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
-    kt->send.head.type = MTNRES_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    if(errno != ENOENT){
+      lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+      kt->send.head.type = MTNRES_ERROR;
+      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    }
   }
   lprintf(9, "[debug] %s: OUT\n", __func__);
 }
@@ -440,9 +495,11 @@ static void mtnfs_utime_process(ktask *kt)
   mtnfs_fix_path(path);
   kt->send.head.type = MTNRES_SUCCESS;
   if(utime(path, &ut) == -1){
-    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
-    kt->send.head.type = MTNRES_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    if(errno != ENOENT){
+      lprintf(0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+      kt->send.head.type = MTNRES_ERROR;
+      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    }
   }
   lprintf(9, "[debug] %s: OUT\n", __func__);
 }
@@ -465,24 +522,10 @@ void mtnfs_task_process(int s)
 {
   lprintf(9, "[debug] %s: IN\n", __func__);
   ktask *kt = kopt.task;
-  MTNFSTASKFUNC taskfunc[MTNCMD_MAX];
-  memset(taskfunc, 0, sizeof(taskfunc));
-  taskfunc[MTNCMD_HELLO]    = (MTNFSTASKFUNC)mtnfs_hello_process;
-  taskfunc[MTNCMD_INFO]     = (MTNFSTASKFUNC)mtnfs_info_process;
-  taskfunc[MTNCMD_LIST]     = (MTNFSTASKFUNC)mtnfs_list_process;
-  taskfunc[MTNCMD_STAT]     = (MTNFSTASKFUNC)mtnfs_stat_process;
-  taskfunc[MTNCMD_MKDIR]    = (MTNFSTASKFUNC)mtnfs_mkdir_process;
-  taskfunc[MTNCMD_RMDIR]    = (MTNFSTASKFUNC)mtnfs_rm_process;
-  taskfunc[MTNCMD_UNLINK]   = (MTNFSTASKFUNC)mtnfs_rm_process;
-  taskfunc[MTNCMD_RENAME]   = (MTNFSTASKFUNC)mtnfs_rename_process;
-  taskfunc[MTNCMD_SYMLINK]  = (MTNFSTASKFUNC)mtnfs_symlink_process;
-  taskfunc[MTNCMD_READLINK] = (MTNFSTASKFUNC)mtnfs_readlink_process;
-  taskfunc[MTNCMD_CHMOD]    = (MTNFSTASKFUNC)mtnfs_chmod_process;
-  taskfunc[MTNCMD_CHOWN]    = (MTNFSTASKFUNC)mtnfs_chown_process;
-  taskfunc[MTNCMD_UTIME]    = (MTNFSTASKFUNC)mtnfs_utime_process;
+  MTNFSTASKFUNC task;
   while(kt){
     kt->con = s;
-    MTNFSTASKFUNC task = taskfunc[kt->type];
+    task = taskfunc[kt->type];
     if(task){
       task(kt);
     }else{
@@ -493,7 +536,9 @@ void mtnfs_task_process(int s)
       lprintf(0, "[error] %s: Function Not Found type=%d\n", __func__, kt->type);
     }
     if(kt->fin){
-      send_dgram(kt->con, &(kt->send), &(kt->addr));
+      if(kt->recv.head.flag == 0){
+        send_dgram(s, &(kt->send), &(kt->addr));
+      }
       kt = mtnfs_task_delete(kt);
     }else{
       kt = kt->next;
@@ -711,33 +756,35 @@ void mtnfs_child_truncate(ktask *kt)
 
 void mtnfs_child_mkdir(ktask *kt)
 {
-  lprintf(1, "[debug] %s: START\n", __func__);
+  lprintf(9, "[debug] %s: START\n", __func__);
   mtn_get_string(kt->path, &(kt->recv));
   mtnfs_fix_path(kt->path);
   if(mkdir(kt->path, 0777) == -1){
     kt->send.head.type = MTNRES_ERROR;
     mtn_set_int(&errno, &(kt->send), sizeof(errno));
   }
-  lprintf(1, "[debug] %s: PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
-  lprintf(1, "[debug] %s: END\n", __func__);
+  lprintf(8, "[debug] %s: PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
+  lprintf(9, "[debug] %s: END\n", __func__);
 }
 
 void mtnfs_child_rmdir(ktask *kt)
 {
-  lprintf(1, "[debug] %s: START\n", __func__);
+  lprintf(9, "[debug] %s: START\n", __func__);
   mtn_get_string(kt->path, &(kt->recv));
   mtnfs_fix_path(kt->path);
   if(rmdir(kt->path) == -1){
-    kt->send.head.type = MTNRES_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    if(errno != ENOENT){
+      kt->send.head.type = MTNRES_ERROR;
+      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    }
   }
-  lprintf(1, "[debug] %s: PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
-  lprintf(1, "[debug] %s: END\n", __func__);
+  lprintf(8, "[debug] %s: PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
+  lprintf(9, "[debug] %s: END\n", __func__);
 }
 
 void mtnfs_child_unlink(ktask *kt)
 {
-  lprintf(1, "[debug] %s: START\n", __func__);
+  lprintf(9, "[debug] %s: START\n", __func__);
   mtn_get_string(kt->path, &(kt->recv));
   mtnfs_fix_path(kt->path);
   if(lstat(kt->path, &(kt->stat)) == -1){
@@ -752,8 +799,8 @@ void mtnfs_child_unlink(ktask *kt)
     lprintf(0,"[debug] %s: unlink error: %s %s\n", __func__, strerror(errno), kt->path);
     return;
   }
-  lprintf(1, "[debug] %s: PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
-  lprintf(1, "[debug] %s: END\n", __func__);
+  lprintf(8, "[debug] %s: PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
+  lprintf(9, "[debug] %s: END\n", __func__);
 }
 
 void mtnfs_child_getattr(ktask *kt)
@@ -913,9 +960,12 @@ void mtnfs_accept_process(int l)
   exit(0);
 }
 
-void do_loop(int m, int l)
+void do_loop()
 {
   int r;
+  int m;
+  int l;
+  struct timeval tv;
   struct epoll_event ev;
   struct epoll_event es[2];
   int ef = epoll_create(2);
@@ -923,6 +973,13 @@ void do_loop(int m, int l)
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
   }
+  m = create_msocket(kopt.mcast_port);
+  l = create_lsocket(kopt.mcast_port);
+  if(listen(l, 64) == -1){
+    lprintf(0, "%s: listen error\n", __func__);
+    return;
+  }
+
   ev.data.fd = l;
   ev.events  = EPOLLIN;
   if(epoll_ctl(ef, EPOLL_CTL_ADD, l, &ev) == -1){
@@ -935,13 +992,13 @@ void do_loop(int m, int l)
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
   }
+  mtn_startup(0);
   while(is_loop){
     waitpid(-1, NULL, WNOHANG);
-    ev.events = kopt.task ? EPOLLIN | EPOLLOUT : EPOLLIN;
-    if(epoll_ctl(ef, EPOLL_CTL_MOD, m, &ev) == -1){
-      lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
-    }
     r = epoll_wait(ef, es, 2, 1000);
+    if(r == 0){
+      continue;
+    }
     if(r == -1){
       if(errno != EINTR){
         lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
@@ -961,7 +1018,13 @@ void do_loop(int m, int l)
         mtnfs_accept_process(l);
       }
     }
+    ev.data.fd = m;
+    ev.events  = kopt.task ? EPOLLIN | EPOLLOUT : EPOLLIN;
+    epoll_ctl(ef, EPOLL_CTL_MOD, m, &ev);
   }
+  mtn_shutdown();
+  close(m);
+  close(l);
 }
 
 void do_daemon()
@@ -1055,12 +1118,29 @@ struct option *get_optlist()
   return(opt);
 }
 
+void init_task()
+{
+  memset(taskfunc, 0, sizeof(taskfunc));
+  taskfunc[MTNCMD_STARTUP]  = (MTNFSTASKFUNC)mtnfs_startup_process;
+  taskfunc[MTNCMD_SHUTDOWN] = (MTNFSTASKFUNC)mtnfs_shutdown_process;
+  taskfunc[MTNCMD_HELLO]    = (MTNFSTASKFUNC)mtnfs_hello_process;
+  taskfunc[MTNCMD_INFO]     = (MTNFSTASKFUNC)mtnfs_info_process;
+  taskfunc[MTNCMD_LIST]     = (MTNFSTASKFUNC)mtnfs_list_process;
+  taskfunc[MTNCMD_STAT]     = (MTNFSTASKFUNC)mtnfs_stat_process;
+  taskfunc[MTNCMD_MKDIR]    = (MTNFSTASKFUNC)mtnfs_mkdir_process;
+  taskfunc[MTNCMD_RMDIR]    = (MTNFSTASKFUNC)mtnfs_rm_process;
+  taskfunc[MTNCMD_UNLINK]   = (MTNFSTASKFUNC)mtnfs_rm_process;
+  taskfunc[MTNCMD_RENAME]   = (MTNFSTASKFUNC)mtnfs_rename_process;
+  taskfunc[MTNCMD_SYMLINK]  = (MTNFSTASKFUNC)mtnfs_symlink_process;
+  taskfunc[MTNCMD_READLINK] = (MTNFSTASKFUNC)mtnfs_readlink_process;
+  taskfunc[MTNCMD_CHMOD]    = (MTNFSTASKFUNC)mtnfs_chmod_process;
+  taskfunc[MTNCMD_CHOWN]    = (MTNFSTASKFUNC)mtnfs_chown_process;
+  taskfunc[MTNCMD_UTIME]    = (MTNFSTASKFUNC)mtnfs_utime_process;
+}
+
 int main(int argc, char *argv[])
 {
   int r;
-  int m;
-  int l;
-  int daemonize = 1;
   char buff[PATH_MAX];
   if(argc < 2){
     usage();
@@ -1122,16 +1202,11 @@ int main(int argc, char *argv[])
     strcpy(kopt.pid, buff);
   }
   do_daemon();
+  init_task();
   mkpidfile();
   getcwd(kopt.cwd, sizeof(kopt.cwd));
   start_message("======= mtnfs start =======\n");
-  m = create_msocket(kopt.mcast_port);
-  l = create_lsocket(kopt.mcast_port);
-  if(listen(l, 5) == -1){
-    lprintf(0, "%s: listen error\n", __func__);
-    exit(1);
-  }
-  do_loop(m ,l);
+  do_loop();
   rmpidfile();
   lprintf(0, "mtnfs finished\n");
   return(0);

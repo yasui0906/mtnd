@@ -6,15 +6,13 @@
 #include "common.h"
 typedef void (*MTNPROCFUNC)(kmember *member, kdata *send, kdata *recv, kaddr *addr);
 void delstats(kstat *kst);
-void delmembers(kmember *members);
-kmember *make_member(kmember *members, uint8_t *host, kaddr *addr);
-kmember *get_member(kmember *members, kaddr *addr, int mkflag);
 kmember *mtn_hello();
 
 int is_loop = 1;
 koption kopt;
 char *mtncmdstr[]={
-  "NONE",
+  "STARTUP",
+  "SHUTDOWN",
   "HELLO",
   "INFO",
   "STAT",
@@ -72,50 +70,87 @@ void mtn_init_option()
   fclose(fp);
 }
 
+int cmp_addr(kaddr *a1, kaddr *a2)
+{
+  void *p1 = &(a1->addr.in.sin_addr);
+  void *p2 = &(a2->addr.in.sin_addr);
+  size_t size = sizeof(a1->addr.in.sin_addr);
+  if(memcmp(p1, p2, size) != 0){
+    return(1);
+  }
+  if(a1->addr.in.sin_port != a2->addr.in.sin_port){
+    return(1);
+  }
+  return(0);
+}
+
 int send_readywait(int s)
 {
-  fd_set fds;
-  struct timeval tv;
-  int sendready = 0;
-  while(!sendready){
-    FD_ZERO(&fds);
-    FD_SET(s,&fds);
-    tv.tv_sec  = 1;
-    tv.tv_usec = 0;
-    if(select(1024, NULL, &fds, NULL, &tv) == 1){
-      sendready = FD_ISSET(s, &fds);
-    }else{
-      if(is_loop){
-        continue;
-      }else{
-        break;
-      }
-    }
+  int r;
+  int e = epoll_create(1);
+  struct epoll_event ev;
+
+  ev.data.fd = s;
+  ev.events  = EPOLLOUT;
+  if(e == -1){
+    lprintf(0, "[error] %s: epoll_create %s\n", __func__, strerror(errno));
+    return(0);
   }
-  return(sendready);
+  if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
+    close(e);
+    lprintf(0, "[error] %s: epoll_ctl %s\n", __func__, strerror(errno));
+    return(0);
+  }
+  do{
+    r = epoll_wait(e, &ev, 1, 1000);
+    if(r == 1){
+      close(e);
+      return(1);
+    }
+    if(r == -1){
+      if(errno == EINTR){
+        continue;
+      }
+      lprintf(0,"[error] %s: %s\n", __func__, strerror(errno));
+      break;
+    }
+  }while(is_loop);
+  close(e);
+  return(0);
 }
 
 int recv_readywait(int s)
 {
-  fd_set fds;
-  struct timeval tv;
-  int recvready = 0;
-  while(!recvready){
-    FD_ZERO(&fds);
-    FD_SET(s,&fds);
-    tv.tv_sec  = 1;
-    tv.tv_usec = 0;
-    if(select(1024, NULL, &fds, NULL, &tv) == 1){
-      recvready = FD_ISSET(s, &fds);
-    }else{
-      if(is_loop){
+  int r;
+  int e = epoll_create(1);
+  struct epoll_event ev;
+
+  ev.data.fd = s;
+  ev.events  = EPOLLIN;
+  if(e == -1){
+    lprintf(0, "[error] %s: epoll_create %s\n", __func__, strerror(errno));
+    return(0);
+  }
+  if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
+    lprintf(0, "[error] %s: epoll_ctl %s\n", __func__, strerror(errno));
+    return(0);
+  }
+  while(is_loop){
+    r = epoll_wait(e, &ev, 1, 1000);
+    if(r == 1){
+      close(e);
+      return(1);
+    }
+    if(r == -1){
+      if(errno == EINTR){
         continue;
-      }else{
-        break;
       }
+      lprintf(0,"[error] %s: %s\n", __func__, strerror(errno));
+      break;
     }
   }
-  return(recvready);
+  close(e);
+  return(0);
 }
 
 int recv_dgram(int s, kdata *data, struct sockaddr *addr, socklen_t *alen)
@@ -136,13 +171,16 @@ int recv_dgram(int s, kdata *data, struct sockaddr *addr, socklen_t *alen)
     return(-1);
   }
   if(r < sizeof(khead)){
+    lprintf(0, "[error] %s: head size error\n", __func__);
     return(-1);
   }
   if(data->head.ver != PROTOCOL_VERSION){
+    lprintf(0, "[error] %s: protocol error %d != %d\n", __func__, data->head.ver, PROTOCOL_VERSION);
     return(-1);
   }
   data->head.size = ntohs(data->head.size);
   if(r != data->head.size + sizeof(khead)){
+    lprintf(0, "[error] %s: data size error\n", __func__);
     return(-1);
   }  
   return(0);
@@ -321,27 +359,31 @@ int create_msocket(int port)
   char lpen = 1;
   char mttl = 1;
   struct ip_mreq mg;
-  mg.imr_multiaddr.s_addr = inet_addr("224.0.0.110");
+  mg.imr_multiaddr.s_addr = inet_addr(kopt.mcast_addr);
   mg.imr_interface.s_addr = INADDR_ANY;
 
   int s = create_socket(port, SOCK_DGRAM);
   if(s == -1){
     return(-1);
   }
+  if(fcntl(s, F_SETFL , O_NONBLOCK)){
+    lprintf(0, "[error] %s: O_NONBLOCK %s\n", __func__, strerror(errno));
+    return(-1);
+  }
   if(setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&mg, sizeof(mg)) == -1){
-    lprintf(0, "%s: IP_ADD_MEMBERSHIP error\n", __func__);
+    lprintf(0, "[error] %s: IP_ADD_MEMBERSHIP error\n", __func__);
     return(-1);
   }
   if(setsockopt(s, IPPROTO_IP, IP_MULTICAST_IF,   (void *)&mg.imr_interface.s_addr, sizeof(mg.imr_interface.s_addr)) == -1){
-    lprintf(0, "%s: IP_MULTICAST_IF error\n", __func__);
+    lprintf(0, "[error] %s: IP_MULTICAST_IF error\n", __func__);
     return(-1);
   }
   if(setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP, (void *)&lpen, sizeof(lpen)) == -1){
-    lprintf(0, "%s: IP_MULTICAST_LOOP error\n", __func__);
+    lprintf(0, "[error] %s: IP_MULTICAST_LOOP error\n", __func__);
     return(-1);
   }
   if(setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,  (void *)&mttl, sizeof(mttl)) == -1){
-    lprintf(0, "%s: IP_MULTICAST_TTL error\n", __func__);
+    lprintf(0, "[error] %s: IP_MULTICAST_TTL error\n", __func__);
     return(-1);
   }
   return(s);
@@ -727,6 +769,37 @@ kdir *deldir(kdir *kd)
 	return(n);
 }
 
+kmember *del_member(kmember *km)
+{
+  kmember *nm;
+  if(km == NULL){
+    return(NULL);
+  }
+  nm = km->next;
+  if(km->host){
+    xfree(km->host);
+    km->host = NULL;
+  }
+  if(km->prev){
+    km->prev->next = km->next;
+  }
+  if(km->next){
+    km->next->prev = km->prev;
+  }
+  km->next = NULL;
+  km->prev = NULL;
+  xfree(km);
+  kcount(0, 0, -1);
+  return(nm);
+}
+
+void del_members(kmember *members)
+{
+  while(members){
+    members = del_member(members);
+  }
+}
+
 kstat *delstat(kstat *kst)
 {
 	kstat *r = NULL;
@@ -746,23 +819,10 @@ kstat *delstat(kstat *kst)
     xfree(kst->name);
     kst->name = NULL;
   }
-  delmembers(kst->member);
+  del_members(kst->member);
   xfree(kst);
   kcount(0, -1, 0);
 	return(r);
-}
-
-kmember *delmember(kmember *km)
-{
-  kmember *nm;
-  if(km->host){
-    xfree(km->host);
-    km->host = NULL;
-  }
-  nm = km->next;
-  xfree(km);
-  kcount(0, 0, -1);
-  return(nm);
 }
 
 void delstats(kstat *kst)
@@ -772,34 +832,37 @@ void delstats(kstat *kst)
 	}
 }
 
-void delmembers(kmember *members)
+//----------------------------------------------------------------
+// 
+//----------------------------------------------------------------
+kmember *get_member(kmember *members, kaddr *addr)
 {
   while(members){
-    members = delmember(members);
+    if(cmp_addr(&(members->addr), addr) == 0){
+      return(members);
+    }
+    members = members->next;
   }
+  return(NULL);
 }
 
-//----------------------------------------------------------------
-// make 
-//----------------------------------------------------------------
-kmember *make_member(kmember *members, uint8_t *host, kaddr *addr)
+kmember *add_member(kmember *members, kaddr *addr, uint8_t *host)
 {
-  kmember *member = get_member(members, addr, 0);
-  if(member == NULL){
-    member = newmember();
-    memcpy(&(member->addr), addr, sizeof(kaddr));
-    member->next = members;
-    members = member;
+  kmember *mb = get_member(members, addr);
+  if(mb == NULL){
+    mb = newmember();
+    memcpy(&(mb->addr), addr, sizeof(kaddr));
+    if(mb->next = members){
+      members->prev = mb;
+    }
+    members = mb;
   }
   if(host){
     int len = strlen(host) + 1;
-    if(member->host){
-      xfree(member->host);
-    }
-    member->host = xmalloc(len);
-    memcpy(member->host, host, len);
+    mb->host = xrealloc(mb->host, len);
+    memcpy(mb->host, host, len);
   }
-  member->mark = 0;
+  mb->mark = 0;
   return(members);
 }
 
@@ -809,8 +872,8 @@ kmember *copy_member(kmember *km)
   if(km == NULL){
     return(NULL);
   }
-  nkm = make_member(NULL, km->host, &(km->addr));
-  nkm->mark = km->mark;
+  nkm = add_member(NULL, &(km->addr), km->host);
+  nkm->mark  = km->mark;
   nkm->bsize = km->bsize;
   nkm->fsize = km->fsize;
   nkm->dsize = km->dsize;
@@ -818,28 +881,24 @@ kmember *copy_member(kmember *km)
   return(nkm);
 }
 
-kmember *get_member(kmember *members, kaddr *addr, int mkflag)
+uint32_t get_members_count(kmember *mb)
 {
-  kmember *member;
-  for(member=members;member;member=member->next){
-    if(memcmp(addr, &(member->addr), sizeof(kaddr)) == 0){
-      return(member);
-    }
+  uint32_t mcount = 0;
+  while(mb){
+    mcount++;
+    mb = mb->next;
   }
-  if(mkflag){
-    return(make_member(members, NULL, addr));
-  }
-  return(NULL);
+  return(mcount);
 }
 
 kmember *get_members(){
+  kmember *mb;
+  kmember *members;
   struct timeval tv;
-  kmember *member  = NULL;
-  kmember *members = NULL;
   pthread_mutex_lock(&(kopt.member_mutex));
   gettimeofday(&tv, NULL);
   if(tv.tv_sec - 10 > kopt.member_tv.tv_sec){
-    delmembers(kopt.members);
+    del_members(kopt.members);
     kopt.members = NULL;
   }
   if(kopt.members == NULL){
@@ -848,8 +907,9 @@ kmember *get_members(){
       memcpy(&(kopt.member_tv), &tv, sizeof(struct timeval));
     }
   }
-  for(member=kopt.members;member;member=member->next){
-    members = make_member(members, member->host, &(member->addr));
+  members = NULL;
+  for(mb=kopt.members;mb;mb=mb->next){
+    members = add_member(members, &(mb->addr), mb->host);
   }
   pthread_mutex_unlock(&(kopt.member_mutex));
   return(members);
@@ -864,27 +924,17 @@ void mtn_process(kmember *members, kdata *sdata, MTNPROCFUNC mtn)
   int e;
   int s;
   int t;
+  int o;
   kaddr addr;
   kdata rdata;
   kmember *mb;
+  uint64_t mc;
   struct epoll_event ev;
-
-  if((members == NULL) && (sdata->head.type != MTNCMD_HELLO)){
-    return;
-  }
-  e = epoll_create(1);
-  if(e == -1){
-    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
+  if((members == NULL) && (mtn != NULL ) && (sdata->head.type != MTNCMD_HELLO)){
     return;
   }
   s = create_socket(0, SOCK_DGRAM);
   if(s == -1){
-    close(e);
-    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
-    return;
-  }
-  ev.events = EPOLLIN;
-  if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
   }
@@ -893,15 +943,50 @@ void mtn_process(kmember *members, kdata *sdata, MTNPROCFUNC mtn)
   addr.addr.in.sin_port        = htons(kopt.mcast_port);
   addr.addr.in.sin_addr.s_addr = inet_addr(kopt.mcast_addr);
   sdata->head.ver              = PROTOCOL_VERSION;
-  send_dgram(s, sdata, &addr);
+  if(send_dgram(s, sdata, &addr) == -1){
+    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
+    close(s);
+    return;
+  }
+  if(mtn == NULL){
+    close(s);
+    return;
+  }
 
+  e = epoll_create(1);
+  if(e == -1){
+    close(s);
+    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
+    return;
+  }
+  ev.data.fd = s;
+  ev.events  = EPOLLIN;
+  if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
+    close(e);
+    close(s);
+    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
+    return;
+  }
   t = 3000;
+  o = 2500;
+  mc = 0;
   while(is_loop){
     r = epoll_wait(e, &ev, 1, t);
+    t = 500;
     if(r == 0){
-      break;
+      if((t >= o) || (members == NULL)){
+        break;
+      }
+      o -= t;
+      for(mb=members;mb;mb=mb->next){
+        if(mb->mark == 0){
+          send_dgram(s, sdata, &(mb->addr));
+        }
+      }
+      continue;
     }
     if(r == -1){
+      lprintf(0, "[error] %s: epoll %s\n", __func__, strerror(errno));
       continue;
     }
     memset(&addr, 0, sizeof(addr));
@@ -910,66 +995,134 @@ void mtn_process(kmember *members, kdata *sdata, MTNPROCFUNC mtn)
       continue;
     }
     if(!members){
+      // MTN_HELLO
       mtn(NULL, sdata, &rdata, &addr);
-      t = 100;
-      continue;
-    }
-    mb = get_member(members, &addr, 1);
-    mtn(mb, sdata, &rdata, &addr);
-    if(rdata.head.fin == 0){
-      continue;
-    }
-    t = 10;
-    mb->mark = 1;
-    for(mb=members;mb;mb=mb->next){
-      if(mb->mark == 0){
-        t = 3000;
+      if(mc < sdata->opt32){
+        mc = sdata->opt32;
+      }
+      if(mc > get_members_count(sdata->option)){
+        continue;
+      }else{
+        break;
+      }
+    }else{
+      members = add_member(members, &addr, NULL);
+      mb = get_member(members, &addr);
+      mtn(mb, sdata, &rdata, &addr);
+      if(rdata.head.fin == 0){
+        continue;
+      }
+      mb->mark = 1;
+      for(mb=members;mb;mb=mb->next){
+        if(mb->mark == 0){
+          break;
+        }
+      }
+      if(mb == NULL){
         break;
       }
     }
   }
+  // for DEBUG
+  if(members){
+    int dall = 0;
+    int derr = 0;
+    for(mb=members;mb;mb=mb->next){
+      dall++;
+      if(mb->mark == 0){
+        derr++;
+        lprintf(8, "[debug] %s: No Response %s\n", __func__, mb->host);
+      }
+    }
+    lprintf(8, "[debug] %s: No Response %d/%d\n", __func__, derr, dall);
+  }
+  // for DEBUG
   close(e);
   close(s);
 }
 
+void mtn_startup(int f)
+{
+  kdata data;
+  lprintf(9,"[debug] %s: IN\n", __func__);
+  data.head.type = MTNCMD_STARTUP;
+  data.head.size = 0;
+  data.head.flag = f;
+  data.option = NULL;
+  mtn_set_string(kopt.host, &data);
+  mtn_process(NULL, &data, NULL);
+  lprintf(9,"[debug] %s: OUT\n", __func__);
+}
+
+void mtn_shutdown()
+{
+  kdata data;
+  lprintf(9,"[debug] %s: IN\n", __func__);
+  data.head.type = MTNCMD_SHUTDOWN;
+  data.head.size = 0;
+  data.head.flag = 1;
+  data.option = NULL;
+  mtn_set_string(kopt.host, &data);
+  mtn_process(NULL, &data, NULL);
+  lprintf(9,"[debug] %s: OUT\n", __func__);
+}
+
 void mtn_hello_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
+  uint32_t mcount;
   uint8_t host[1024];
   kmember *members = (kmember *)(sdata->option);
   if(mtn_get_string(host, rdata) == -1){
     lprintf(0, "%s: mtn get error\n", __func__);
     return;
   }
-  sdata->option = make_member(members, host, addr);
+  mtn_get_int(&mcount, rdata, sizeof(mcount));
+  members = add_member(members, addr, host);
+  sdata->option = members;
+  sdata->opt32  = mcount;
+  lprintf(8, "[debug] %s: host=%s mcount=%d\n", __func__, host, sdata->opt32);
 }
 
 kmember *mtn_hello()
 {
   kdata data;
-  kmember *members;
   data.head.type = MTNCMD_HELLO;
   data.head.size = 0;
+  data.head.flag = 0;
   data.option = NULL;
+  lprintf(9, "[debug] %s: IN\n", __func__);
   mtn_process(NULL, &data, (MTNPROCFUNC)mtn_hello_process);
+  lprintf(9, "[debug] %s: OUT\n", __func__);
   return((kmember *)(data.option));
 }
 
 void mtn_info_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
+  lprintf(9, "[debug] %s: IN\n", __func__);
   mtn_get_int(&(member->bsize), rdata, sizeof(member->bsize));
   mtn_get_int(&(member->fsize), rdata, sizeof(member->fsize));
   mtn_get_int(&(member->dsize), rdata, sizeof(member->dsize));
   mtn_get_int(&(member->dfree), rdata, sizeof(member->dfree));
   mtn_get_int(&(member->limit), rdata, sizeof(member->limit));
+  mtn_get_int(&(member->vsz),   rdata, sizeof(member->vsz));
+  mtn_get_int(&(member->res),   rdata, sizeof(member->res));
+  lprintf(9, "[debug] %s: OUT\n", __func__);
 }
 
 kmember *mtn_info()
 {
+  lprintf(9, "[debug] %s: IN\n", __func__);
   kdata data;
+  kmember *mb;
   kmember *members = get_members();
   data.head.type   = MTNCMD_INFO;
   data.head.size   = 0;
+  data.head.flag   = 0;
   mtn_process(members, &data, (MTNPROCFUNC)mtn_info_process);
+  for(mb=members;mb;mb=mb->next){
+    mb->mark = 0;
+  }
+  lprintf(9, "[debug] %s: OUT\n", __func__);
   return(members);
 }
 
@@ -1045,7 +1198,7 @@ kstat *mgstat(kstat *krt, kstat *kst)
       if(strcmp(rt->name, st->name) == 0){
         if(rt->stat.st_mtime < st->stat.st_mtime){
           memcpy(&(rt->stat), &(st->stat), sizeof(struct stat));
-          delmembers(rt->member);
+          del_members(rt->member);
           rt->member = st->member;
           st->member = NULL;
         }
@@ -1200,14 +1353,11 @@ kstat *mtn_list(const char *path)
   kmember *members = get_members();
   data.head.type   = MTNCMD_LIST;
   data.head.size   = 0;
+  data.head.flag   = 0;
   data.option      = NULL;
   mtn_set_string((uint8_t *)path, &data);
-  kopt.field_size[0] = 1;
-  kopt.field_size[1] = 1;
-  kopt.field_size[2] = 1;
-  kopt.field_size[3] = 1;
   mtn_process(members, &data, (MTNPROCFUNC)mtn_list_process);
-  delmembers(members);
+  del_members(members);
   return(data.option);
 }
 
@@ -1228,10 +1378,11 @@ kstat *mtn_stat(const char *path)
 	memset(&sd, 0, sizeof(sd));
   sd.head.type = MTNCMD_STAT;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_stat_process);
-  delmembers(members);
+  del_members(members);
   return(sd.option);
 }
 
@@ -1263,16 +1414,21 @@ kmember *mtn_choose(const char *path)
   kmember *members = get_members();
   data.head.type = MTNCMD_INFO;
   data.head.size = 0;
+  data.head.flag = 0;
   data.option    = NULL;
   mtn_process(members, &data, (MTNPROCFUNC)mtn_choose_info);
   member = copy_member(data.option);
-  delmembers(members);
+  del_members(members);
   return(member);
 }
 
 void mtn_find_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
+	lprintf(9, "[debug] %s: IN\n", __func__);
+	lprintf(9, "[debug] %s: P=%p  host=%s\n", __func__, sdata->option, member->host);
   sdata->option = mgstat(sdata->option, mkstat(member, addr, rdata));
+	lprintf(9, "[debug] %s: P=%p\n", __func__, sdata->option);
+	lprintf(9, "[debug] %s: OUT\n", __func__);
 }
 
 kstat *mtn_find(const char *path, int create_flag)
@@ -1285,6 +1441,7 @@ kstat *mtn_find(const char *path, int create_flag)
   data.option      = NULL;
   data.head.type   = MTNCMD_LIST;
   data.head.size   = 0;
+  data.head.flag   = 0;
   mtn_set_string((uint8_t *)path, &data);
   mtn_process(members, &data, (MTNPROCFUNC)mtn_find_process);
   kst = data.option;
@@ -1296,7 +1453,7 @@ kstat *mtn_find(const char *path, int create_flag)
       }
     }
   }
-  delmembers(members);
+  del_members(members);
   return(kst);
 }
 
@@ -1321,10 +1478,11 @@ int mtn_mkdir(const char *path)
   }
   sd.head.type = MTNCMD_MKDIR;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_mkdir_process);
-  delmembers(members);
+  del_members(members);
   return(0);
 }
 
@@ -1349,10 +1507,11 @@ int mtn_rm(const char *path)
   }
   sd.head.type = MTNCMD_UNLINK;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_rm_process);
-  delmembers(members);
+  del_members(members);
   return(0);
 }
 
@@ -1382,11 +1541,12 @@ int mtn_rename(const char *opath, const char *npath)
   }
   sd.head.type = MTNCMD_RENAME;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.option    = NULL;
   mtn_set_string((uint8_t *)opath, &sd);
   mtn_set_string((uint8_t *)npath, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_rename_process);
-  delmembers(members);
+  del_members(members);
   return(0);
 }
 
@@ -1411,11 +1571,12 @@ int mtn_symlink(const char *oldpath, const char *newpath)
   }
   sd.head.type = MTNCMD_SYMLINK;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.option    = NULL;
   mtn_set_string((uint8_t *)oldpath, &sd);
   mtn_set_string((uint8_t *)newpath, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_symlink_process);
-  delmembers(members);
+  del_members(members);
   return(0);
 }
 
@@ -1447,10 +1608,11 @@ int mtn_readlink(const char *path, char *buff, size_t size)
   }
   sd.head.type = MTNCMD_READLINK;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.option    = NULL;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_process(members, &sd, (MTNPROCFUNC)mtn_readlink_process);
-  delmembers(members);
+  del_members(members);
   snprintf(buff, size, "%s", sd.option);
   xfree(sd.option);
   return(0);
@@ -1476,10 +1638,11 @@ int mtn_chmod(const char *path, mode_t mode)
 	memset(&sd, 0, sizeof(sd));
   sd.head.type = MTNCMD_CHMOD;
   sd.head.size = 0;
+  sd.head.flag = 0;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_set_int(&mode, &sd, sizeof(mode));
   mtn_process(m, &sd, (MTNPROCFUNC)mtn_chmod_process);
-  delmembers(m);
+  del_members(m);
   return(0);
 }
 
@@ -1503,11 +1666,12 @@ int mtn_chown(const char *path, uid_t uid, gid_t gid)
 	memset(&sd, 0, sizeof(sd));
   sd.head.type = MTNCMD_CHOWN;
   sd.head.size = 0;
+  sd.head.flag = 0;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_set_int(&uid, &sd, sizeof(uid));
   mtn_set_int(&gid, &sd, sizeof(gid));
   mtn_process(m, &sd, (MTNPROCFUNC)mtn_chown_process);
-  delmembers(m);
+  del_members(m);
   return(0);
 }
 
@@ -1531,11 +1695,12 @@ int mtn_utime(const char *path, time_t act, time_t mod)
 	memset(&sd, 0, sizeof(sd));
   sd.head.type = MTNCMD_UTIME;
   sd.head.size = 0;
+  sd.head.flag = 0;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_set_int(&act, &sd, sizeof(act));
   mtn_set_int(&mod, &sd, sizeof(mod));
   mtn_process(m, &sd, (MTNPROCFUNC)mtn_utime_process);
-  delmembers(m);
+  del_members(m);
   return(0);
 }
 
@@ -1547,9 +1712,9 @@ int mtn_connect(const char *path, int create_flag)
   int s;
   uint64_t dfree;
   char ipstr[64];
-  kstat *st = mtn_find(path, create_flag);
-
+  kstat *st;
 	lprintf(2, "[debug] %s:\n", __func__);
+  st = mtn_find(path, create_flag);
   if(st == NULL){
     lprintf(0, "[error] %s: node not found\n", __func__);
     errno = EACCES;
@@ -1587,6 +1752,7 @@ int mtn_open(const char *path, int flags, mode_t mode)
   }
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.head.type = MTNCMD_OPEN;
   mtn_set_string((uint8_t *)path, &sd);
   mtn_set_int(&flags, &sd, sizeof(flags));
@@ -1614,6 +1780,7 @@ int mtn_read(int s, char *buf, size_t size, off_t offset)
   kdata  rd;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.head.type = MTNCMD_READ;
   mtn_set_int(&size,   &sd, sizeof(size));
   mtn_set_int(&offset, &sd, sizeof(offset));
@@ -1641,6 +1808,7 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
   sz = size;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.type = MTNCMD_WRITE;
+  sd.head.flag = 0;
   while(size){
     sd.head.size = 0;
     mtn_set_int(&offset, &sd, sizeof(offset));
@@ -1749,8 +1917,11 @@ size_t mtnstatus_members()
   size_t result;
   uint64_t dsize;
   uint64_t dfree;
+  uint64_t pfree;
+  uint64_t vsz;
+  uint64_t res;
   char ipstr[64];
-  kmember *member;
+  kmember *mb;
   kmember *members;
   pthread_mutex_lock(&(kopt.status_mutex));
   buff = &(kopt.mtnstatus_members.buff);
@@ -1759,12 +1930,17 @@ size_t mtnstatus_members()
     **buff = 0;
   }
   members = mtn_info();
-  for(member=members;member;member=member->next){
-    dsize = member->dsize * member->fsize / 1024 / 1024;
-    dfree = member->dfree * member->bsize / 1024 / 1024;
-    exsprintf(buff, size, "%s(%s) %2d%% %llu/%lluMB\n", member->host, v4addr(&(member->addr), ipstr, sizeof(ipstr)), dfree * 100 / dsize, dfree, dsize);
+  //exsprintf(buff, size, "%-10s %-15s %s %s %s %s %s\n", "Host", "IP", "Free[%]", "Free[MB]", "Total[MB]", "VSZ", "RSS");
+  for(mb=members;mb;mb=mb->next){
+    dsize = mb->dsize * mb->fsize / 1024 / 1024;
+    dfree = mb->dfree * mb->bsize / 1024 / 1024;
+    pfree = dfree * 100 / dsize;
+    vsz   = mb->vsz / 1024;
+    res   = mb->res / 1024;
+    v4addr(&(mb->addr), ipstr, sizeof(ipstr));
+    exsprintf(buff, size, "%s %s %2d%% %llu %llu %llu %llu\n", mb->host, ipstr, pfree, dfree, dsize, vsz, res);
   }
-  delmembers(members);
+  del_members(members);
   result = (*buff == NULL) ? 0 : strlen(*buff);
   pthread_mutex_unlock(&(kopt.status_mutex));
   return(result);
