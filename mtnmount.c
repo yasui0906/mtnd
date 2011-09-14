@@ -2,9 +2,7 @@
 #include "mtnfs.h"
 #include "common.h"
 #include <fuse.h>
-
-pthread_mutex_t *mtn_rmutex;
-pthread_mutex_t *mtn_wmutex;
+pthread_mutex_t *mtn_fmutex;
 
 static int mtnmount_getattr(const char *path, struct stat *stbuf)
 {
@@ -14,7 +12,7 @@ static int mtnmount_getattr(const char *path, struct stat *stbuf)
   char  d[PATH_MAX];
   char  f[PATH_MAX];
 
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   memset(stbuf, 0, sizeof(struct stat));
   if(strcmp(path, "/") == 0) {
     stbuf->st_mode  = S_IFDIR | 0755;
@@ -68,11 +66,12 @@ static int mtnmount_getattr(const char *path, struct stat *stbuf)
 
 static int mtnmount_fgetattr(const char *path, struct stat *st, struct fuse_file_info *fi)
 {
+  int r;
   ktask kt;
   struct timeval tv;
   char  d[PATH_MAX];
   char  f[PATH_MAX];
-  lprintf(1, "[debug] %s: path=%s fh=%d\n", __func__, path, fi->fh);
+  lprintf(8, "[debug] %s: path=%s fh=%d\n", __func__, path, fi->fh);
   if(strcmp(path, "/") == 0) {
     st->st_mode  = S_IFDIR | 0755;
     st->st_nlink = 2;
@@ -114,10 +113,15 @@ static int mtnmount_fgetattr(const char *path, struct stat *st, struct fuse_file
   kt.type = MTNCMD_GETATTR;
   kt.con  = fi->fh;
   mtn_set_string((uint8_t *)path, &(kt.send));
-  if(mtn_callcmd(&kt) == -1){
+  pthread_mutex_lock(&(mtn_fmutex[fi->fh]));
+  r = mtn_callcmd(&kt);
+  pthread_mutex_unlock(&(mtn_fmutex[fi->fh]));
+  if(r == -1){
+    lprintf(0, "[error] %s: mtn_callcmd %s\n", __func__, strerror(errno));
     return(-errno);
   }
   if(mtn_get_stat(st, &(kt.recv)) == -1){
+    lprintf(0, "[error] %s: mtn_get_stat %s\n", __func__, strerror(errno));
     return(-EACCES);
   }
   return(0);
@@ -127,7 +131,7 @@ static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 {
   kstat *krt = NULL;
   kstat *kst = NULL;
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   filler(buf, ".",  NULL, 0);
   filler(buf, "..", NULL, 0);
   if(strcmp("/", path) == 0){
@@ -154,7 +158,7 @@ static int mtnmount_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 static int mtnmount_mkdir(const char *path, mode_t mode)
 {
   int r;
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   r = mtn_mkdir(path);
   return(r);
 }
@@ -164,7 +168,7 @@ static int mtnmount_unlink(const char *path)
   int  r;
   char d[PATH_MAX];
   dirbase(path, d, NULL);
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   r = mtn_rm(path);
   setstat_dircache(d, NULL);
   return(r);
@@ -175,7 +179,7 @@ static int mtnmount_rmdir(const char *path)
   int  r;
   char d[PATH_MAX];
   dirbase(path, d, NULL);
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   r = mtn_rm(path);
   setstat_dircache(d, NULL);
   return(r);
@@ -186,7 +190,7 @@ static int mtnmount_symlink(const char *oldpath, const char *newpath)
   int  r = 0;
   char d[PATH_MAX];
   dirbase(newpath, d, NULL);
-  lprintf(1, "[debug] %s: oldpath=%s newpath=%s\n", __func__, oldpath, newpath);
+  lprintf(8, "[debug] %s: oldpath=%s newpath=%s\n", __func__, oldpath, newpath);
   r = mtn_symlink(oldpath, newpath);
   setstat_dircache(d, NULL);
   return(r);
@@ -195,7 +199,7 @@ static int mtnmount_symlink(const char *oldpath, const char *newpath)
 static int mtnmount_readlink(const char *path, char *buff, size_t size)
 {
   int r;
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   r = mtn_readlink(path, buff, size);
   return(r);
 }
@@ -207,7 +211,7 @@ static int mtnmount_rename(const char *old_path, const char *new_path)
   char d1[PATH_MAX];
   dirbase(old_path, d0, NULL);
   dirbase(new_path, d1, NULL);
-  lprintf(1, "[debug] %s: old_path=%s new_path=%s\n", __func__, old_path, new_path);
+  lprintf(8, "[debug] %s: old_path=%s new_path=%s\n", __func__, old_path, new_path);
   r = mtn_rename(old_path, new_path);
   setstat_dircache(d0, NULL);
   setstat_dircache(d1, NULL);
@@ -218,7 +222,7 @@ static int mtnmount_chmod(const char *path, mode_t mode)
 {
   char d[PATH_MAX];
   dirbase(path, d, NULL);
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   mtn_chmod(path, mode);
   setstat_dircache(d, NULL);
   return(0);
@@ -228,7 +232,7 @@ static int mtnmount_chown(const char *path, uid_t uid, gid_t gid)
 {
   char d[PATH_MAX];
   dirbase(path, d, NULL);
-  lprintf(1, "[debug] %s: path=%s uid=%d gid=%d\n", __func__, path, uid, gid);
+  lprintf(8, "[debug] %s: path=%s uid=%d gid=%d\n", __func__, path, uid, gid);
   mtn_chown(path, uid, gid);
   setstat_dircache(d, NULL);
   return(0);
@@ -239,7 +243,7 @@ static int mtnmount_utimens(const char *path, const struct timespec tv[2])
   int  r;
   char d[PATH_MAX];
   dirbase(path, d, NULL);
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   r = mtn_utime(path, tv[0].tv_sec, tv[1].tv_sec);
   setstat_dircache(d, NULL);
   return(r);
@@ -248,23 +252,20 @@ static int mtnmount_utimens(const char *path, const struct timespec tv[2])
 static int mtnmount_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
   int r = 0;
-  lprintf(1, "[debug] %s: path=%s fh=%llu mode=%o\n", __func__, path, fi->fh, mode);
+  lprintf(8, "[debug] %s: path=%s fh=%llu mode=%o\n", __func__, path, fi->fh, mode);
   if(is_mtnstatus(path, NULL)){
     return(-EACCES);
   }
   r = mtn_open(path, fi->flags, mode);
-  if(r == -1){
-    return(-errno);
-  }
   fi->fh = (uint64_t)r;
-  return(0); 
+  return((r == -1) ? -errno : 0);
 }
 
 static int mtnmount_open(const char *path, struct fuse_file_info *fi)
 {
   int  r = 0;
   char f[PATH_MAX];
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   if(is_mtnstatus(path, f)){
     if(strcmp("members", f) == 0){
       fi->fh = (uint64_t)get_mtnstatus_members();
@@ -273,22 +274,19 @@ static int mtnmount_open(const char *path, struct fuse_file_info *fi)
     }else if(strcmp("debuglevel", f) == 0){
       fi->fh = (uint64_t)get_mtnstatus_debuglevel();
     }else{
-      r = -ENOENT;
+      return(-ENOENT);
     }
-  }else{
-    r = mtn_open(path, fi->flags, 0);
-    fi->fh = (uint64_t)r;
-    r = (r == -1) ? -errno : 0;
+    return(0);
   }
-  return(r); 
+  r = mtn_open(path, fi->flags, 0);
+  fi->fh = (uint64_t)r;
+  return((r == -1) ? -errno : 0);
 }
 
 static int mtnmount_truncate(const char *path, off_t offset)
 {
-  int r;
   ktask kt;
   char f[PATH_MAX];
-  lprintf(9, "[debug] %s: IN\n", __func__);
   lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   if(is_mtnstatus(path, f)){
     if(strcmp("debuglevel", f) == 0){
@@ -302,16 +300,14 @@ static int mtnmount_truncate(const char *path, off_t offset)
   kt.create = 1;
   mtn_set_string((uint8_t *)path, &(kt.send));
   mtn_set_int(&offset, &(kt.send), sizeof(offset));
-  r = (mtn_callcmd(&kt) == -1) ? -errno : 0;
-  lprintf(9, "[debug] %s: OUT\n", __func__);
-  return(r);
+  return((mtn_callcmd(&kt) == -1) ? -errno : 0);
 }
 
 static int mtnmount_release(const char *path, struct fuse_file_info *fi)
 {
   int  r = 0;
   char f[PATH_MAX];
-  lprintf(1, "[debug] %s: path=%s fh=%llu\n", __func__, path, fi->fh);
+  lprintf(8, "[debug] %s: path=%s fh=%llu\n", __func__, path, fi->fh);
   if(is_mtnstatus(path, f)){
     if(strcmp("members", f) == 0){
       xfree((void *)(fi->fh));
@@ -342,7 +338,7 @@ static int mtnmount_read(const char *path, char *buf, size_t size, off_t offset,
   int r;
   int l;
   if(offset == 0){
-    lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+    lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   }
   if(is_mtnstatus(path, NULL)){
     l = strlen((void *)(fi->fh));
@@ -356,9 +352,9 @@ static int mtnmount_read(const char *path, char *buf, size_t size, off_t offset,
       memcpy(buf, (char *)(fi->fh) + offset, r);
     }
   }else{
-    pthread_mutex_lock(&(mtn_rmutex[fi->fh]));
+    pthread_mutex_lock(&(mtn_fmutex[fi->fh]));
     r = mtn_read((int)(fi->fh), buf, size, offset);
-    pthread_mutex_unlock(&(mtn_rmutex[fi->fh]));
+    pthread_mutex_unlock(&(mtn_fmutex[fi->fh]));
   }
   return r;
 }
@@ -367,16 +363,16 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
 {
   int r;
   if(offset == 0){
-    lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+    lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   }
   if(is_mtnstatus(path, NULL)){
     fi->fh = (uint64_t)xrealloc((void *)(fi->fh), size);
     memcpy((void *)(fi->fh), buf, size);
     return(size); 
   }
-  pthread_mutex_lock(&(mtn_wmutex[fi->fh]));
+  pthread_mutex_lock(&(mtn_fmutex[fi->fh]));
   r = mtn_write((int)(fi->fh), buf, size, offset); 
-  pthread_mutex_unlock(&(mtn_wmutex[fi->fh]));
+  pthread_mutex_unlock(&(mtn_fmutex[fi->fh]));
   return r;
 }
 
@@ -384,7 +380,7 @@ static int mtnmount_statfs(const char *path, struct statvfs *sv)
 {
   kmember *m;
   kmember *km = mtn_info();
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   statvfs("/", sv);
   sv->f_blocks = 0;
   sv->f_bfree  = 0;
@@ -400,13 +396,13 @@ static int mtnmount_statfs(const char *path, struct statvfs *sv)
 
 static int mtnmount_opendir(const char *path, struct fuse_file_info *fi)
 {
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   return(0);
 }
 
 static int mtnmount_releasedir(const char *path, struct fuse_file_info *fi)
 {
-  lprintf(1, "[debug] %s: path=%s\n", __func__, path);
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   return(0);
 }
 
@@ -621,11 +617,9 @@ int main(int argc, char *argv[])
       sprintf(kopt.pid, "%s/%s", kopt.cwd, opts.pid);
     }
   }
-  mtn_rmutex = xmalloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
-  mtn_wmutex = xmalloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
+  mtn_fmutex = xmalloc(sizeof(pthread_mutex_t) * MTN_OPENLIMIT);
   for(i=0;i<MTN_OPENLIMIT;i++){
-    pthread_mutex_init(&(mtn_rmutex[i]), NULL);
-    pthread_mutex_init(&(mtn_wmutex[i]), NULL);
+    pthread_mutex_init(&(mtn_fmutex[i]), NULL);
   }
   return fuse_main(args.argc, args.argv, &mtn_oper, NULL);
 }

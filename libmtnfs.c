@@ -712,6 +712,7 @@ int is_mtnstatus(const char *path, char *buff)
 kdir *newkdir(const char *path)
 {
   kdir *kd;
+  lprintf(9, "[debug] %s: path=%s\n", __func__, path);
   kd = xmalloc(sizeof(kdir));
   memset(kd,0,sizeof(kdir));
   strcpy(kd->path, path);
@@ -753,8 +754,9 @@ kdir *deldir(kdir *kd)
 {
 	kdir *n;
   if(!kd){
-    return;
+    return(NULL);
   }
+  lprintf(9, "[debug] %s: path=%s\n", __func__, kd->path);
   delstats(kd->kst);
   kd->kst = NULL;
   if(kd->prev){
@@ -764,6 +766,8 @@ kdir *deldir(kdir *kd)
     kd->next->prev = kd->prev;
   }
 	n = kd->next;
+  kd->prev = NULL;
+  kd->next = NULL;
   xfree(kd);
   kcount(-1,0,0);
 	return(n);
@@ -820,6 +824,7 @@ kstat *delstat(kstat *kst)
     kst->name = NULL;
   }
   del_members(kst->member);
+  kst->member = NULL;
   xfree(kst);
   kcount(0, -1, 0);
 	return(r);
@@ -878,6 +883,9 @@ kmember *copy_member(kmember *km)
   nkm->fsize = km->fsize;
   nkm->dsize = km->dsize;
   nkm->dfree = km->dfree;
+  nkm->vsz   = km->vsz;
+  nkm->res   = km->res;
+  memcpy(&(nkm->tv), &(km->tv), sizeof(struct timeval));
   return(nkm);
 }
 
@@ -897,12 +905,12 @@ kmember *get_members(){
   struct timeval tv;
   pthread_mutex_lock(&(kopt.member_mutex));
   gettimeofday(&tv, NULL);
-  if(tv.tv_sec - 10 > kopt.member_tv.tv_sec){
+  if((tv.tv_sec - kopt.member_tv.tv_sec) > 0){
     del_members(kopt.members);
     kopt.members = NULL;
   }
   if(kopt.members == NULL){
-    if(tv.tv_sec - 10 > kopt.member_tv.tv_sec){
+    if((tv.tv_sec - kopt.member_tv.tv_sec) > 0){
       kopt.members = mtn_hello();
       memcpy(&(kopt.member_tv), &tv, sizeof(struct timeval));
     }
@@ -1045,6 +1053,7 @@ void mtn_startup(int f)
 {
   kdata data;
   lprintf(9,"[debug] %s: IN\n", __func__);
+  lprintf(8,"[debug] %s: flag=%d\n", __func__, f);
   data.head.type = MTNCMD_STARTUP;
   data.head.size = 0;
   data.head.flag = f;
@@ -1128,11 +1137,8 @@ kmember *mtn_info()
 
 kstat *mkstat(kmember *member, kaddr *addr, kdata *data)
 {
-  char bf[PATH_MAX];
-  struct passwd *pw;
-  struct group  *gr;
   kstat *kst = NULL;
-  size_t len = mtn_get_string(NULL, data);
+  int len = mtn_get_string(NULL, data);
   if(len == -1){
     lprintf(0,"[error] %s: data error\n", __func__);
     return(NULL);
@@ -1141,43 +1147,11 @@ kstat *mkstat(kmember *member, kaddr *addr, kdata *data)
     return(NULL);
   }
   kst = newstat(NULL);
-  kst->name = xmalloc(len);
+  kst->name = xrealloc(kst->name, len);
   mtn_get_string(kst->name,  data);
   mtn_get_stat(&(kst->stat), data);
   kst->member = copy_member(member);
-
-	if(kst->member->host){
-		len = strlen(kst->member->host);
-		if(kopt.field_size[0] < len){
-			kopt.field_size[0] = len;
-		}
-	}
-
-  if(pw = getpwuid(kst->stat.st_uid)){
-    strcpy(bf, pw->pw_name);
-  }else{
-    sprintf(bf, "%d", kst->stat.st_uid);
-  }  
-  len = strlen(bf);
-  if(kopt.field_size[1] < len){
-    kopt.field_size[1] = len;
-  }
-
-  if(gr = getgrgid(kst->stat.st_gid)){
-    strcpy(bf, gr->gr_name);
-  }else{
-    sprintf(bf, "%d", kst->stat.st_uid);
-  }  
-  len = strlen(bf);
-  if(kopt.field_size[2] < len){
-    kopt.field_size[2] = len;
-  }
-
-  sprintf(bf, "%llu", kst->stat.st_size);
-  len = strlen(bf);
-  if(kopt.field_size[3] < len){
-    kopt.field_size[3] = len;
-  }
+  lprintf(9, "[debug] %s: name=%s\n", __func__, kst->name);
   if(kst->next = mkstat(member, addr, data)){
     kst->next->prev = kst;
   }
@@ -1203,8 +1177,7 @@ kstat *mgstat(kstat *krt, kstat *kst)
           st->member = NULL;
         }
         if(st == kst){
-          kst = delstat(st);
-          st = kst;
+          kst = (st = delstat(st));
         }else{
           st = delstat(st);
         }
@@ -1227,6 +1200,7 @@ kstat *copy_stats(kstat *kst)
 {
   kstat *ks = NULL;
   kstat *kr = NULL;
+  lprintf(9, "[debug] %s: IN\n", __func__);
   while(kst){
     ks = newstat(kst->name);
     memcpy(&(ks->stat), &(kst->stat), sizeof(struct stat));
@@ -1237,6 +1211,7 @@ kstat *copy_stats(kstat *kst)
     kr = ks;
     kst=kst->next;
   }
+  lprintf(9, "[debug] %s: OUT\n", __func__);
   return(kr);
 }
 
@@ -1261,10 +1236,7 @@ void addstat_dircache(const char *path, kstat *kst)
     }
     kopt.dircache = kd;
   }
-  if(kst->next = kd->kst){
-    kd->kst->prev = kst;
-  }
-  kd->kst = kst; 
+  kd->kst = mgstat(kd->kst, kst);
   gettimeofday(&(kd->tv), NULL);
   pthread_mutex_unlock(&(kopt.cache_mutex));
 }
@@ -1303,15 +1275,14 @@ kstat *get_dircache(const char *path, int flag)
   gettimeofday(&tv, NULL);
   kd = kopt.dircache;
   while(kd){
-    if(kd->tv.tv_sec < tv.tv_sec - 5){
+    if((tv.tv_sec - kd->tv.tv_sec) > 10){
       delstats(kd->kst);
       kd->kst  = NULL;
       kd->flag = 0;
     }
-    if(kd->tv.tv_sec < tv.tv_sec - 300){
+    if((tv.tv_sec - kd->tv.tv_sec) > 60){
       if(kd == kopt.dircache){
-        kopt.dircache = deldir(kd);
-        kd = kopt.dircache;
+        kd = (kopt.dircache = deldir(kopt.dircache));
       }else{
         kd = deldir(kd);
       }
@@ -1341,14 +1312,12 @@ kstat *get_dircache(const char *path, int flag)
 //----------------------------------------------------------------------------
 void mtn_list_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
 {
-  kstat *krt = sdata->option;
-  kstat *kst = mkstat(member, addr, rdata);
-  sdata->option = mgstat(krt, kst);
+  sdata->option = mgstat(sdata->option, mkstat(member, addr, rdata));
 }
 
 kstat *mtn_list(const char *path)
 {
-	lprintf(2, "[debug] %s:\n", __func__);
+	lprintf(8, "[debug] %s:\n", __func__);
   kdata data;
   kmember *members = get_members();
   data.head.type   = MTNCMD_LIST;
@@ -1372,7 +1341,7 @@ void mtn_stat_process(kmember *member, kdata *sd, kdata *rd, kaddr *addr)
 
 kstat *mtn_stat(const char *path)
 {
-	lprintf(2, "[debug] %s:\n", __func__);
+	lprintf(8, "[debug] %s:\n", __func__);
   kdata sd;
   kmember *members = get_members();
 	memset(&sd, 0, sizeof(sd));
@@ -1393,6 +1362,8 @@ void mtn_choose_info(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
   mtn_get_int(&(member->fsize), rdata, sizeof(member->fsize));
   mtn_get_int(&(member->dsize), rdata, sizeof(member->dsize));
   mtn_get_int(&(member->dfree), rdata, sizeof(member->dfree));
+  mtn_get_int(&(member->vsz),   rdata, sizeof(member->vsz));
+  mtn_get_int(&(member->res),   rdata, sizeof(member->res));
   if(choose == NULL){
     sdata->option = member;
   }else{

@@ -85,10 +85,10 @@ int mtntool_list(char *path)
   struct passwd *pw;
   struct group  *gr;
   kstat *kst = mtn_list(path);
-  sprintf(field[0], "%%%ds: %%s ", kopt.field_size[0]);
-  sprintf(field[1], "%%%ds ",      kopt.field_size[1]);
-  sprintf(field[2], "%%%ds ",      kopt.field_size[2]);
-  sprintf(field[3], "%%%dllu ",    kopt.field_size[3]);
+  sprintf(field[0], "%%s: %%s ");
+  sprintf(field[1], "%%s "     );
+  sprintf(field[2], "%%s "     );
+  sprintf(field[3], "%%llu "   );
   while(kst){
     tm = localtime(&(kst->stat.st_mtime));
     if(pw = getpwuid(kst->stat.st_uid)){

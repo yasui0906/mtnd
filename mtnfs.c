@@ -186,8 +186,7 @@ static void mtnfs_shutdown_process(ktask *kt)
   if(mb = get_member(kopt.members, &(kt->addr))){
     lprintf(8, "[debug] %s: host=%s\n", __func__, mb->host);
     if(mb == kopt.members){
-      mb = del_member(mb);
-      kopt.members = mb;
+      mb = (kopt.members = del_member(kopt.members));
     }else{
       mb = del_member(mb);
     }
@@ -199,12 +198,12 @@ static void mtnfs_shutdown_process(ktask *kt)
 static void mtnfs_hello_process(ktask *kt)
 {
   uint32_t mcount;
-  lprintf(0, "[debug] %s: IN\n", __func__);
+  lprintf(9, "[debug] %s: IN\n", __func__);
   mcount = get_members_count(kopt.members);
   mtn_set_string(kopt.host, &(kt->send));
   mtn_set_int(&mcount, &(kt->send), sizeof(mcount));
   kt->fin = 1;
-  lprintf(0, "[debug] %s: mcount=%d OUT\n", __func__, mcount);
+  lprintf(9, "[debug] %s: mcount=%d OUT\n", __func__, mcount);
 }
 
 static void mtnfs_info_process(ktask *kt)
@@ -965,9 +964,10 @@ void do_loop()
   int r;
   int m;
   int l;
+  kmember *mb;
   struct timeval tv;
-  struct epoll_event ev;
-  struct epoll_event es[2];
+  struct timeval tv_health;
+  struct epoll_event ev[2];
   int ef = epoll_create(2);
   if(ef == -1){
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
@@ -979,23 +979,41 @@ void do_loop()
     lprintf(0, "%s: listen error\n", __func__);
     return;
   }
-
-  ev.data.fd = l;
-  ev.events  = EPOLLIN;
-  if(epoll_ctl(ef, EPOLL_CTL_ADD, l, &ev) == -1){
+  ev[0].data.fd = l;
+  ev[0].events  = EPOLLIN;
+  if(epoll_ctl(ef, EPOLL_CTL_ADD, l, &ev[0]) == -1){
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
   }
-  ev.data.fd = m;
-  ev.events  = EPOLLIN;
-  if(epoll_ctl(ef, EPOLL_CTL_ADD, m, &ev) == -1){
+  ev[1].data.fd = m;
+  ev[1].events  = EPOLLIN;
+  if(epoll_ctl(ef, EPOLL_CTL_ADD, m, &ev[1]) == -1){
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
   }
   mtn_startup(0);
+  gettimeofday(&tv_health, NULL);
   while(is_loop){
     waitpid(-1, NULL, WNOHANG);
-    r = epoll_wait(ef, es, 2, 1000);
+    r = epoll_wait(ef, ev, 2, 1000);
+    gettimeofday(&tv, NULL);
+    if((tv.tv_sec - tv_health.tv_sec) > 60){
+      mtn_startup(1);
+      gettimeofday(&tv_health, NULL);
+    }
+    mb = kopt.members;
+    while(mb){
+      if((tv.tv_sec - mb->tv.tv_sec) > 300){
+        if(mb == kopt.members){
+          mb = del_member(mb);
+          kopt.members = mb;
+        }else{
+          mb = del_member(mb);
+        }
+        continue;
+      }
+      mb = mb->next;
+    }
     if(r == 0){
       continue;
     }
@@ -1006,21 +1024,21 @@ void do_loop()
       continue;
     }
     while(r--){
-      if(es[r].data.fd == m){
-        if(es[r].events & EPOLLIN){
+      if(ev[r].data.fd == m){
+        if(ev[r].events & EPOLLIN){
           mtnfs_udp_process(m);
         }
-        if(es[r].events & EPOLLOUT){
+        if(ev[r].events & EPOLLOUT){
           mtnfs_task_process(m);
         }
       }
-      if(es[r].data.fd == l){
+      if(ev[r].data.fd == l){
         mtnfs_accept_process(l);
       }
     }
-    ev.data.fd = m;
-    ev.events  = kopt.task ? EPOLLIN | EPOLLOUT : EPOLLIN;
-    epoll_ctl(ef, EPOLL_CTL_MOD, m, &ev);
+    ev[0].data.fd = m;
+    ev[0].events  = kopt.task ? EPOLLIN | EPOLLOUT : EPOLLIN;
+    epoll_ctl(ef, EPOLL_CTL_MOD, m, &ev[0]);
   }
   mtn_shutdown();
   close(m);
