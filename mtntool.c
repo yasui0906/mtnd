@@ -187,7 +187,7 @@ int mtntool_get_write(int f, int s, char *path)
   sd.head.size = 0;
   sd.head.type = MTNCMD_GET;
   mtn_set_string(path, &sd);
-  send_stream(s, &sd);
+  send_data_stream(s, &sd);
 
   sd.head.size = 0;
   sd.head.type = MTNRES_SUCCESS;
@@ -200,7 +200,7 @@ int mtntool_get_write(int f, int s, char *path)
       write(f, rd.data.data, rd.head.size);
     }
   }
-  send_stream(s, &sd);
+  send_data_stream(s, &sd);
   return(0);
 }
 
@@ -318,7 +318,7 @@ int mtntool_set_write(int f, int s)
   sd.head.fin  = 1;
   sd.head.size = 0;
   sd.head.type = MTNCMD_SET;
-  r = send_stream(s, &sd);
+  r = send_data_stream(s, &sd);
   if(r == -1){
     return(-1);
   }

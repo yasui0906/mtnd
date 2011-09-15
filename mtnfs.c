@@ -982,13 +982,14 @@ void mtnfs_child(ktask *kt)
     if(kt->res == 1){
       break;
     }
-    //lprintf(0,"[info]  %s: pid=%d recv_type=%d recv_size=%d\n", __func__, getpid(), kt->recv.head.type, kt->recv.head.size);
     if(call_func = func_list[kt->recv.head.type]){
       call_func(kt);
     }else{
       mtnfs_child_error(kt);
     }
-    send_stream(kt->con, &(kt->send));
+    if(kt->recv.head.flag == 0){
+      send_data_stream(kt->con, &(kt->send));
+    }
   }
   lprintf(1, "[debug] %s: close\n", __func__);
 }
@@ -1024,7 +1025,7 @@ void mtnfs_accept_process(int l)
   exit(0);
 }
 
-void do_loop()
+void mtnfsloop()
 {
   int r;
   int m;
@@ -1301,7 +1302,7 @@ int main(int argc, char *argv[])
   daemonize();
   init_task();
   mkpidfile();
-  do_loop();
+  mtnfsloop();
   rmpidfile();
   return(0);
 }

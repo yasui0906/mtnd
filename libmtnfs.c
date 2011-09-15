@@ -287,15 +287,11 @@ int send_dgram(int s, kdata *data, kaddr *addr)
   return(-1);
 }
 
-int send_stream(int s, kdata *data)
+int send_stream(int s, char *buff, size_t size)
 {
-  size_t   size;
-  uint8_t *buff;
-  size  = sizeof(khead);
-  size += data->head.size;
-  buff  = (uint8_t *)data;
+  int r;
   while(send_readywait(s)){
-    int r = send(s, buff, size, 0);
+    r = send(s, buff, size, 0);
     if(r == -1){
       if(errno == EINTR){
         continue;
@@ -318,22 +314,7 @@ int send_data_stream(int s, kdata *data)
   size  = sizeof(khead);
   size += data->head.size;
   buff  = (uint8_t *)data;
-  while(send_readywait(s)){
-    int r = send(s, buff, size, 0);
-    if(r == -1){
-      if(errno == EINTR){
-        continue;
-      }
-      lprintf(0, "%s: [error] send error %s\n", __func__, strerror(errno));
-      return(-1);
-    }
-    if(size == r){
-      break;
-    }
-    size -= r;
-    buff += r;
-  }
-  return(0);
+  return(send_stream(s, buff, size));
 }
 
 int send_recv_stream(int s, kdata *sd, kdata *rd)
@@ -378,6 +359,19 @@ int create_socket(int port, int mode)
   return(s);
 }
 
+int create_usocket()
+{
+  int s = create_socket(0, SOCK_DGRAM);
+  if(s == -1){
+    return(-1);
+  }
+  if(fcntl(s, F_SETFL , O_NONBLOCK)){
+    lprintf(0, "[error] %s: O_NONBLOCK %s\n", __func__, strerror(errno));
+    return(-1);
+  }
+  return(s);
+}
+
 int create_lsocket(int port)
 {
   int s = create_socket(port, SOCK_STREAM);
@@ -386,6 +380,7 @@ int create_lsocket(int port)
   }
   return(s);
 }
+
 
 int create_msocket(int port)
 {
@@ -959,30 +954,114 @@ kmember *get_members(){
 //-------------------------------------------------------------------
 //
 //-------------------------------------------------------------------
-void mtn_process(kmember *members, kdata *sdata, MTNPROCFUNC mtn)
+int mtn_process_hello(int s, kdata *sdata, kdata *rdata, kaddr *saddr, kaddr *raddr, MTNPROCFUNC mtn)
+{
+  mtn(NULL, sdata, rdata, raddr);
+  sdata->head.flag = 1;
+  send_dgram(s, sdata, raddr);
+  sdata->head.flag = 0;
+  return(sdata->opt32 > get_members_count(sdata->option));
+}
+
+int mtn_process_member(int s, kmember *members, kdata *sdata, kdata *rdata, kaddr *saddr, kaddr *raddr, MTNPROCFUNC mtn)
+{
+  int r = 1;
+  kmember *mb;
+  members = add_member(members, raddr, NULL);
+  mb = get_member(members, raddr);
+  mtn(mb, sdata, rdata, raddr);
+  if(rdata->head.fin){
+    mb->mark = 1;
+    for(mb=members;mb && mb->mark;mb=mb->next);
+    r = (mb == NULL) ? 0 : 1;
+  }
+  return(r);
+}
+
+int mtn_process_recv(int s, kmember *members, kdata *sdata, kaddr *saddr, MTNPROCFUNC mtn)
+{
+  int   r = 1;
+  kaddr raddr;
+  kdata rdata;
+  memset(&raddr, 0, sizeof(raddr));
+  raddr.len = sizeof(raddr.addr);
+  while(recv_dgram(s, &rdata, &(raddr.addr.addr), &(raddr.len)) == 0){
+    if(members == NULL){
+      r = mtn_process_hello(s, sdata, &rdata, saddr, &raddr, mtn);
+    }else{
+      r = mtn_process_member(s, members, sdata, &rdata, saddr, &raddr, mtn);
+    }
+  }
+  return(r);
+}
+
+void mtn_process_wait(int s, kmember *members, kdata *sdata, kaddr *saddr, MTNPROCFUNC mtn)
+{
+  kmember *mb;
+  if(members == NULL){
+    send_dgram(s, sdata, saddr);
+  }else{
+    for(mb=members;mb;mb=mb->next){
+      if(mb->mark == 0){
+        send_dgram(s, sdata, &(mb->addr));
+      }
+    }
+  }
+}
+
+void mtn_process_loop(int s, kmember *members, kdata *sdata, kaddr *saddr, MTNPROCFUNC mtn)
 {
   int r;
   int e;
-  int s;
-  int t;
-  int o;
   int l = 1;
-  kaddr saddr;
-  kaddr raddr;
-  kdata rdata;
-  kmember *mb;
-  uint32_t mc;
+  int o = 2000;
+  int t = (members == NULL) ? 200 : 3000;
   struct epoll_event ev;
-  if((members == NULL) && (mtn != NULL ) && (sdata->head.type != MTNCMD_HELLO)){
+  if(mtn == NULL){
     return;
   }
-  s = create_socket(0, SOCK_DGRAM);
-  if(s == -1){
+  e = epoll_create(1);
+  if(e == -1){
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
   }
-  if(fcntl(s, F_SETFL , O_NONBLOCK)){
-    lprintf(0, "[error] %s: O_NONBLOCK %s\n", __func__, strerror(errno));
+  ev.data.fd = s;
+  ev.events  = EPOLLIN;
+  if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
+    close(e);
+    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
+    return;
+  }
+  while(is_loop && l){
+    r = epoll_wait(e, &ev, 1, t);
+    t = 200;
+    switch(r){
+      case -1:
+        lprintf(0, "[error] %s: epoll %s\n", __func__, strerror(errno));
+        break;
+      case 0:
+        if(l = ((o -= t) > 0)){
+          mtn_process_wait(s, members, sdata, saddr, mtn);
+        }
+        break;
+      default:
+        l = mtn_process_recv(s, members, sdata, saddr, mtn);
+        break;
+    }
+  }
+  close(e);
+}
+
+void mtn_process(kmember *members, kdata *sdata, MTNPROCFUNC mtn)
+{
+  int s;
+  kaddr saddr;
+  if((members == NULL) && (mtn != NULL ) && (sdata->head.type != MTNCMD_HELLO)){
+    return;
+  }
+  s = create_usocket();
+  if(s == -1){
+    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
   }
   saddr.len                     = sizeof(struct sockaddr_in);
@@ -993,107 +1072,9 @@ void mtn_process(kmember *members, kdata *sdata, MTNPROCFUNC mtn)
   sdata->head.sqno              = sqno();
   if(send_dgram(s, sdata, &saddr) == -1){
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
-    close(s);
-    return;
+  }else{
+    mtn_process_loop(s, members, sdata, &saddr, mtn);
   }
-  if(mtn == NULL){
-    close(s);
-    return;
-  }
-
-  e = epoll_create(1);
-  if(e == -1){
-    close(s);
-    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
-    return;
-  }
-  ev.data.fd = s;
-  ev.events  = EPOLLIN;
-  if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
-    close(e);
-    close(s);
-    lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
-    return;
-  }
-  t = (members == NULL) ? 200 : 3000;
-  o = 2000;
-  mc = 0;
-  while(is_loop && l){
-    r = epoll_wait(e, &ev, 1, t);
-    t = 200;
-    if(r == 0){
-      if(t >= o){
-        break;
-      }
-      o -= t;
-      if(members == NULL){
-        send_dgram(s, sdata, &saddr);
-      }else{
-        for(mb=members;mb;mb=mb->next){
-          if(mb->mark == 0){
-            send_dgram(s, sdata, &(mb->addr));
-          }
-        }
-      }
-      continue;
-    }
-    if(r == -1){
-      lprintf(0, "[error] %s: epoll %s\n", __func__, strerror(errno));
-      continue;
-    }
-    memset(&raddr, 0, sizeof(raddr));
-    raddr.len = sizeof(raddr.addr);
-    while(recv_dgram(s, &rdata, &(raddr.addr.addr), &(raddr.len)) == 0){
-      if(!members){
-        // MTN_HELLO
-        mtn(NULL, sdata, &rdata, &raddr);
-        sdata->head.flag = 1;
-        send_dgram(s, sdata, &raddr);
-        sdata->head.flag = 0;
-        if(mc < sdata->opt32){
-          mc = sdata->opt32;
-        }
-        if(mc > get_members_count(sdata->option)){
-          continue;
-        }else{
-          l = 0;
-          break;
-        }
-      }else{
-        members = add_member(members, &raddr, NULL);
-        mb = get_member(members, &raddr);
-        mtn(mb, sdata, &rdata, &raddr);
-        if(rdata.head.fin == 0){
-          continue;
-        }
-        mb->mark = 1;
-        for(mb=members;mb;mb=mb->next){
-          if(mb->mark == 0){
-            break;
-          }
-        }
-        if(mb == NULL){
-          l = 0;
-          break;
-        }
-      }
-    }
-  }
-  // for DEBUG
-  if(members){
-    int dall = 0;
-    int derr = 0;
-    for(mb=members;mb;mb=mb->next){
-      dall++;
-      if(mb->mark == 0){
-        derr++;
-        lprintf(8, "[debug] %s: No Response %s\n", __func__, mb->host);
-      }
-    }
-    lprintf(8, "[debug] %s: No Response %d/%d\n", __func__, derr, dall);
-  }
-  // for DEBUG
-  close(e);
   close(s);
 }
 
@@ -1136,7 +1117,9 @@ void mtn_hello_process(kmember *member, kdata *sdata, kdata *rdata, kaddr *addr)
   mtn_get_int(&mcount, rdata, sizeof(mcount));
   members = add_member(members, addr, host);
   sdata->option = members;
-  sdata->opt32  = mcount;
+  if(sdata->opt32 < mcount){
+    sdata->opt32 = mcount;
+  }
 }
 
 kmember *mtn_hello()
@@ -1146,6 +1129,7 @@ kmember *mtn_hello()
   data.head.size = 0;
   data.head.flag = 0;
   data.option = NULL;
+  data.opt32  = 0;
   lprintf(9, "[debug] %s: IN\n", __func__);
   mtn_process(NULL, &data, (MTNPROCFUNC)mtn_hello_process);
   lprintf(9, "[debug] %s: OUT\n", __func__);
@@ -1790,6 +1774,8 @@ int mtn_open(const char *path, int flags, mode_t mode)
     close(s);
     return(-1);
   }
+  kopt.sendsize[s] = 0;
+  kopt.sendbuff[s] = xrealloc(kopt.sendbuff[s], MTN_TCP_BUFFSIZE);
   return(s);
 }
 
@@ -1804,7 +1790,7 @@ int mtn_read(int s, char *buf, size_t size, off_t offset)
   sd.head.type = MTNCMD_READ;
   mtn_set_int(&size,   &sd, sizeof(size));
   mtn_set_int(&offset, &sd, sizeof(offset));
-  send_stream(s, &sd);
+  send_data_stream(s, &sd);
   while(is_loop){
     recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
     if(rd.head.size == 0){
@@ -1828,7 +1814,7 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
   sz = size;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.type = MTNCMD_WRITE;
-  sd.head.flag = 0;
+  sd.head.flag = 1;
   while(size){
     sd.head.size = 0;
     mtn_set_int(&offset, &sd, sizeof(offset));
@@ -1836,12 +1822,26 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
     size   -= r;
     buf    += r;
     offset += r;
+
+    /*
+    if(kopt.sendsize[s] + sd.head.size + sizeof(sd.head) > MTN_TCP_BUFFSIZE){
+      send_stream(s, kopt.sendbuff[s], kopt.sendsize[s]);
+      kopt.sendsize[s] = 0;
+    }
+    memcpy(kopt.sendbuff[s] + kopt.sendsize[s], &(sd.head), sizeof(sd.head));
+    kopt.sendsize[s] += sizeof(sd.head);
+    memcpy(kopt.sendbuff[s] + kopt.sendsize[s], &(sd.data), sd.head.size);
+    kopt.sendsize[s] += sd.head.size;
+    */
+
     send_data_stream(s, &sd);
+    /*
     recv_data_stream(s, &rd);
     if(rd.head.type == MTNRES_ERROR){
       mtn_set_int(&errno, &rd, sizeof(errno));
       return(-1);
     }
+    */
   }
   return(sz);
 }
@@ -1850,6 +1850,12 @@ int mtn_close(int s)
 {
 	lprintf(2, "[debug] %s:\n", __func__);
   int r;
+  /*
+  if(kopt.sendsize[s]){
+    send_stream(s, kopt.sendbuff[s], kopt.sendsize[s]);
+    kopt.sendsize[s] = 0;
+  }
+  */
   r = (s == 0) ? 0 : close(s);
   return(r);
 }

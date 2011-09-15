@@ -363,7 +363,9 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
 {
   int r;
   if(offset == 0){
-    lprintf(8, "[debug] %s: path=%s\n", __func__, path);
+    lprintf(8, "[debug] %s: path=%s offset=%u size=%d\n", __func__, path, offset, size);
+  }else{
+    lprintf(9, "[debug] %s: path=%s offset=%u size=%d\n", __func__, path, offset, size);
   }
   if(is_mtnstatus(path, NULL)){
     fi->fh = (uint64_t)xrealloc((void *)(fi->fh), size);
