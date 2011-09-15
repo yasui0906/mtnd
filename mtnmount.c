@@ -378,9 +378,9 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
 
 static int mtnmount_statfs(const char *path, struct statvfs *sv)
 {
+  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   kmember *m;
   kmember *km = mtn_info();
-  lprintf(8, "[debug] %s: path=%s\n", __func__, path);
   statvfs("/", sv);
   sv->f_blocks = 0;
   sv->f_bfree  = 0;

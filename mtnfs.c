@@ -74,14 +74,14 @@ uint64_t get_datasize(char *path)
   return(size);
 }
 
-void start_message(const char *msg)
+void start_message()
 {
   uint32_t bsize;
   uint32_t fsize;
   uint64_t dsize;
   uint64_t dfree;
   get_diskfree(&bsize, &fsize, &dsize, &dfree);
-  lprintf(0, "%s", msg);
+  lprintf(0, "======= mtnfs start =======\n");
   lprintf(0, "ver  : %s\n", PACKAGE_VERSION);
   lprintf(0, "pid  : %d\n", getpid());
   lprintf(0, "debug: %d\n", kopt.debuglevel);
@@ -115,12 +115,23 @@ char *mtnfs_fix_path(char *path){
 ktask *mtnfs_task_create(kdata *data, kaddr *addr)
 {
   lprintf(9, "[debug] %s: IN\n", __func__);
-  ktask *kt = xmalloc(sizeof(ktask));
+  ktask *kt;
+  for(kt=kopt.task;kt;kt=kt->next){
+    if(cmp_addr(&(kt->addr), addr) != 0){
+      continue;
+    }
+    if(kt->recv.head.sqno != data->head.sqno){
+      continue;
+    }
+    return(NULL);
+  }
+  kt = xmalloc(sizeof(ktask));
   memset(kt, 0, sizeof(ktask));
+  gettimeofday(&(kt->tv),NULL);
   memcpy(&(kt->addr), addr, sizeof(kaddr));
   memcpy(&(kt->recv), data, sizeof(kdata));
   kt->type = data->head.type;
-  lprintf(8, "[debug] %s: CMD=%s\n", __func__, mtncmdstr[kt->type]);
+  lprintf(8, "[debug] %s: CMD=%s SEQ=%d\n", __func__, mtncmdstr[kt->type], data->head.sqno);
   if(kopt.task){
     kopt.task->prev = kt;
   }
@@ -130,26 +141,55 @@ ktask *mtnfs_task_create(kdata *data, kaddr *addr)
   return(kt);
 }
 
-ktask *mtnfs_task_delete(ktask *task)
+ktask *mtnfs_task_cut(ktask *t)
 {
-  ktask *pt = NULL;
-  ktask *nt = NULL;
-  if(!task){
+  ktask *p = NULL;
+  ktask *n = NULL;
+  if(!t){
     return(NULL);
   }
-  pt = task->prev;
-  nt = task->next;
-  if(pt){
-    pt->next = nt;
+  p = t->prev;
+  n = t->next;
+  if(p){
+    p->next = n;
   }
-  if(nt){
-    nt->prev = pt;
+  if(n){
+    n->prev = p;
   }
-  if(kopt.task == task){
-    kopt.task = nt;
+  if(kopt.task == t){
+    kopt.task = n;
   }
-  xfree(task);
-  return(nt);
+  if(kopt.tasksave == t){
+    kopt.tasksave = n;
+  }
+  t->prev = NULL;
+  t->next = NULL;
+  return(n);
+}
+
+ktask *mtnfs_task_delete(ktask *t)
+{
+  ktask *n;
+  if(!t){
+    return(NULL);
+  }
+  n = mtnfs_task_cut(t);
+  xfree(t);
+  return(n);
+}
+
+ktask *mtnfs_task_save(ktask *t)
+{
+  ktask *n;
+  if(!t){
+    return(NULL);
+  }
+  n = mtnfs_task_cut(t);
+  if(t->next = kopt.tasksave){
+    t->next->prev = t;
+  }
+  kopt.tasksave = t;
+  return(n);
 }
 
 //-------------------------------------------------------------------
@@ -197,13 +237,27 @@ static void mtnfs_shutdown_process(ktask *kt)
 
 static void mtnfs_hello_process(ktask *kt)
 {
+  ktask *t;
   uint32_t mcount;
   lprintf(9, "[debug] %s: IN\n", __func__);
-  mcount = get_members_count(kopt.members);
-  mtn_set_string(kopt.host, &(kt->send));
-  mtn_set_int(&mcount, &(kt->send), sizeof(mcount));
   kt->fin = 1;
-  lprintf(9, "[debug] %s: mcount=%d OUT\n", __func__, mcount);
+  for(t=kopt.tasksave;t;t=t->next){
+    if(cmp_task(t, kt) == 0){
+      break;
+    }
+  }
+  if(t){
+    kt->recv.head.flag = 1;
+  }else{
+    if(kt->recv.head.flag == 1){
+      kt->fin = 2;
+    }else{
+      mcount = get_members_count(kopt.members);
+      mtn_set_string(kopt.host, &(kt->send));
+      mtn_set_int(&mcount, &(kt->send), sizeof(mcount));
+    }
+  }
+  lprintf(9, "[debug] %s: OUT FLAG=%d FIN=%d\n", __func__, kt->recv.head.flag, kt->fin);
 }
 
 static void mtnfs_info_process(ktask *kt)
@@ -213,14 +267,18 @@ static void mtnfs_info_process(ktask *kt)
   lprintf(9, "[debug] %s: IN\n", __func__);
   get_meminfo(&mi);
   mb.limit = kopt.free_limit;
+  mb.malloccnt = malloccnt();
+  mb.membercnt = get_members_count(kopt.members);
   get_diskfree(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
-  mtn_set_int(&(mb.bsize), &(kt->send), sizeof(mb.bsize));
-  mtn_set_int(&(mb.fsize), &(kt->send), sizeof(mb.fsize));
-  mtn_set_int(&(mb.dsize), &(kt->send), sizeof(mb.dsize));
-  mtn_set_int(&(mb.dfree), &(kt->send), sizeof(mb.dfree));
-  mtn_set_int(&(mb.limit), &(kt->send), sizeof(mb.limit));
-  mtn_set_int(&(mi.vsz),   &(kt->send), sizeof(mi.vsz));
-  mtn_set_int(&(mi.res),   &(kt->send), sizeof(mi.res));
+  mtn_set_int(&(mb.bsize),     &(kt->send), sizeof(mb.bsize));
+  mtn_set_int(&(mb.fsize),     &(kt->send), sizeof(mb.fsize));
+  mtn_set_int(&(mb.dsize),     &(kt->send), sizeof(mb.dsize));
+  mtn_set_int(&(mb.dfree),     &(kt->send), sizeof(mb.dfree));
+  mtn_set_int(&(mb.limit),     &(kt->send), sizeof(mb.limit));
+  mtn_set_int(&(mb.malloccnt), &(kt->send), sizeof(mb.malloccnt));
+  mtn_set_int(&(mb.membercnt), &(kt->send), sizeof(mb.membercnt));
+  mtn_set_int(&(mi.vsz),       &(kt->send), sizeof(mi.vsz));
+  mtn_set_int(&(mi.res),       &(kt->send), sizeof(mi.res));
   kt->send.head.fin = 1;
   kt->fin = 1;
   lprintf(9, "[debug] %s: OUT\n", __func__);
@@ -538,7 +596,14 @@ void mtnfs_task_process(int s)
       if(kt->recv.head.flag == 0){
         send_dgram(s, &(kt->send), &(kt->addr));
       }
-      kt = mtnfs_task_delete(kt);
+      switch(kt->fin){
+        case 1:
+          kt = mtnfs_task_delete(kt);
+          break;
+        case 2:
+          kt = mtnfs_task_save(kt);
+          break;
+      }
     }else{
       kt = kt->next;
     }
@@ -964,11 +1029,16 @@ void do_loop()
   int r;
   int m;
   int l;
+  int ef;
+  ktask *t;
   kmember *mb;
   struct timeval tv;
   struct timeval tv_health;
   struct epoll_event ev[2];
-  int ef = epoll_create(2);
+
+  getcwd(kopt.cwd, sizeof(kopt.cwd));
+  start_message();
+  ef = epoll_create(2);
   if(ef == -1){
     lprintf(0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
@@ -999,7 +1069,7 @@ void do_loop()
     gettimeofday(&tv, NULL);
     if((tv.tv_sec - tv_health.tv_sec) > 60){
       mtn_startup(1);
-      gettimeofday(&tv_health, NULL);
+      memcpy(&tv_health, &tv, sizeof(tv));
     }
     mb = kopt.members;
     while(mb){
@@ -1015,6 +1085,14 @@ void do_loop()
       mb = mb->next;
     }
     if(r == 0){
+      t = kopt.tasksave;
+      while(t){
+        if((tv.tv_sec - t->tv.tv_sec) > 30){
+          t = mtnfs_task_delete(t);
+        }else{
+          t = t->next;
+        }
+      }
       continue;
     }
     if(r == -1){
@@ -1043,9 +1121,10 @@ void do_loop()
   mtn_shutdown();
   close(m);
   close(l);
+  lprintf(0, "mtnfs finished\n");
 }
 
-void do_daemon()
+void daemonize()
 {
   int pid;
 
@@ -1219,14 +1298,11 @@ int main(int argc, char *argv[])
     sprintf(buff, "%s/%s", kopt.cwd, kopt.pid);
     strcpy(kopt.pid, buff);
   }
-  do_daemon();
+  daemonize();
   init_task();
   mkpidfile();
-  getcwd(kopt.cwd, sizeof(kopt.cwd));
-  start_message("======= mtnfs start =======\n");
   do_loop();
   rmpidfile();
-  lprintf(0, "mtnfs finished\n");
   return(0);
 }
 
