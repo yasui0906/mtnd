@@ -183,8 +183,10 @@ int mtntool_get_write(int f, int s, char *path)
   uint8_t *buff;
   size_t size;
 
+  lprintf(9,"[debug] %s: IN\n", __func__);
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
+  sd.head.flag = 0;
   sd.head.type = MTNCMD_GET;
   mtn_set_string(path, &sd);
   send_data_stream(s, &sd);
@@ -201,6 +203,7 @@ int mtntool_get_write(int f, int s, char *path)
     }
   }
   send_data_stream(s, &sd);
+  lprintf(9,"[debug] %s: OUT\n", __func__);
   return(0);
 }
 
@@ -221,6 +224,7 @@ int mtntool_get(char *path, char *file)
   int s = 0;
   kstat *st;
 
+  lprintf(9,"[debug] %s: IN\n", __func__);
   st = mtn_find(path, 0);
   if(st == NULL){
     printf("error: node not found\n");
@@ -246,6 +250,7 @@ int mtntool_get(char *path, char *file)
   }
   mtntool_get_write(f, s, path);
   mtntool_get_close(f, s);
+  lprintf(9,"[debug] %s: OUT\n", __func__);
   return(0); 
 }
 
@@ -357,7 +362,7 @@ int main(int argc, char *argv[])
   save_path[0] = 0;
   file_path[0] = 0;
   mtn_init_option();
-
+  kopt.daemonize = 0;
   mode = MTNCMD_MAX;
   while((r = getopt_long(argc, argv, "f:sglhvi", get_optlist(), NULL)) != -1){
     switch(r){

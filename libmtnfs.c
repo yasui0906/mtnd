@@ -38,6 +38,7 @@ char *mtncmdstr[]={
   "SYMLINK",
   "READLINK",
   "UTIME",
+  "RESULT",
 };
 
 void mtn_init_option()
@@ -256,6 +257,7 @@ int recv_data_stream(int s, kdata *kd)
     return(r);
   }
   if(kd->head.size > MAX_DATASIZE){
+    lprintf(0, "[debug] %s: size=%d\n", __func__, kd->head.size);
     return(-1);
   }
   return(recv_stream(s, &(kd->data), kd->head.size));
@@ -483,9 +485,11 @@ int mtn_get_int32(uint32_t *val, kdata *kd)
   uint16_t len  = sizeof(uint32_t);
   uint16_t size = kd->head.size;
   if(size > MAX_DATASIZE){
+    lprintf(9, "[debug] %s: size=%d\n", __func__, size);
     return(-1);
   }
   if(size < len){
+    lprintf(9, "[debug] %s: size=%d len=%d\n", __func__, size, len);
     return(-1);
   }
   size -= len;
@@ -609,7 +613,7 @@ int mtn_set_int(void *val, kdata *kd, int size)
 int mtn_set_data(void *buff, kdata *kd, size_t size)
 {
   size_t max = MAX_DATASIZE - kd->head.size;
-  if(MAX_DATASIZE < kd->head.size){
+  if(MAX_DATASIZE <= kd->head.size){
     return(0);
   }
   if(size > max){
@@ -653,29 +657,37 @@ int mtn_get_stat(struct stat *st, kdata *kd)
 {
   if(st && kd){
     if(mtn_get_int(&(st->st_mode),  kd, sizeof(st->st_mode)) == -1){
+      lprintf(9, "[error] %s: 1\n", __func__);
       return(-1);
     }
     if(mtn_get_int(&(st->st_size),  kd, sizeof(st->st_size)) == -1){
+      lprintf(9, "[error] %s: 2\n", __func__);
       return(-1);
     }
     if(mtn_get_int(&(st->st_uid),   kd, sizeof(st->st_uid)) == -1){
+      lprintf(9, "[error] %s: 3\n", __func__);
       return(-1);
     }
     if(mtn_get_int(&(st->st_gid),   kd, sizeof(st->st_gid)) == -1){
+      lprintf(9, "[error] %s: 4\n", __func__);
       return(-1);
     }
     if(mtn_get_int(&(st->st_blocks),kd, sizeof(st->st_blocks)) == -1){
+      lprintf(9, "[error] %s: 5\n", __func__);
       return(-1);
     }
     if(mtn_get_int(&(st->st_atime), kd, sizeof(st->st_atime)) == -1){
+      lprintf(9, "[error] %s: 6\n", __func__);
       return(-1);
     }
     if(mtn_get_int(&(st->st_mtime), kd, sizeof(st->st_mtime)) == -1){
+      lprintf(9, "[error] %s: 7\n", __func__);
       return(-1);
     }
     st->st_nlink = S_ISDIR(st->st_mode) ? 2 : 1;
     return(0);
   }
+  lprintf(9, "[error] %s: 8\n", __func__);
   return(-1);
 }
 
@@ -1782,25 +1794,35 @@ int mtn_open(const char *path, int flags, mode_t mode)
 int mtn_read(int s, char *buf, size_t size, off_t offset)
 {
   int r = 0;
+  int    rs;
   kdata  sd;
   kdata  rd;
-  sd.head.ver  = PROTOCOL_VERSION;
-  sd.head.size = 0;
-  sd.head.flag = 0;
-  sd.head.type = MTNCMD_READ;
-  mtn_set_int(&size,   &sd, sizeof(size));
-  mtn_set_int(&offset, &sd, sizeof(offset));
-  send_data_stream(s, &sd);
-  while(is_loop){
-    recv_stream(s, (uint8_t *)&(rd.head), sizeof(rd.head));
+  while(is_loop && size){
+    sd.head.ver  = PROTOCOL_VERSION;
+    sd.head.size = 0;
+    sd.head.flag = 0;
+    sd.head.type = MTNCMD_READ;
+    if(mtn_set_int(&size,   &sd, sizeof(size)) == -1){
+      r = -EIO;
+      break;
+    }
+    if(mtn_set_int(&offset, &sd, sizeof(offset)) == -1){
+      r = -EIO;
+      break;
+    }
+    if(send_recv_stream(s, &sd, &rd) == -1){
+      r = -errno;
+      break;
+    }
     if(rd.head.size == 0){
       break;
-    }else{
-      recv_stream(s, rd.data.data, rd.head.size);
-      memcpy(buf, rd.data.data, rd.head.size);
-      r   += rd.head.size;
-      buf += rd.head.size;
     }
+    rs = (rd.head.size > size) ? size : rd.head.size;
+    memcpy(buf, &(rd.data), rs);
+    size   -= rs;
+    offset += rs;
+    buf    += rs;
+    r      += rs;
   }
   return(r);
 }
@@ -1810,11 +1832,15 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
   int r = 0;
   int    sz;
   kdata  sd;
+  kdata  se;
   kdata  rd;
   sz = size;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.type = MTNCMD_WRITE;
   sd.head.flag = 1;
+  se.head.ver  = PROTOCOL_VERSION;
+  se.head.type = MTNCMD_RESULT;
+  se.head.flag = 0;
   while(size){
     sd.head.size = 0;
     mtn_set_int(&offset, &sd, sizeof(offset));
@@ -1822,41 +1848,63 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
     size   -= r;
     buf    += r;
     offset += r;
-
-    /*
     if(kopt.sendsize[s] + sd.head.size + sizeof(sd.head) > MTN_TCP_BUFFSIZE){
       send_stream(s, kopt.sendbuff[s], kopt.sendsize[s]);
       kopt.sendsize[s] = 0;
+      if(send_recv_stream(s, &se, &rd) == -1){
+        lprintf(0, "[error] %s: send_recv_stream %s\n", __func__, strerror(errno));
+        return(-errno);
+      }else if(rd.head.type == MTNRES_ERROR){
+        mtn_set_int(&errno, &rd, sizeof(errno));
+        lprintf(0, "[error] %s: MTNRES_ERROR %s\n", __func__, strerror(errno));
+        return(-errno);
+      }
     }
     memcpy(kopt.sendbuff[s] + kopt.sendsize[s], &(sd.head), sizeof(sd.head));
     kopt.sendsize[s] += sizeof(sd.head);
     memcpy(kopt.sendbuff[s] + kopt.sendsize[s], &(sd.data), sd.head.size);
     kopt.sendsize[s] += sd.head.size;
-    */
-
-    send_data_stream(s, &sd);
-    /*
-    recv_data_stream(s, &rd);
-    if(rd.head.type == MTNRES_ERROR){
-      mtn_set_int(&errno, &rd, sizeof(errno));
-      return(-1);
-    }
-    */
   }
   return(sz);
 }
 
 int mtn_close(int s)
 {
+  int r = 0;
+  kdata  sd;
+  kdata  se;
+  kdata  rd;
 	lprintf(2, "[debug] %s:\n", __func__);
-  int r;
-  /*
+  if(s == 0){
+    return(0);
+  }
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.type = MTNCMD_CLOSE;
+  sd.head.size = 0;
+  sd.head.flag = 0;
+  se.head.ver  = PROTOCOL_VERSION;
+  se.head.type = MTNCMD_RESULT;
+  se.head.size = 0;
+  se.head.flag = 0;
   if(kopt.sendsize[s]){
     send_stream(s, kopt.sendbuff[s], kopt.sendsize[s]);
     kopt.sendsize[s] = 0;
+    if(send_recv_stream(s, &se, &rd) == -1){
+      r = -errno;
+    }else if(rd.head.type == MTNRES_ERROR){
+      mtn_set_int(&errno, &rd, sizeof(errno));
+      r = -errno;
+    }
   }
-  */
-  r = (s == 0) ? 0 : close(s);
+  if(send_recv_stream(s, &sd, &rd) == -1){
+    r = -errno;
+  }else if(rd.head.type == MTNRES_ERROR){
+    mtn_set_int(&errno, &rd, sizeof(errno));
+    r = -errno;
+  }
+  if(close(s) == -1){
+    r = -errno;
+  }
   return(r);
 }
 

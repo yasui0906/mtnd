@@ -120,6 +120,7 @@ static int mtnmount_fgetattr(const char *path, struct stat *st, struct fuse_file
     lprintf(0, "[error] %s: mtn_callcmd %s\n", __func__, strerror(errno));
     return(-errno);
   }
+  lprintf(9, "[debug] %s: size=%d\n", __func__, kt.recv.head.size);
   if(mtn_get_stat(st, &(kt.recv)) == -1){
     lprintf(0, "[error] %s: mtn_get_stat %s\n", __func__, strerror(errno));
     return(-EACCES);
@@ -337,9 +338,7 @@ static int mtnmount_read(const char *path, char *buf, size_t size, off_t offset,
 {
   int r;
   int l;
-  if(offset == 0){
-    lprintf(8, "[debug] %s: path=%s\n", __func__, path);
-  }
+  lprintf(offset ? 9 : 8, "[debug] %s: path=%s %u-%u (%u)\n", __func__, path, offset, offset + size, size);
   if(is_mtnstatus(path, NULL)){
     l = strlen((void *)(fi->fh));
     if(offset > l){
@@ -362,11 +361,7 @@ static int mtnmount_read(const char *path, char *buf, size_t size, off_t offset,
 static int mtnmount_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
   int r;
-  if(offset == 0){
-    lprintf(8, "[debug] %s: path=%s offset=%u size=%d\n", __func__, path, offset, size);
-  }else{
-    lprintf(9, "[debug] %s: path=%s offset=%u size=%d\n", __func__, path, offset, size);
-  }
+  lprintf(offset ? 9 : 8, "[debug] %s: path=%s %u-%u (%u)\n", __func__, path, offset, offset + size, size);
   if(is_mtnstatus(path, NULL)){
     fi->fh = (uint64_t)xrealloc((void *)(fi->fh), size);
     memcpy((void *)(fi->fh), buf, size);
