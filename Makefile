@@ -1,6 +1,6 @@
-all: mtnfs.c mtntool.c mtnfs.h libmtnfs fuse
+all: mtnd.c mtntool.c mtnfs.h libmtnfs fuse
 	gcc -DMODULE_NAME=\"mtntool\" -o mtntool mtntool.c common.c libmtnfs.a
-	gcc -DMODULE_NAME=\"mtnfs\"   -o mtnfs   mtnfs.c   common.c libmtnfs.a
+	gcc -DMODULE_NAME=\"mtnd\"    -o mtnd    mtnd.c    common.c libmtnfs.a
 	gcc -DMODULE_NAME=\"mtntest\" -o mtntest mtntest.c common.c libmtnfs.a
 
 fuse: mtnmount.c mtnfs.h 
@@ -18,6 +18,6 @@ sync:
 	ssh adc "cd LOCAL/mtnfs/;make"
 
 install:
-	rsync -a mtnfs    /usr/klab/sbin/mtnfs
+	rsync -a mtnd     /usr/klab/sbin/mtnd
 	rsync -a mtntool  /usr/klab/sbin/mtntool
 	rsync -a mtnmount /usr/klab/sbin/mtnmount

@@ -1827,20 +1827,41 @@ int mtn_read(int s, char *buf, size_t size, off_t offset)
   return(r);
 }
 
+int mtn_flush(int s)
+{
+  kdata sd;
+  kdata rd;
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.type = MTNCMD_RESULT;
+  sd.head.flag = 0;
+  if(kopt.sendsize[s] == 0){
+    return(0);
+  }
+  if(send_stream(s, kopt.sendbuff[s], kopt.sendsize[s]) == -1){
+    return(-1);
+  }
+  kopt.sendsize[s] = 0;
+  if(send_recv_stream(s, &sd, &rd) == -1){
+    lprintf(0, "[error] %s: send_recv_stream %s\n", __func__, strerror(errno));
+    return(-1);
+  }else if(rd.head.type == MTNRES_ERROR){
+    mtn_set_int(&errno, &rd, sizeof(errno));
+    lprintf(0, "[error] %s: MTNRES_ERROR %s\n", __func__, strerror(errno));
+    return(-1);
+  }
+  return(0);
+}
+
 int mtn_write(int s, char *buf, size_t size, off_t offset)
 {
   int r = 0;
   int    sz;
   kdata  sd;
-  kdata  se;
   kdata  rd;
   sz = size;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.type = MTNCMD_WRITE;
   sd.head.flag = 1;
-  se.head.ver  = PROTOCOL_VERSION;
-  se.head.type = MTNCMD_RESULT;
-  se.head.flag = 0;
   while(size){
     sd.head.size = 0;
     mtn_set_int(&offset, &sd, sizeof(offset));
@@ -1849,14 +1870,7 @@ int mtn_write(int s, char *buf, size_t size, off_t offset)
     buf    += r;
     offset += r;
     if(kopt.sendsize[s] + sd.head.size + sizeof(sd.head) > MTN_TCP_BUFFSIZE){
-      send_stream(s, kopt.sendbuff[s], kopt.sendsize[s]);
-      kopt.sendsize[s] = 0;
-      if(send_recv_stream(s, &se, &rd) == -1){
-        lprintf(0, "[error] %s: send_recv_stream %s\n", __func__, strerror(errno));
-        return(-errno);
-      }else if(rd.head.type == MTNRES_ERROR){
-        mtn_set_int(&errno, &rd, sizeof(errno));
-        lprintf(0, "[error] %s: MTNRES_ERROR %s\n", __func__, strerror(errno));
+      if(mtn_flush(s) == -1){
         return(-errno);
       }
     }
@@ -1872,7 +1886,6 @@ int mtn_close(int s)
 {
   int r = 0;
   kdata  sd;
-  kdata  se;
   kdata  rd;
 	lprintf(2, "[debug] %s:\n", __func__);
   if(s == 0){
@@ -1882,19 +1895,8 @@ int mtn_close(int s)
   sd.head.type = MTNCMD_CLOSE;
   sd.head.size = 0;
   sd.head.flag = 0;
-  se.head.ver  = PROTOCOL_VERSION;
-  se.head.type = MTNCMD_RESULT;
-  se.head.size = 0;
-  se.head.flag = 0;
-  if(kopt.sendsize[s]){
-    send_stream(s, kopt.sendbuff[s], kopt.sendsize[s]);
-    kopt.sendsize[s] = 0;
-    if(send_recv_stream(s, &se, &rd) == -1){
-      r = -errno;
-    }else if(rd.head.type == MTNRES_ERROR){
-      mtn_set_int(&errno, &rd, sizeof(errno));
-      r = -errno;
-    }
+  if(mtn_flush(s) == -1){
+    r = -errno;
   }
   if(send_recv_stream(s, &sd, &rd) == -1){
     r = -errno;
