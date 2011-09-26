@@ -353,9 +353,12 @@ static int mtnmount_read(const char *path, char *buf, size_t size, off_t offset,
   }else{
     pthread_mutex_lock(&(mtn_fmutex[fi->fh]));
     r = mtn_read((int)(fi->fh), buf, size, offset);
+    if(r < 0){
+      lprintf(0, "[error] %s: %s %s\n", __func__, strerror(-r), path);
+    }
     pthread_mutex_unlock(&(mtn_fmutex[fi->fh]));
   }
-  return r;
+  return(r);
 }
 
 static int mtnmount_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
@@ -369,6 +372,9 @@ static int mtnmount_write(const char *path, const char *buf, size_t size, off_t 
   }
   pthread_mutex_lock(&(mtn_fmutex[fi->fh]));
   r = mtn_write((int)(fi->fh), buf, size, offset); 
+  if(r < 0){
+    lprintf(0, "[error] %s: %s %s\n", __func__, strerror(-r), path);
+  }
   pthread_mutex_unlock(&(mtn_fmutex[fi->fh]));
   return r;
 }
@@ -384,8 +390,10 @@ static int mtnmount_statfs(const char *path, struct statvfs *sv)
   sv->f_bavail = 0;
   for(m=km;m;m=m->next){
     sv->f_blocks += (m->dsize * m->fsize) / sv->f_frsize;
-    sv->f_bfree  += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
-    sv->f_bavail += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
+    if(m->dfree * m->bsize > m->limit){
+      sv->f_bfree  += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
+      sv->f_bavail += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
+    }
   }
   del_members(km);
   return(0);
@@ -406,7 +414,7 @@ static int mtnmount_releasedir(const char *path, struct fuse_file_info *fi)
 static void *mtnmount_init(struct fuse_conn_info *conn)
 {
   lprintf(0, "========================\n");
-  lprintf(0, "%s start (ver %s)\n", MODULE_NAME, PACKAGE_VERSION);
+  lprintf(0, "%s start (ver %s)\n", MODULE_NAME, MTN_VERSION);
   lprintf(0, "MulticastIP: %s\n", kopt.mcast_addr);
   lprintf(0, "PortNumber : %d\n", kopt.mcast_port);
   lprintf(0, "DebugLevel : %d\n", kopt.debuglevel);
@@ -581,10 +589,11 @@ static int mtnmount_opt_parse(void *data, const char *arg, int key, struct fuse_
     return fuse_opt_add_arg(outargs, "-ho");
   }
   if(key == 2){
-    fprintf(stderr, "%s version: %s\n", MODULE_NAME, PACKAGE_VERSION);
+    fprintf(stderr, "%s version: %s\n", MODULE_NAME, MTN_VERSION);
   }
   if(key == 3){
-    kopt.daemonize = 0;
+    kopt.daemonize  = 0;
+    kopt.use_syslog = 0;
   }
   return(1);
 }
@@ -595,7 +604,8 @@ int main(int argc, char *argv[])
   struct cmdoption opts;
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 
-  mtn_init_option();
+  mtn_init(MODULE_NAME);
+  kopt.use_syslog = 1;
   memset(&opts, 0, sizeof(opts));
   fuse_opt_parse(&args, &opts, mtnmount_opts, mtnmount_opt_parse);
   if(opts.port){
