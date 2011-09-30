@@ -16,7 +16,10 @@
 #include <time.h>
 #include <pwd.h>
 #include <grp.h>
-#include "mtnfs.h"
+#include <mtn.h>
+#include "mtntool.h"
+
+MTN *mtn;
 
 void version()
 {
@@ -54,7 +57,7 @@ int mtntool_list(char *path)
   struct tm     *tm;
   struct passwd *pw;
   struct group  *gr;
-  kstat *kst = mtn_list(path);
+  MTNSTAT *kst = mtn_list(mtn, path);
   sprintf(field[0], "%%s: %%s ");
   sprintf(field[1], "%%s "     );
   sprintf(field[2], "%%s "     );
@@ -92,14 +95,14 @@ int mtntool_set(char *save_path, char *file_path)
       return(-1);
     }
   }
-  mtn_set(f, save_path);
+  mtn_set(mtn, f, save_path);
   if(f){
     close(f);
   }
   return(0); 
 }
 
-int mtntool_get_open(char *path, kstat *st)
+int mtntool_get_open(char *path, MTNSTAT *st)
 {
   int f;
   if(strcmp("-", path) == 0){
@@ -116,14 +119,14 @@ int mtntool_get_open(char *path, kstat *st)
 int mtntool_get(char *path, char *file)
 {
   int f = 0;
-  kstat *st;
-  st = mtn_stat(path);
+  MTNSTAT *st;
+  st = mtn_stat(mtn, path);
   f = mtntool_get_open(file, st);
   if(f == -1){
     printf("error: %s\n", __func__);
     return(1);
   }
-  mtn_get(f, path);
+  mtn_get(mtn, f, path);
   if(f){
     close(f);
   }
@@ -147,7 +150,7 @@ int main(int argc, char *argv[])
   int  r;
   char local_path[PATH_MAX] ={0};
   char remote_path[PATH_MAX]={0};
-  mtn_init(MODULE_NAME);
+  mtn = mtn_init(MODULE_NAME);
   while((r = getopt_long(argc, argv, "f:s:g:l:hviC", opts, NULL)) != -1){
     switch(r){
       case 'h':
