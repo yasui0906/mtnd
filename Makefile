@@ -1,4 +1,4 @@
-all: lib mtnd mtnfs tool test
+all: lib mtnd mtnfs tool exec test
 
 lib: libmtn.c libmtn.h
 	gcc -c -Wall libmtn.c
@@ -12,6 +12,9 @@ mtnfs: mtnfs.c lib
 
 tool: mtntool.c lib
 	gcc -DMODULE_NAME=\"mtntool\" -o mtntool -I. mtntool.c libmtn.a
+
+exec: mtnexec.c mtnexec.h lib
+	gcc -DMODULE_NAME=\"mtnexec\" -o mtnexec -I. mtnexec.c libmtn.a
 
 test: mtntest.c mtnd fuse
 	gcc -DMODULE_NAME=\"mtntest\" -o mtntest -I. mtntest.c libmtn.a

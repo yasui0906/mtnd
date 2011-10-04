@@ -75,7 +75,7 @@ int mtntool_list(char *path)
       sprintf(gname, "%d", kst->stat.st_gid);
     }
     get_mode_string(m, kst->stat.st_mode);
-    printf(field[0], kst->member->host, m);
+    printf(field[0], kst->svr->host, m);
     printf(field[1], pname);
     printf(field[2], gname);
     printf(field[3], kst->stat.st_size);

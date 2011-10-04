@@ -838,8 +838,8 @@ MTNSTAT *delstat(MTNSTAT *kst)
     xfree(kst->name);
     kst->name = NULL;
   }
-  clrsvr(kst->member);
-  kst->member = NULL;
+  clrsvr(kst->svr);
+  kst->svr = NULL;
   xfree(kst);
   setcount(0, -1, 0);
 	return(r);
@@ -852,7 +852,7 @@ void clrstat(MTNSTAT *kst)
 	}
 }
 
-MTNSTAT *mkstat(MTNSVR *member, MTNADDR *addr, MTNDATA *data)
+MTNSTAT *mkstat(MTNSVR *svr, MTNADDR *addr, MTNDATA *data)
 {
   MTNSTAT *kst = NULL;
   int len = mtn_get_string(NULL, data);
@@ -866,8 +866,8 @@ MTNSTAT *mkstat(MTNSVR *member, MTNADDR *addr, MTNDATA *data)
   kst->name = xrealloc(kst->name, len);
   mtn_get_string(kst->name,  data);
   mtn_get_stat(&(kst->stat), data);
-  kst->member = cpsvr(member);
-  if((kst->next = mkstat(member, addr, data))){
+  kst->svr = cpsvr(svr);
+  if((kst->next = mkstat(svr, addr, data))){
     kst->next->prev = kst;
   }
   return kst;
@@ -887,9 +887,9 @@ MTNSTAT *mgstat(MTNSTAT *krt, MTNSTAT *kst)
       if(strcmp(rt->name, st->name) == 0){
         if(rt->stat.st_mtime < st->stat.st_mtime){
           memcpy(&(rt->stat), &(st->stat), sizeof(struct stat));
-          clrsvr(rt->member);
-          rt->member = st->member;
-          st->member = NULL;
+          clrsvr(rt->svr);
+          rt->svr = st->svr;
+          st->svr = NULL;
         }
         if(st == kst){
           kst = (st = delstat(st));
@@ -918,7 +918,7 @@ MTNSTAT *cpstat(MTNSTAT *kst)
   while(kst){
     ks = newstat(kst->name);
     memcpy(&(ks->stat), &(kst->stat), sizeof(struct stat));
-    ks->member = cpsvr(kst->member);
+    ks->svr = cpsvr(kst->svr);
     if((ks->next = kr)){
       kr->prev = ks;
     }
@@ -1306,14 +1306,14 @@ MTNSVR *mtn_info(MTN *mtn)
 {
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   MTNDATA data;
-  MTNSVR *mb;
-  MTNSVR *members = get_members(mtn);
+  MTNSVR  *svr;
+  MTNSVR  *members = get_members(mtn);
   data.head.type  = MTNCMD_INFO;
   data.head.size  = 0;
   data.head.flag  = 0;
   mtn_process(mtn, members, &data, (MTNPROCFUNC)mtn_info_process);
-  for(mb=members;mb;mb=mb->next){
-    mb->mark = 0;
+  for(svr=members;svr;svr=svr->next){
+    svr->mark = 0;
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
   return(members);
@@ -1419,8 +1419,8 @@ MTNSTAT *mtn_find(MTN *mtn, const char *path, int create_flag)
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
   MTNSTAT *kst;
   MTNDATA data;
-  MTNSVR *member;
-  MTNSVR *members = mtn_info(mtn);
+  MTNSVR  *svr;
+  MTNSVR  *members = mtn_info(mtn);
   data.option      = NULL;
   data.head.type   = MTNCMD_LIST;
   data.head.size   = 0;
@@ -1430,9 +1430,9 @@ MTNSTAT *mtn_find(MTN *mtn, const char *path, int create_flag)
   kst = data.option;
   if(kst == NULL){
     if(create_flag){
-      if((member = mtn_choose(mtn, path))){
+      if((svr = mtn_choose(mtn, path))){
         kst = newstat(path);
-        kst->member = member;
+        kst->svr = svr;
       }
     }
   }
@@ -1653,7 +1653,7 @@ int mtn_utime(MTN *mtn, const char *path, time_t act, time_t mod)
 //-------------------------------------------------------------------
 // TCP
 //-------------------------------------------------------------------
-static int mtn_con(MTN *mtn, MTNSVR *svr, uid_t uid, gid_t gid)
+static int mtn_connect(MTN *mtn, MTNSVR *svr, uid_t uid, gid_t gid)
 {
   int s;
   MTNDATA sd;
@@ -1691,42 +1691,136 @@ static int mtn_con(MTN *mtn, MTNSVR *svr, uid_t uid, gid_t gid)
   return(s);
 }
 
-static int mtn_connect(MTN *mtn, const char *path, int create_flag, MTNSTAT *cst)
+static MTNSVR *mtn_exec_select(MTN *mtn)
 {
-  int s;
-  MTNSTAT *st;
-  uint64_t dfree;
-  char ipstr[64];
+  MTNSVR *sv;
+  sv = mtn_info(mtn);
+  return(sv);
+}
+
+int mtn_exec_epoll(MTN *mtn, int s, int f)
+{
+  struct epoll_event ev;
+  int e = epoll_create(2);
+  ev.data.fd = s;
+  ev.events  = EPOLLIN;
+  if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
+    close(e);
+    return(-1);
+  }
+  ev.data.fd = f;
+  ev.events  = EPOLLIN;
+  if(epoll_ctl(e, EPOLL_CTL_ADD, f, &ev) == -1){
+    close(e);
+    return(-1);
+  }
+  return(e);
+}
+
+int mtn_exec_wait(MTN *mtn, int s, int fi, int fo)
+{
+  int r;
+  int e;
+  int rsize;
+  int ssize;
+  char *ptr;
+  char buff[8192];
+  struct epoll_event ev[2];
+
+  e = mtn_exec_epoll(mtn, s, fi);
+  if(e == -1){
+    close(s);
+    return(-1);
+  }
+  while(is_loop){
+    r = epoll_wait(e, ev, 2, 1000);
+    if(r == 0){
+      continue;
+    }
+    if(r == -1){
+      if(errno != EINTR){
+        mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+      }
+      continue;
+    }
+    while(r--){
+      if(ev[r].data.fd == s){
+        rsize = recv(s, buff, sizeof(buff), 0);
+        if(rsize == 0){
+          close(e);
+          close(s);
+          return(0);
+        }else{
+          ptr = buff;
+          while(rsize){
+            ssize = write(fo, ptr, rsize);
+            ptr   += ssize;
+            rsize -= ssize;
+          } 
+        }
+      }else{
+        rsize = read(fi, buff, sizeof(buff));
+      }
+    }
+  }
+  close(e);
+  close(s);
+  return(0);
+}
+
+int mtn_exec(MTN *mtn, MTNEXEC *exe)
+{
+  MTNDATA sd;
+  MTNDATA rd;
+  MTNSVR *sv;
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
-  st = mtn_find(mtn, path, create_flag);
-  if(st == NULL){
+  sv = mtn_exec_select(mtn);
+  if(sv == NULL){
     mtnlogger(mtn, 0, "[error] %s: node not found\n", __func__);
     errno = EACCES;
     return(-1);
   }
-  s = mtn_con(mtn, st->member, cst->stat.st_uid, cst->stat.st_gid);
+  int s = mtn_connect(mtn, sv, exe->uid, exe->gid);
+  clrsvr(sv);
   if(s == -1){
-    v4addr(&(st->member->addr), ipstr, sizeof(ipstr));
-    mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), ipstr);
-  }else{
-    dfree = st->member->dfree * st->member->bsize / 1024 / 1024;
-    mtnlogger(mtn, 2, "[debug] %s: %s %s (%lluM free) PATH=%s\n", __func__, st->member->host, ipstr, dfree, path);
+    return(-1);
   }
-  clrstat(st);
-  return(s);
-}
-
-int mtn_exec(MTN *mtn, const char *cmd, uid_t uid, gid_t gid, int in, int out)
-{
-  return(0);
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.flag = 0;
+  sd.head.type = MTNCMD_EXEC;
+  mtn_set_string(exe->cmd, &sd);
+  if(send_data_stream(mtn, s, &sd) == -1){
+    close(s);
+    return(-1);
+  }
+  if(recv_data_stream(mtn, s, &rd) == -1){
+    close(s);
+    return(-1);
+  }
+  if(rd.head.type == MTNCMD_ERROR){
+    mtn_get_int(&errno, &rd, sizeof(errno));
+    close(s);
+    return(-1);
+  }
+  return(mtn_exec_wait(mtn, s, exe->fi, exe->fo));
 }
 
 int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
 {
+  MTNDATA  sd;
+  MTNDATA  rd;
+  MTNSTAT *fs;
+
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
-  MTNDATA sd;
-  MTNDATA rd;
-  int s = mtn_connect(mtn, path, ((flags & O_CREAT) != 0), st);
+  fs = mtn_find(mtn, path, ((flags & O_CREAT) != 0));
+  if(fs == NULL){
+    mtnlogger(mtn, 0, "[error] %s: node not found\n", __func__);
+    errno = EACCES;
+    return(-1);
+  }
+  int s = mtn_connect(mtn, fs->svr, st->stat.st_uid, st->stat.st_gid);
+  clrstat(fs);
   if(s == -1){
     return(-1);
   }
@@ -2343,5 +2437,43 @@ int cmpaddr(MTNADDR *a1, MTNADDR *a2)
     return(1);
   }
   return(0);
+}
+
+char *newstr(char *str)
+{
+  char *nstr;
+  if(!str){
+    return(NULL);
+  }
+  nstr = xmalloc(strlen(str) + 1);
+  strcpy(nstr, str);
+  return(nstr);
+}
+
+char *modstr(char *str, char *n)
+{
+  if(!n){
+    xfree(str);
+    return(NULL);
+  }
+  str = xrealloc(str, strlen(n) + 1);
+  strcpy(str, n);
+  return(str);
+}
+
+char *catstr(char *str1, char *str2)
+{
+  int len = 1;
+  len += strlen(str1);
+  len += strlen(str2);
+  str1 = xrealloc(str1, len);
+  strcat(str1, str2);
+  return(str1);
+}
+
+char *clrstr(char *str)
+{
+  xfree(str);
+  return(NULL);
 }
 

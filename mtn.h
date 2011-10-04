@@ -59,8 +59,17 @@ typedef struct mtnstat
   struct mtnstat *next;
   struct stat     stat;
   char           *name;
-  MTNSVR       *member;
+  MTNSVR          *svr;
 } MTNSTAT;
+
+typedef struct mtnexec
+{
+  char *cmd;
+  uid_t uid;
+  gid_t gid;
+  int    fi;
+  int    fo;
+} MTNEXEC;
 
 typedef struct mtndir
 {
@@ -71,6 +80,14 @@ typedef struct mtndir
   uint32_t       flag;
   char path[PATH_MAX];
 } MTNDIR;
+
+typedef struct mtnjob
+{
+  pid_t   pid;
+  int    sock;
+  int    pipe;
+  MTNSVR *svr;
+} MTNJOB; 
 
 struct mtnstatus
 {
@@ -172,6 +189,10 @@ MTNSVR  *cpsvr(MTNSVR *svr);
 MTNSVR  *getsvr(MTNSVR *svr, MTNADDR *addr);
 MTNSVR  *delsvr(MTNSVR *svr);
 void     clrsvr(MTNSVR *svr);
+
+char *newstr(char *str);
+char *modstr(char *str, char *n);
+char *clrstr(char *str);
 
 size_t set_mtnstatus_members(MTN *mtn);
 size_t set_mtnstatus_debuginfo(MTN *mtn);
