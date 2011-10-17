@@ -35,6 +35,9 @@
 #define MTNCMD_RESULT   26
 #define MTNCMD_CONNECT  27
 #define MTNCMD_EXEC     28
+#define MTNCMD_STDIN    29
+#define MTNCMD_STDOUT   30
+#define MTNCMD_STDERR   31
 #define MTNCMD_ERROR    97
 #define MTNCMD_SUCCESS  98
 #define MTNCMD_MAX      99
@@ -79,6 +82,7 @@ typedef struct mtntask
   int     fd;
   int     con;
   int     res;
+  int  std[3];
   DIR    *dir;
   uint8_t type;
   uint8_t fin;
@@ -110,6 +114,7 @@ int mtn_get_stat(struct stat *st, MTNDATA *kd);
 int mtn_set_string(char *str, MTNDATA *kd);
 int mtn_set_int(void *val, MTNDATA *kd, int size);
 int mtn_set_stat(struct stat *st, MTNDATA *kd);
+int mtn_set_data(void *buff, MTNDATA *kd, size_t size);
 uint32_t get_members_count(MTNSVR *mb);
 int get_meminfo(meminfo *m);
 int malloccnt(void);
@@ -117,6 +122,7 @@ int send_dgram(MTN *mtn, int s, MTNDATA *data, MTNADDR *addr);
 int recv_dgram(MTN *mtn, int s, MTNDATA *data, struct sockaddr *addr, socklen_t *alen);
 int send_data_stream(MTN *mtn, int s, MTNDATA *data);
 int recv_data_stream(MTN *mtn, int s, MTNDATA *kd);
+int send_recv_stream(MTN *mtn, int s, MTNDATA *sd, MTNDATA *rd);
 
 char *v4addr(MTNADDR *addr, char *buff, socklen_t size);
 int v4port(MTNADDR *addr);

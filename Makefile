@@ -14,13 +14,13 @@ tool: mtntool.c lib
 	gcc -DMODULE_NAME=\"mtntool\" -o mtntool -I. mtntool.c libmtn.a
 
 exec: mtnexec.c mtnexec.h lib
-	gcc -DMODULE_NAME=\"mtnexec\" -o mtnexec -I. mtnexec.c libmtn.a
+	gcc -DMODULE_NAME=\"mtnexec\" -o mtnexec -Wall -I. mtnexec.c libmtn.a
 
 test: mtntest.c mtnd fuse
 	gcc -DMODULE_NAME=\"mtntest\" -o mtntest -I. mtntest.c libmtn.a
 
 clean:
-	rm -f libmtn.a mtnd mtnfs mtntool mtntest *.o
+	rm -f libmtn.a mtnd mtnfs mtntool mtnexec mtntest *.o
 
 sync:
 	rsync -a *.c *.h Makefile adc:LOCAL/mtnfs/

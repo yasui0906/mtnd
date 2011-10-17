@@ -1698,42 +1698,30 @@ static MTNSVR *mtn_exec_select(MTN *mtn)
   return(sv);
 }
 
-int mtn_exec_epoll(MTN *mtn, int s, int f)
-{
-  struct epoll_event ev;
-  int e = epoll_create(2);
-  ev.data.fd = s;
-  ev.events  = EPOLLIN;
-  if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
-    close(e);
-    return(-1);
-  }
-  ev.data.fd = f;
-  ev.events  = EPOLLIN;
-  if(epoll_ctl(e, EPOLL_CTL_ADD, f, &ev) == -1){
-    close(e);
-    return(-1);
-  }
-  return(e);
-}
-
-int mtn_exec_wait(MTN *mtn, int s, int fi, int fo)
+int mtn_exec_wait(MTN *mtn, MTNJOB *job)
 {
   int r;
-  int e;
   int rsize;
   int ssize;
-  char *ptr;
-  char buff[8192];
-  struct epoll_event ev[2];
+  char buff[MTN_MAX_DATASIZE];
+  struct epoll_event ev;
+  MTNDATA sd;
+  MTNDATA rd;
 
-  e = mtn_exec_epoll(mtn, s, fi);
-  if(e == -1){
-    close(s);
+  job->efd = epoll_create(1);
+  if(job->efd == -1){
+    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
+
+  ev.data.fd = job->con;
+  ev.events  = EPOLLIN;
+  if(epoll_ctl(job->efd, EPOLL_CTL_ADD, job->con, &ev) == -1){
+    return(-1);
+  }
+
   while(is_loop){
-    r = epoll_wait(e, ev, 2, 1000);
+    r = epoll_wait(job->efd, &ev, 1, 1000);
     if(r == 0){
       continue;
     }
@@ -1743,67 +1731,88 @@ int mtn_exec_wait(MTN *mtn, int s, int fi, int fo)
       }
       continue;
     }
-    while(r--){
-      if(ev[r].data.fd == s){
-        rsize = recv(s, buff, sizeof(buff), 0);
-        if(rsize == 0){
-          close(e);
-          close(s);
-          return(0);
-        }else{
-          ptr = buff;
-          while(rsize){
-            ssize = write(fo, ptr, rsize);
-            ptr   += ssize;
-            rsize -= ssize;
-          } 
-        }
-      }else{
-        rsize = read(fi, buff, sizeof(buff));
+    if(ev.data.fd == job->con){
+      if((r = recv_data_stream(mtn, job->con, &rd)) == 1){
+        return(0);
+      }
+      if(r == -1){
+        continue;
+      }
+      switch(rd.head.type){
+        case MTNCMD_STDIN:
+          sd.head.ver  = PROTOCOL_VERSION;
+          sd.head.size = 0;
+          sd.head.flag = 0;
+          sd.head.type = MTNCMD_STDIN;
+          if(job->in){
+            rsize = read(job->in, buff, sizeof(buff));
+            if(rsize > 0){
+              mtn_set_data(buff, &sd, rsize);
+            }else{
+              close(job->in);
+              job->in = 0;
+              if(rsize == -1){
+                sprintf(buff, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[0]);
+                write(job->err, buff, strlen(buff));
+              }
+            }
+          }
+          send_data_stream(mtn, job->con, &sd);
+          break;
+        case MTNCMD_STDOUT:
+          ssize = 0;
+          while(ssize < rd.head.size){
+            ssize += write(job->out, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+          }
+          break;
+        case MTNCMD_STDERR:
+          ssize = 0;
+          while(ssize < rd.head.size){
+            ssize += write(job->err, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+          }
+          break;
       }
     }
   }
-  close(e);
-  close(s);
   return(0);
 }
 
-int mtn_exec(MTN *mtn, MTNEXEC *exe)
+int mtn_exec(MTN *mtn, MTNJOB *job)
 {
   MTNDATA sd;
   MTNDATA rd;
   MTNSVR *sv;
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
-  sv = mtn_exec_select(mtn);
+  sv = job->svr ? job->svr : mtn_exec_select(mtn);
   if(sv == NULL){
     mtnlogger(mtn, 0, "[error] %s: node not found\n", __func__);
     errno = EACCES;
     return(-1);
   }
-  int s = mtn_connect(mtn, sv, exe->uid, exe->gid);
+  job->con = mtn_connect(mtn, sv, job->uid, job->gid);
   clrsvr(sv);
-  if(s == -1){
+  if(job->con == -1){
     return(-1);
   }
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_EXEC;
-  mtn_set_string(exe->cmd, &sd);
-  if(send_data_stream(mtn, s, &sd) == -1){
-    close(s);
-    return(-1);
-  }
-  if(recv_data_stream(mtn, s, &rd) == -1){
-    close(s);
+
+  ARG arg = fullargs(job->args, job->argl);
+  STR cmd = joinarg(arg);
+  mtn_set_string(cmd, &sd);
+  clrarg(arg);
+  clrstr(cmd);
+
+  if(send_recv_stream(mtn, job->con, &sd, &rd) == -1){
     return(-1);
   }
   if(rd.head.type == MTNCMD_ERROR){
     mtn_get_int(&errno, &rd, sizeof(errno));
-    close(s);
     return(-1);
   }
-  return(mtn_exec_wait(mtn, s, exe->fi, exe->fo));
+  return(mtn_exec_wait(mtn, job));
 }
 
 int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
@@ -2263,7 +2272,7 @@ void free_mtnstatus_loglevel(char *buff)
   xfree(buff);
 }
 
-void mtnprintd(const char *func, char *fmt, ...)
+void mtndebug(const char *func, char *fmt, ...)
 {
   va_list arg;
   struct timeval tv;
@@ -2274,6 +2283,14 @@ void mtnprintd(const char *func, char *fmt, ...)
   b[sizeof(b) - 1] = 0;
   gettimeofday(&tv, NULL);
   fprintf(stderr, "%02u.%06u [%05u] [debug] %s: %s", (uint32_t)(tv.tv_sec % 60), (uint32_t)(tv.tv_usec), (uint32_t)(syscall(SYS_gettid)), func, b);
+}
+
+void mtndumparg(const char *func, ARG arg)
+{
+  int i;
+  for(i=0;arg[i];i++){
+    mtndebug(func, "ARG[%d]: %s\n", i, arg[i]);
+  }
 }
 
 void mtnlogger(MTN *mtn, int l, char *fmt, ...)
@@ -2439,7 +2456,7 @@ int cmpaddr(MTNADDR *a1, MTNADDR *a2)
   return(0);
 }
 
-char *newstr(char *str)
+STR newstr(char *str)
 {
   char *nstr;
   if(!str){
@@ -2450,7 +2467,7 @@ char *newstr(char *str)
   return(nstr);
 }
 
-char *modstr(char *str, char *n)
+STR modstr(STR str, char *n)
 {
   if(!n){
     xfree(str);
@@ -2461,7 +2478,7 @@ char *modstr(char *str, char *n)
   return(str);
 }
 
-char *catstr(char *str1, char *str2)
+STR catstr(STR str1, STR str2)
 {
   int len = 1;
   len += strlen(str1);
@@ -2471,9 +2488,217 @@ char *catstr(char *str1, char *str2)
   return(str1);
 }
 
-char *clrstr(char *str)
+STR clrstr(STR str)
 {
   xfree(str);
   return(NULL);
+}
+
+STR dotstr(STR str)
+{
+  char *p;
+  char buff[PATH_MAX];
+  strcpy(buff, str);
+  p = buff + strlen(buff);
+  while(p > buff){
+    if(*p == '.'){
+      *p = 0;
+      break;
+    }
+    p--;
+  }
+  return(modstr(str, buff));
+}
+
+STR basestr(STR str)
+{
+  char buff[PATH_MAX];
+  strcpy(buff, str);
+  return(modstr(str, basename(buff)));
+}
+
+ARG splitstr(STR str, STR delim)
+{
+  char *save = NULL;
+  STR ptr = NULL;
+  STR buf = newstr(str);
+  ARG arg = newarg(0);
+  ptr = strtok_r(buf, delim, &save);
+  while(ptr){
+    arg = addarg(arg, ptr);
+    ptr = strtok_r(NULL, delim, &save);
+  }
+  clrstr(buf);
+  return(arg);
+}
+
+ARG newarg(int c)
+{
+  return(calloc(c + 1, sizeof(STR)));
+}
+
+ARG addarg(ARG arg, STR str)
+{
+  int i = 0;
+  if(!arg){
+    arg = newarg(1);
+    arg[0] = newstr(str);
+  }else{
+    for(i=0;arg[i];i++);
+    arg = realloc(arg, sizeof(STR) * (i + 2));
+    arg[i + 0] = newstr(str);
+    arg[i + 1] = NULL;
+  }
+  return(arg);
+}
+
+void clrarg(ARG args)
+{
+  int i;
+  if(!args){
+    return;
+  }
+  for(i=0;args[i];i++){
+    clrstr(args[i]);
+    args[i] = NULL;
+  }
+  free(args);
+}
+
+STR joinarg(ARG args){
+  int i;
+  STR arg; 
+  if(!args){
+    return(NULL);
+  }
+  if((arg = newstr(args[0]))){
+    for(i=1;args[i];i++){
+      arg = catstr(arg, " ");
+      arg = catstr(arg, args[i]);
+    }
+  }
+  return(arg);
+}
+
+ARG copyarg(ARG args)
+{
+  int c;
+  ARG n;
+  if(!args){
+    return(NULL);
+  }
+  for(c=0;args[c];c++);
+  if((n = newarg(c))){
+    for(c=0;args[c];c++){
+      n[c] = newstr(args[c]);
+    }
+  }
+  return(n);
+}
+
+STR convarg(STR arg, ARG argl, int *conv)
+{
+  int  n;
+  int  m;
+  STR  s1,s2,s3;
+  char *p1, *p2, *pe;
+  char buff[PATH_MAX];
+
+  if(!argl){
+    return(arg);
+  }
+
+  for(m=0;argl[m];m++);
+  strcpy(buff, arg);
+  p1 = buff;
+  pe = buff + strlen(buff);
+
+  while(p1 < pe){
+    if(*p1 == '{'){
+      *p1 = 0;
+      break;
+    }
+    p1++;
+  }
+  if(p1 == pe){
+    return(arg);
+  }
+
+  p2 = p1 + 1;
+  while(p2 < pe){
+    if(*p2 == '}'){
+      *p2 = 0;
+      break;
+    }
+    p2++;
+  }
+  if(p2 == pe){
+    return(arg);
+  }
+
+  p1++;
+  p2++;
+  if(conv){
+    *conv = 1;
+  }
+  s1 = newstr(buff);
+  s3 = newstr(p2);
+  if((n = atoi(p1))){
+    if(n > m){
+      s2 = newstr("");
+    }else{
+      s2 = newstr(argl[n-1]);
+    }
+  }else{
+    s2 = joinarg(argl);
+  }
+  while((*p1 >= '0') && (*p1 <= '9')){
+    p1++;
+  }
+  while(*p1){
+    switch(*p1){
+      case '/':
+        s2 = basestr(s2);
+        break;
+      case '.':
+        s2 = dotstr(s2);
+        break;
+    }
+    p1++;
+  }
+
+  arg = modstr(arg, s1);
+  arg = catstr(arg, s2);
+  arg = catstr(arg, s3);
+  clrstr(s1);
+  clrstr(s2);
+  clrstr(s3);
+  return(convarg(arg, argl, NULL));
+}
+
+ARG fullargs(ARG args, ARG argl)
+{
+  int  i, j, m;
+  int  conv = 0;
+  STR *full = NULL;
+  if(args){
+    for(i=0;args[i];i++){
+      full = realloc(full, sizeof(STR) * (i + 1));
+      full[i] = convarg(newstr(args[i]), argl, &conv);
+    }
+    full[i] = NULL;
+  }
+  
+  if(argl){
+    for(m=0;argl[m];m++);
+    if(!conv && m){
+      full = realloc(full, sizeof(STR) * (i + m));
+      for(j=0;argl[j];j++){
+        full[i++] = newstr(argl[j]);
+      }
+    }
+    full[i] = NULL;
+  }
+  return(full);
 }
 

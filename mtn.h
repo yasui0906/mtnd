@@ -13,11 +13,15 @@
 #include <netinet/in.h>
 
 #ifdef MTN_DEBUG
-#define MTNPRINTD(...) mtnprintd(__func__, __VA_ARGS__)
+#define MTNDEBUG(...) mtndebug(__func__, __VA_ARGS__)
+#define MTNDUMPARG(a) mtndumparg(__func__, a)
 #else
-#define MTNPRINTD(...)
+#define MTNDEBUG(...)
+#define MTNDUMPARG(a)
 #endif
 
+typedef char *STR;
+typedef STR  *ARG;
 typedef enum {
   MTNLOG_NOTUSE,
   MTNLOG_STDERR,
@@ -62,15 +66,6 @@ typedef struct mtnstat
   MTNSVR          *svr;
 } MTNSTAT;
 
-typedef struct mtnexec
-{
-  char *cmd;
-  uid_t uid;
-  gid_t gid;
-  int    fi;
-  int    fo;
-} MTNEXEC;
-
 typedef struct mtndir
 {
   struct mtndir *prev;
@@ -84,8 +79,18 @@ typedef struct mtndir
 typedef struct mtnjob
 {
   pid_t   pid;
-  int    sock;
-  int    pipe;
+  uid_t   uid;
+  gid_t   gid;
+  int     efd;
+  int     con;
+  int     rfd; // プロセス間通信用(親->子)
+  int     wfd; // プロセス間通信用(親<-子)
+  int      in; // stdinのファイルディスクリプタ
+  int     out; // stdoutのファイルディスクリプタ
+  int     err; // stderrのファイルディスクリプタ
+  ARG     std;
+  ARG    args;
+  ARG    argl;
   MTNSVR *svr;
 } MTNJOB; 
 
@@ -145,7 +150,7 @@ typedef struct mtn_context
 } MTN;
 
 void     mtnlogger(MTN *mtn, int l, char *fmt, ...);
-void     mtnprintd(const char *func, char *fmt, ...);
+void     mtndebug(const char *func, char *fmt, ...);
 
 MTN     *mtn_init(const char *name);
 void     mtn_destroy(MTN *mtn);
@@ -173,6 +178,7 @@ int mtn_close(MTN *mtn, int s);
 int mtn_read(MTN *mtn, int s, char *buf, size_t size, off_t offset);
 int mtn_write(MTN *mtn, int s, const char *buf, size_t size, off_t offset);
 int mtn_flush(MTN *mtn, int s);
+int mtn_exec(MTN *mtn, MTNJOB *job);
 
 MTNDIR  *newdir(const char *path);
 MTNDIR  *deldir(MTNDIR *md);
@@ -190,9 +196,19 @@ MTNSVR  *getsvr(MTNSVR *svr, MTNADDR *addr);
 MTNSVR  *delsvr(MTNSVR *svr);
 void     clrsvr(MTNSVR *svr);
 
-char *newstr(char *str);
-char *modstr(char *str, char *n);
-char *clrstr(char *str);
+STR newstr(char *str);
+STR modstr(STR str, char *n);
+STR clrstr(STR str);
+STR catstr(STR str1, STR str2);
+ARG splitstr(STR str, STR delim);
+
+ARG  newarg(int c);
+ARG  addarg(ARG arg, STR str);
+void clrarg(ARG args);
+STR  joinarg(ARG args);
+ARG  copyarg(ARG args);
+STR  convarg(STR arg, ARG argl, int *conv);
+ARG  fullargs(ARG args, ARG argl);
 
 size_t set_mtnstatus_members(MTN *mtn);
 size_t set_mtnstatus_debuginfo(MTN *mtn);
@@ -203,4 +219,7 @@ char *get_mtnstatus_loglevel(MTN *mtn);
 void free_mtnstatus_members(char *buff);
 void free_mtnstatus_debuginfo(char *buff);
 void free_mtnstatus_loglevel(char *buff);
+
+void mtndebug(const char *func, char *fmt, ...);
+void mtndumparg(const char *func, ARG arg);
 

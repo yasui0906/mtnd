@@ -954,8 +954,144 @@ void mtnd_child_connect(MTNTASK *kt)
 
 void mtnd_child_exec(MTNTASK *kt)
 {
-  mtnlogger(mtn, 0,"[debug] %s: START\n", __func__);
-  mtnlogger(mtn, 0,"[debug] %s: END\n", __func__);
+  int e;
+  int r;
+  pid_t pid;
+  int size;
+  int status;
+  int pp[3][2];
+  struct epoll_event ev;
+  char cmd[PATH_MAX];
+  char buff[MTN_MAX_DATASIZE];
+  mtn_get_string(cmd, &(kt->recv));
+  mtnlogger(mtn, 0, "[debug] %s: %s\n", __func__, cmd);
+
+  pipe(pp[0]);
+  pipe(pp[1]);
+  pipe(pp[2]);
+  pid = fork();
+  if(pid == -1){
+    close(pp[0][0]);
+    close(pp[0][1]);
+    close(pp[1][0]);
+    close(pp[1][1]);
+    close(pp[2][0]);
+    close(pp[2][1]);
+    kt->send.head.type = MTNCMD_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    return;
+  }
+  if(pid){
+    kt->std[0] = pp[0][1];
+    kt->std[1] = pp[1][0];
+    kt->std[2] = pp[2][0];
+    close(pp[0][0]);
+    close(pp[1][1]);
+    close(pp[2][1]);
+    e = epoll_create(3);
+    ev.data.fd = kt->std[0];
+    ev.events  = EPOLLOUT;
+    epoll_ctl(e, EPOLL_CTL_ADD, kt->std[0], &ev);
+    ev.data.fd = kt->std[1];
+    ev.events  = EPOLLIN;
+    epoll_ctl(e, EPOLL_CTL_ADD, kt->std[1], &ev);
+    ev.data.fd = kt->std[2];
+    ev.events  = EPOLLIN;
+    epoll_ctl(e, EPOLL_CTL_ADD, kt->std[2], &ev);
+
+    size = 0;
+    kt->recv.head.size = 0;
+    kt->send.head.size = 0;
+    kt->send.head.ver  = PROTOCOL_VERSION;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    send_data_stream(mtn, kt->con, &(kt->send));
+
+    while(is_loop && (kt->std[1] || kt->std[2])){
+      r = epoll_wait(e, &ev, 1, 1000);
+      if(r != 1){
+        continue;
+      }
+      if(ev.data.fd == kt->std[0]){
+        if(size < kt->recv.head.size){
+          r = write(kt->std[0], kt->recv.data.data + size, kt->recv.head.size - size);
+          if(r == -1){
+            mtnlogger(mtn, 0, "[error] %s: STDIN %s\n", __func__, strerror(errno));
+          }else{
+            size += r;
+          }
+        }else{
+          size = 0;
+          kt->send.head.size = 0;
+          kt->send.head.type = MTNCMD_STDIN;
+          send_recv_stream(mtn, kt->con, &(kt->send), &(kt->recv));
+          mtnlogger(mtn, 0, "[debug] %s: STDIN  FD=%d SIZE=%d\n", __func__, kt->std[0], kt->recv.head.size);
+          if(kt->recv.head.size == 0){
+            epoll_ctl(e, EPOLL_CTL_DEL, kt->std[0], NULL);
+            close(kt->std[0]);
+            kt->std[0] = 0;
+          }
+        }
+      }
+      if(ev.data.fd == kt->std[1]){
+        r = read(kt->std[1], buff, sizeof(buff));
+        mtnlogger(mtn, 0, "[debug] %s: STDOUT FD=%d R=%d\n", __func__, kt->std[1],r );
+        if(r > 0){
+          kt->send.head.type = MTNCMD_STDOUT;
+          kt->send.head.size = 0;
+          mtn_set_data(buff, &(kt->send), r);
+          send_data_stream(mtn, kt->con, &(kt->send));
+        }
+        if(r == 0){
+          epoll_ctl(e, EPOLL_CTL_DEL, kt->std[1], NULL);
+          close(kt->std[1]);
+          kt->std[1] = 0;
+        }
+      }
+      if(ev.data.fd == kt->std[2]){
+        r = read(kt->std[2], buff, sizeof(buff));
+        mtnlogger(mtn, 0, "[debug] %s: STDERR FD=%d R=%d\n", __func__, kt->std[2],r);
+        if(r > 0){
+          kt->send.head.type = MTNCMD_STDERR;
+          kt->send.head.size = 0;
+          mtn_set_data(buff, &(kt->send), r);
+          send_data_stream(mtn, kt->con, &(kt->send));
+        }
+        if(r == 0){
+          epoll_ctl(e, EPOLL_CTL_DEL, kt->std[2], NULL);
+          close(kt->std[2]);
+          kt->std[2] = 0;
+        }
+      }
+    }
+    while(waitpid(pid, &status, 0) != pid);
+    close(e);
+    if(kt->std[0]){
+      close(kt->std[0]);
+      kt->std[0] = 0;
+    }
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    mtnlogger(mtn, 0, "[debug] %s: return\n", __func__);
+    return;
+  }
+
+  //===== exec process =====
+  close(0);
+  close(1);
+  close(2);
+  close(pp[0][1]);
+  close(pp[1][0]);
+  close(pp[2][0]);
+  dup2(pp[0][0],0); // stfdin
+  dup2(pp[1][1],1); // stdout
+  dup2(pp[2][1],2); // stderr
+  status = system(cmd);
+  if(status == -1){
+    mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), cmd);
+    _exit(127);
+  }
+  _exit(WEXITSTATUS(status)); 
 }
 
 void mtnd_child_error(MTNTASK *kt)
@@ -1064,7 +1200,7 @@ void mtnd_loop(int e, int l)
   struct epoll_event ev[2];
   gettimeofday(&tv_health, NULL);
 
-  /*===== Main Loop =====*/
+  //===== Main Loop =====
   while(is_loop){
     waitpid(-1, NULL, WNOHANG);
     r = epoll_wait(e, ev, 2, 1000);
