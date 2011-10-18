@@ -13,14 +13,13 @@ typedef struct mtnexec_context
   int efd;
   int mode;
   int zero;
-  int stdout_direct;
-  int stderr_direct;
-  int pull;
-  ARG push;
+  int nobuf;
   STR group;
   STR stdin;
   STR stdout;
   STR stderr;
+  ARG getarg;
+  ARG putarg;
   MTNSVR *svr;
   MTNJOB *job;
   int arg_num;

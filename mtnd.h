@@ -8,4 +8,5 @@ typedef struct mtnd_context{
   char host[HOST_NAME_MAX];
   char pid[PATH_MAX];
   char cwd[PATH_MAX];
+  char ewd[PATH_MAX];
 } MTND;

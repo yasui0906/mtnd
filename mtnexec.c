@@ -35,22 +35,27 @@ void usage()
   printf("usage: %s [-M0|-M1|-M2|-A0|-A1] [OPTION] [command [initial-arguments]]\n", MODULE_NAME);
   printf("\n");
   printf("  MODE\n");
-  printf("   -M0          # local only (default)\n");
-  printf("   -M1          # use remote and local\n");
-  printf("   -M2          # use remote\n");
-  printf("   -A0          # do all servers\n");
-  printf("   -A1          # do all servers and local\n");
+  printf("   -M0                # local only (default)\n");
+  printf("   -M1                # use remote and local\n");
+  printf("   -M2                # use remote\n");
+  printf("   -A0                # do all servers\n");
+  printf("   -A1                # do all servers and local\n");
   printf("\n");
   printf("  OPTION\n");
-  printf("   -0           # \n");
-  printf("   -u           # \n");
-  printf("   -g group     # \n");
-  printf("   -j num       # \n");
-  printf("   -N num       # \n");
-  printf("   -m addr      # mcast addr(default:)\n");
-  printf("   -p port      # TCP/UDP port(default: 6000)\n");
-  printf("   -h           # help\n");
-  printf("   -v           # version\n");
+  printf("   -0                 # \n");
+  printf("   -u                 # \n");
+  printf("   -g group           # \n");
+  printf("   -j num             # \n");
+  printf("   -N num             # \n");
+  printf("   -m addr            # mcast addr(default:)\n");
+  printf("   -p port            # TCP/UDP port(default: 6000)\n");
+  printf("   -h                 # help\n");
+  printf("   -v                 # version\n");
+  printf("   --stdin=path       # \n");
+  printf("   --stdout=path      # \n");
+  printf("   --stderr=path      # \n");
+  printf("   --put=path,path,,, # \n");
+  printf("   --get=path,path,,, # \n");
   printf("\n");
 }
 
@@ -60,8 +65,10 @@ struct option *get_optlist()
       {"help",    0, NULL, 'h'},
       {"version", 0, NULL, 'v'},
       {"stdin",   1, NULL, 'I'},
-      {"push",    1, NULL, 'S'},
-      {"pull",    0, NULL, 'P'},
+      {"stdout",  1, NULL, 'O'},
+      {"stderr",  1, NULL, 'E'},
+      {"put",     1, NULL, 'P'},
+      {"get",     1, NULL, 'G'},
       {0, 0, 0, 0}
     };
   return(opt);
@@ -72,22 +79,23 @@ ARG stdname(MTNJOB *job)
   ARG std = newarg(3);
   char path[PATH_MAX];
   if(ctx->stdin){
-    std[0] = convarg(newstr(ctx->stdin), job->argl, NULL);
+    std[0] = convarg(newstr(ctx->stdin), job->argl, &(job->conv));
   }else{
     sprintf(path, "/dev/null");
     std[0] = newstr(path);
   }
   if(ctx->stdout){
-    std[1] = convarg(newstr(ctx->stdout), job->argl, NULL);
+    std[1] = convarg(newstr(ctx->stdout), job->argl, &(job->conv));
+  }else if(ctx->nobuf){
+    std[1] = newstr("");
   }else{
     sprintf(path, ".stdmtnexec.%d.out", job->pid);
     std[1] = newstr(path);
   }
   if(ctx->stderr){
-    std[2] = convarg(newstr(ctx->stderr), job->argl, NULL);
+    std[2] = convarg(newstr(ctx->stderr), job->argl, &(job->conv));
   }else{
-    sprintf(path, ".stdmtnexec.%d.err", job->pid);
-    std[2] = newstr(path);
+    std[2] = newstr("");
   }
   std[3] = NULL;
   return(std);
@@ -103,7 +111,7 @@ ARG parse(int argc, char *argv[])
     exit(0);
   }
   optind = 0;
-  while((r = getopt_long(argc, argv, "+hvI:S:PuM:A:j:N:m:p:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "+hvI:uM:A:j:N:m:p:", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -117,16 +125,24 @@ ARG parse(int argc, char *argv[])
         ctx->stdin = newstr(optarg);
         break;
 
-      case 'S':
-        ctx->push = splitstr(optarg, ",");
+      case 'O':
+        ctx->stdout = newstr(optarg);
+        break;
+
+      case 'E':
+        ctx->stderr = newstr(optarg);
         break;
 
       case 'P':
-        ctx->pull = 1;
+        ctx->putarg = splitstr(optarg, ",");
+        break;
+
+      case 'G':
+        ctx->getarg = splitstr(optarg, ",");
         break;
 
       case 'u':
-        ctx->stdout_direct = 1;
+        ctx->nobuf = 1;
         break;
 
       case 'M':
@@ -193,8 +209,6 @@ CTX *mtnexec_init()
 {
   CTX *c = calloc(1, sizeof(CTX));
   c->job_max = 1;
-  c->stdout_direct = 0;
-  c->stderr_direct = 1;
   c->arg_num = isatty(fileno(stdin)) ? 0 : 1;
   return(c);
 }
@@ -378,6 +392,8 @@ int jclose(MTNJOB *job)
     }
   }
   clrarg(job->std);
+  clrarg(job->putarg);
+  clrarg(job->getarg);
   clrarg(job->args);
   clrarg(job->argl);
   memset(job, 0, sizeof(MTNJOB));
@@ -397,7 +413,6 @@ MTNJOB *mtnexec_wait()
       job = ev.data.ptr;
       r = read(job->rfd, buff, sizeof(buff));
       if(r == 0){
-        epoll_ctl(ctx->efd, EPOLL_CTL_DEL, job->rfd, NULL);
         jclose(job);
         return(job);
       }
@@ -415,7 +430,7 @@ MTNJOB *mtnexec_wait()
 
 int mtnexec_fork(MTNJOB *job)
 {
-  pid_t pid;
+  int i;
   int rp[2];
   int wp[2];
 
@@ -432,8 +447,25 @@ int mtnexec_fork(MTNJOB *job)
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
-  pid = fork();
-  if(pid == -1){
+
+  job->std = stdname(job);
+  job->putarg = newarg(0);
+  job->getarg = newarg(0);
+
+  if(ctx->putarg){
+    for(i=0;ctx->putarg[i];i++){
+      job->putarg = addarg(job->putarg, ctx->putarg[i]);
+      convarg(job->putarg[i], job->argl, &(job->conv));
+    }
+  }
+  if(ctx->getarg){
+    for(i=0;ctx->getarg[i];i++){
+      job->getarg = addarg(job->getarg, ctx->getarg[i]);
+      convarg(job->getarg[i], job->argl, &(job->conv));
+    }
+  }
+  job->pid = fork();
+  if(job->pid == -1){
     close(rp[0]);
     close(rp[1]);
     close(wp[0]);
@@ -441,17 +473,14 @@ int mtnexec_fork(MTNJOB *job)
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
-  if(pid){
+  if(job->pid){
     close(rp[1]);
     close(wp[0]);
-    job->pid   = pid;
     job->rfd = rp[0];
     job->wfd = wp[1];
-    job->std   = stdname(job);
   }else{
     close(rp[0]);
     close(wp[1]);
-    job->pid   = 0;
     job->rfd = wp[0];
     job->wfd = rp[1];
   }
@@ -462,9 +491,11 @@ MTNJOB *copyjob(MTNJOB *dst, MTNJOB *src)
 {
   if(dst){
     memcpy(dst, src, sizeof(MTNJOB));
-    dst->std  = copyarg(src->std);
-    dst->args = copyarg(src->args);
-    dst->argl = copyarg(src->argl);
+    dst->std    = copyarg(src->std);
+    dst->args   = copyarg(src->args);
+    dst->argl   = copyarg(src->argl);
+    dst->putarg = copyarg(src->putarg);
+    dst->getarg = copyarg(src->getarg);
   }
   return(dst);
 }
@@ -482,14 +513,10 @@ int mtnexec_local(MTNJOB *job)
     ev.data.ptr = job;
     ev.events   = EPOLLIN;
     epoll_ctl(ctx->efd, EPOLL_CTL_ADD, job->rfd, &ev);
-    write(job->wfd, job->std[0], strlen(job->std[0]) + 1);
-    write(job->wfd, job->std[1], strlen(job->std[1]) + 1);
-    write(job->wfd, job->std[2], strlen(job->std[2]) + 1);
     return(0);
   }
 
   //===== child process =====
-  job->std = readarg(job->rfd, 3);
   job->pid = fork();
   if(job->pid == -1){
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
@@ -507,20 +534,25 @@ int mtnexec_local(MTNJOB *job)
   //===== exec process =====
   close(job->rfd);
   close(job->wfd);
-  if(job->std){
-    close(0);
-    open(job->std[0], O_RDONLY);
-    if(!ctx->stdout_direct){
-      close(1);
-      open(job->std[1], O_WRONLY | O_APPEND | O_CREAT, 0660);
-    }
-    if(!ctx->stderr_direct){
-      close(2);
-      open(job->std[2], O_WRONLY | O_APPEND | O_CREAT, 0660);
-    }
-  }
+  job->in = open(job->std[0], O_RDONLY);
+  dup2(job->in, 0);
+  close(job->in);
 
-  cmd = joinarg(fullargs(job->args, job->argl));
+  if(strlen(job->std[1])){
+    job->out = open(job->std[1], O_WRONLY | O_APPEND | O_CREAT, 0660);
+    dup2(job->out, 1);
+    close(job->out);
+  }
+  if(strlen(job->std[2])){
+    job->err = open(job->std[2], O_WRONLY | O_APPEND | O_CREAT, 0660);
+    dup2(job->err, 2);
+    close(job->err);
+  }
+  job->in  = 0;
+  job->out = 1;
+  job->err = 2;
+
+  cmd = joinarg(cmdargs(job));
   if(!cmd){
     mtnlogger(mtn, 0, "[error] %s: cmd is null\n", __func__);
     _exit(127);
@@ -535,7 +567,6 @@ int mtnexec_local(MTNJOB *job)
 
 int mtnexec_remote(MTNJOB *job)
 {
-  int f;
   int status = 0;
   struct epoll_event ev;
   job = copyjob(mtnexec_wait(), job);
@@ -546,9 +577,6 @@ int mtnexec_remote(MTNJOB *job)
     ev.data.ptr = job;
     ev.events   = EPOLLIN;
     epoll_ctl(ctx->efd, EPOLL_CTL_ADD, job->rfd, &ev);
-    write(job->wfd, job->std[0], strlen(job->std[0]) + 1);
-    write(job->wfd, job->std[1], strlen(job->std[1]) + 1);
-    write(job->wfd, job->std[2], strlen(job->std[2]) + 1);
     return(0);
   }
 
@@ -556,35 +584,30 @@ int mtnexec_remote(MTNJOB *job)
   job->in  = 0;
   job->out = 1;
   job->err = 2;
-  if((job->std = readarg(job->rfd, 3))){
-    if(strlen(job->std[0])){
-      f = open(job->std[0], O_RDONLY);
-      if(f == -1){
-        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[0]);
-        _exit(1);
-      }
-      job->in = f;
-    }
-    if(!ctx->stdout_direct){
-      f = open(job->std[1], O_WRONLY | O_APPEND | O_CREAT, 0660);
-      if(f == -1){
-        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[1]);
-        _exit(1);
-      }
-      job->out = f;
-    }
-    if(!ctx->stderr_direct){
-      f = open(job->std[2], O_WRONLY | O_APPEND | O_CREAT, 0660);
-      if(f == -1){
-        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[2]);
-        _exit(1);
-      }
-      job->err = f;
+  if(strlen(job->std[0])){
+    job->in = open(job->std[0], O_RDONLY);
+    if(job->in == -1){
+      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[0]);
+      _exit(1);
     }
   }
-  mtn_exec(mtn, job);
-  close(job->rfd);
-  close(job->wfd);
+  if(strlen(job->std[1])){
+    job->out = open(job->std[1], O_WRONLY | O_APPEND | O_CREAT, 0660);
+    if(job->out == -1){
+      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[1]);
+      _exit(1);
+    }
+  }
+  if(strlen(job->std[2])){
+    job->err = open(job->std[2], O_WRONLY | O_APPEND | O_CREAT, 0660);
+    if(job->err == -1){
+      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[2]);
+      _exit(1);
+    }
+  }
+  if(mtn_exec(mtn, job) == -1){
+    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+  }
   _exit(WEXITSTATUS(status)); 
 }
 

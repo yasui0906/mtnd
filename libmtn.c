@@ -1653,7 +1653,7 @@ int mtn_utime(MTN *mtn, const char *path, time_t act, time_t mod)
 //-------------------------------------------------------------------
 // TCP
 //-------------------------------------------------------------------
-static int mtn_connect(MTN *mtn, MTNSVR *svr, uid_t uid, gid_t gid)
+static int mtn_connect(MTN *mtn, MTNSVR *svr, uid_t uid, gid_t gid, int mode)
 {
   int s;
   MTNDATA sd;
@@ -1673,8 +1673,9 @@ static int mtn_connect(MTN *mtn, MTNSVR *svr, uid_t uid, gid_t gid)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_CONNECT;
-  mtn_set_int(&uid, &sd, sizeof(uid));
-  mtn_set_int(&gid, &sd, sizeof(gid));
+  mtn_set_int(&uid,  &sd, sizeof(uid));
+  mtn_set_int(&gid,  &sd, sizeof(gid));
+  mtn_set_int(&mode, &sd, sizeof(mode));
   if(send_data_stream(mtn, s, &sd) == -1){
     close(s);
     return(-1);
@@ -1696,6 +1697,49 @@ static MTNSVR *mtn_exec_select(MTN *mtn)
   MTNSVR *sv;
   sv = mtn_info(mtn);
   return(sv);
+}
+
+int mtn_exec_put(MTN *mtn, MTNJOB *job)
+{
+  int i;
+  int f;
+  MTNSTAT st;
+  if(!job->putarg){
+    return(0);
+  }
+  for(i=0;job->putarg[i];i++){
+    if(stat(job->putarg[i], &(st.stat)) == -1){
+      mtnlogger(mtn, 0, "[error] %s %s\n", strerror(errno), job->putarg[i]);
+      continue;
+    }
+    f = open(job->putarg[i], O_RDONLY);
+    if(f == -1){
+      mtnlogger(mtn, 0, "[error] %s %s\n", strerror(errno), job->putarg[i]);
+      continue;
+    }
+    mtn_open_file(mtn, job->con, job->putarg[i], O_WRONLY | O_CREAT , &st);
+    mtn_put_data(mtn, job->con, f);
+    close(f);
+  }
+  return(0);
+}
+
+int mtn_exec_get(MTN *mtn, MTNJOB *job)
+{
+  int i;
+  int f;
+  MTNSTAT st;
+  if(!job->getarg){
+    return(0);
+  }
+  for(i=0;job->getarg[i];i++){
+    mtn_open_file(mtn, job->con, job->getarg[i], O_RDONLY, &st);
+    mtn_fgetattr(mtn, job->con, &(st.stat));
+    f = creat(job->getarg[i], st.stat.st_mode);
+    mtn_get_data(mtn, job->con, f);
+    close(f);
+  }
+  return(0);
 }
 
 int mtn_exec_wait(MTN *mtn, MTNJOB *job)
@@ -1720,7 +1764,7 @@ int mtn_exec_wait(MTN *mtn, MTNJOB *job)
     return(-1);
   }
 
-  while(is_loop){
+  while(is_loop && !job->fin){
     r = epoll_wait(job->efd, &ev, 1, 1000);
     if(r == 0){
       continue;
@@ -1731,47 +1775,52 @@ int mtn_exec_wait(MTN *mtn, MTNJOB *job)
       }
       continue;
     }
-    if(ev.data.fd == job->con){
-      if((r = recv_data_stream(mtn, job->con, &rd)) == 1){
-        return(0);
-      }
-      if(r == -1){
-        continue;
-      }
-      switch(rd.head.type){
-        case MTNCMD_STDIN:
-          sd.head.ver  = PROTOCOL_VERSION;
-          sd.head.size = 0;
-          sd.head.flag = 0;
-          sd.head.type = MTNCMD_STDIN;
-          if(job->in){
-            rsize = read(job->in, buff, sizeof(buff));
-            if(rsize > 0){
-              mtn_set_data(buff, &sd, rsize);
-            }else{
-              close(job->in);
-              job->in = 0;
-              if(rsize == -1){
-                sprintf(buff, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[0]);
-                write(job->err, buff, strlen(buff));
-              }
+    if((r = recv_data_stream(mtn, job->con, &rd)) == 1){
+      mtnlogger(mtn, 0, "[error] %s: remote close %s\n", __func__, job->svr->host);
+      return(0);
+    }
+    if(r == -1){
+      continue;
+    }
+    switch(rd.head.type){
+      case MTNCMD_ERROR:
+      case MTNCMD_SUCCESS:
+        job->fin = 1;
+        mtn_exec_get(mtn, job);
+        break;
+
+      case MTNCMD_STDIN:
+        sd.head.ver  = PROTOCOL_VERSION;
+        sd.head.size = 0;
+        sd.head.flag = 0;
+        sd.head.type = MTNCMD_STDIN;
+        if(job->in){
+          rsize = read(job->in, buff, sizeof(buff));
+          if(rsize > 0){
+            mtn_set_data(buff, &sd, rsize);
+          }else{
+            close(job->in);
+            job->in = 0;
+            if(rsize == -1){
+              sprintf(buff, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[0]);
+              write(job->err, buff, strlen(buff));
             }
           }
-          send_data_stream(mtn, job->con, &sd);
-          break;
-        case MTNCMD_STDOUT:
-          ssize = 0;
-          while(ssize < rd.head.size){
-            ssize += write(job->out, (void *)(rd.data.data + ssize), rd.head.size - ssize);
-          }
-          break;
-        case MTNCMD_STDERR:
-          ssize = 0;
-          while(ssize < rd.head.size){
-            ssize += write(job->err, (void *)(rd.data.data + ssize), rd.head.size - ssize);
-          }
-          break;
-      }
+        }
+        send_data_stream(mtn, job->con, &sd);
+        break;
+      case MTNCMD_STDOUT:
+        ssize = 0;
+        while(ssize < rd.head.size){
+          ssize += write(job->out, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+        }
+        break;
+      case MTNCMD_STDERR:
+        ssize = 0;
+        while(ssize < rd.head.size){
+          ssize += write(job->err, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+        }
+        break;
     }
   }
   return(0);
@@ -1779,28 +1828,34 @@ int mtn_exec_wait(MTN *mtn, MTNJOB *job)
 
 int mtn_exec(MTN *mtn, MTNJOB *job)
 {
+  ARG arg;
+  STR cmd;
   MTNDATA sd;
   MTNDATA rd;
   MTNSVR *sv;
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
+
   sv = job->svr ? job->svr : mtn_exec_select(mtn);
   if(sv == NULL){
     mtnlogger(mtn, 0, "[error] %s: node not found\n", __func__);
     errno = EACCES;
     return(-1);
   }
-  job->con = mtn_connect(mtn, sv, job->uid, job->gid);
+
+  job->con = mtn_connect(mtn, sv, job->uid, job->gid, 1);
   clrsvr(sv);
   if(job->con == -1){
     return(-1);
   }
+  mtn_exec_put(mtn, job);
+
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_EXEC;
 
-  ARG arg = fullargs(job->args, job->argl);
-  STR cmd = joinarg(arg);
+  arg = cmdargs(job);
+  cmd = joinarg(arg);
   mtn_set_string(cmd, &sd);
   clrarg(arg);
   clrstr(cmd);
@@ -1815,24 +1870,10 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
   return(mtn_exec_wait(mtn, job));
 }
 
-int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
+int mtn_open_file(MTN *mtn, int s, const char *path, int flags, MTNSTAT *st)
 {
-  MTNDATA  sd;
-  MTNDATA  rd;
-  MTNSTAT *fs;
-
-	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
-  fs = mtn_find(mtn, path, ((flags & O_CREAT) != 0));
-  if(fs == NULL){
-    mtnlogger(mtn, 0, "[error] %s: node not found\n", __func__);
-    errno = EACCES;
-    return(-1);
-  }
-  int s = mtn_connect(mtn, fs->svr, st->stat.st_uid, st->stat.st_gid);
-  clrstat(fs);
-  if(s == -1){
-    return(-1);
-  }
+  MTNDATA sd;
+  MTNDATA rd;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.flag = 0;
@@ -1840,16 +1881,32 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
   mtn_set_string((char *)path, &sd);
   mtn_set_int(&flags, &sd, sizeof(flags));
   mtn_set_int(&(st->stat.st_mode), &sd, sizeof(st->stat.st_mode));
-  if(send_data_stream(mtn, s, &sd) == -1){
-    close(s);
-    return(-1);
-  }
-  if(recv_data_stream(mtn, s, &rd) == -1){
-    close(s);
+  if(send_recv_stream(mtn, s, &sd, &rd) == -1){
     return(-1);
   }
   if(rd.head.type == MTNCMD_ERROR){
     mtn_get_int(&errno, &rd, sizeof(errno));
+    return(-1);
+  }
+  return(0);
+}
+
+int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
+{
+  MTNSTAT *fs;
+	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
+  fs = mtn_find(mtn, path, ((flags & O_CREAT) != 0));
+  if(fs == NULL){
+    mtnlogger(mtn, 0, "[error] %s: node not found\n", __func__);
+    errno = EACCES;
+    return(-1);
+  }
+  int s = mtn_connect(mtn, fs->svr, st->stat.st_uid, st->stat.st_gid, 0);
+  clrstat(fs);
+  if(s == -1){
+    return(-1);
+  }
+  if(mtn_open_file(mtn, s, path, flags, st) == -1){
     close(s);
     return(-1);
   }
@@ -1960,8 +2017,8 @@ int mtn_write(MTN *mtn, int s, const char *buf, size_t size, off_t offset)
 int mtn_close(MTN *mtn, int s)
 {
   int r = 0;
-  MTNDATA  sd;
-  MTNDATA  rd;
+  MTNDATA sd;
+  MTNDATA rd;
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
   if(s == 0){
     return(0);
@@ -2047,26 +2104,14 @@ int mtn_truncate(MTN *mtn, const char *path, off_t offset)
 //-------------------------------------------------------------------
 // mtntool
 //-------------------------------------------------------------------
-int mtn_get(MTN *mtn, int f, char *path)
+int mtn_get_data(MTN *mtn, int s, int f)
 {
-  int s;
   MTNDATA sd;
   MTNDATA rd;
-  MTNSTAT st;
-  mtnlogger(mtn, 9,"[debug] %s: IN\n", __func__);
-
-  st.stat.st_mode = 0644;
-  st.stat.st_uid  = getuid();
-  st.stat.st_gid  = getgid();
-  s = mtn_open(mtn, path, O_RDONLY, &st);
-  if(s == -1){
-    return(-1);
-  }
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_GET;
-  mtn_set_string(path, &sd);
   send_data_stream(mtn, s,  &sd);
   sd.head.size = 0;
   sd.head.type = MTNCMD_SUCCESS;
@@ -2080,34 +2125,31 @@ int mtn_get(MTN *mtn, int f, char *path)
     write(f, rd.data.data, rd.head.size);
   }
   send_data_stream(mtn, s, &sd);
-  mtnlogger(mtn, 9,"[debug] %s: OUT\n", __func__);
   return(0);
 }
 
-int mtn_set(MTN *mtn, int f, char *path)
+int mtn_get(MTN *mtn, int f, char *path)
 {
   int s;
-  int r;
-  MTNDATA sd;
-  MTNDATA rd;
   MTNSTAT st;
-  struct timeval tv;
-  
-  if(fstat(f, &(st.stat)) == -1){
-    gettimeofday(&tv, NULL);
-    st.stat.st_uid   = getuid();
-    st.stat.st_gid   = getgid();
-    st.stat.st_mode  = 0640;
-    st.stat.st_atime = tv.tv_sec;
-    st.stat.st_mtime = tv.tv_sec;
-  }
-  s = mtn_open(mtn, path, O_WRONLY | O_CREAT , &st);
+  st.stat.st_uid = getuid();
+  st.stat.st_gid = getgid();
+  s = mtn_open(mtn, path, O_RDONLY, &st);
   if(s == -1){
     return(-1);
   }
+  return(mtn_get_data(mtn, s, f));
+}
+
+int mtn_put_data(MTN *mtn, int s, int f)
+{
+  int r;
+  MTNDATA sd;
+  MTNDATA rd;
+
   sd.head.fin  = 0;
   sd.head.ver  = PROTOCOL_VERSION;
-  sd.head.type = MTNCMD_SET;
+  sd.head.type = MTNCMD_PUT;
   while((r = read(f, sd.data.data, sizeof(sd.data.data)))){
     if(r == -1){
       return(-1);
@@ -2123,6 +2165,26 @@ int mtn_set(MTN *mtn, int f, char *path)
     }
   }
   return(0);
+}
+
+int mtn_put(MTN *mtn, int f, char *path)
+{
+  int s;
+  MTNSTAT st;
+  struct timeval tv;
+  if(fstat(f, &(st.stat)) == -1){
+    gettimeofday(&tv, NULL);
+    st.stat.st_uid   = getuid();
+    st.stat.st_gid   = getgid();
+    st.stat.st_mode  = 0640;
+    st.stat.st_atime = tv.tv_sec;
+    st.stat.st_mtime = tv.tv_sec;
+  }
+  s = mtn_open(mtn, path, O_WRONLY | O_CREAT , &st);
+  if(s == -1){
+    return(-1);
+  }
+  return(mtn_put_data(mtn, s, f));
 }
 
 //-------------------------------------------------------------------
@@ -2291,6 +2353,7 @@ void mtndumparg(const char *func, ARG arg)
   for(i=0;arg[i];i++){
     mtndebug(func, "ARG[%d]: %s\n", i, arg[i]);
   }
+  mtndebug(func, "ARG[%d]: NULL\n", i);
 }
 
 void mtnlogger(MTN *mtn, int l, char *fmt, ...)
@@ -2410,8 +2473,7 @@ MTN *mtn_init(const char *name)
   MTN *mtn;
   FILE *fp;
   char buff[256];
-  mtn = xmalloc(sizeof(MTN));
-  memset(mtn, 0, sizeof(MTN));
+  mtn = calloc(1, sizeof(MTN));
   sprintf(mtn->mcast_addr,     "224.1.0.110");
   sprintf(mtn->module_name, name ? name : "");
   mtn->mcast_port = 6000;
@@ -2567,17 +2629,17 @@ void clrarg(ARG args)
 
 STR joinarg(ARG args){
   int i;
-  STR arg; 
+  STR str; 
   if(!args){
     return(NULL);
   }
-  if((arg = newstr(args[0]))){
+  if((str = newstr(args[0]))){
     for(i=1;args[i];i++){
-      arg = catstr(arg, " ");
-      arg = catstr(arg, args[i]);
+      str = catstr(str, " ");
+      str = catstr(str, args[i]);
     }
   }
-  return(arg);
+  return(str);
 }
 
 ARG copyarg(ARG args)
@@ -2676,29 +2738,26 @@ STR convarg(STR arg, ARG argl, int *conv)
   return(convarg(arg, argl, NULL));
 }
 
-ARG fullargs(ARG args, ARG argl)
+//
+// 引数リストを展開する
+//   args: 引数リスト
+//   argl: 展開パラメータ
+//
+ARG cmdargs(MTNJOB *job)
 {
-  int  i, j, m;
-  int  conv = 0;
-  STR *full = NULL;
-  if(args){
-    for(i=0;args[i];i++){
-      full = realloc(full, sizeof(STR) * (i + 1));
-      full[i] = convarg(newstr(args[i]), argl, &conv);
+  int i;
+  ARG cmd = newarg(0);
+
+  if(job->args){
+    for(i=0;job->args[i];i++){
+      cmd = addarg(cmd, convarg(newstr(job->args[i]), job->argl, &(job->conv)));
     }
-    full[i] = NULL;
   }
-  
-  if(argl){
-    for(m=0;argl[m];m++);
-    if(!conv && m){
-      full = realloc(full, sizeof(STR) * (i + m));
-      for(j=0;argl[j];j++){
-        full[i++] = newstr(argl[j]);
-      }
+  if(!job->conv && job->argl){
+    for(i=0;job->argl[i];i++){
+      cmd = addarg(cmd, job->argl[i]);
     }
-    full[i] = NULL;
   }
-  return(full);
+  return(cmd);
 }
 

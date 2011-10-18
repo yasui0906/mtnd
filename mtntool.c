@@ -87,7 +87,7 @@ int mtntool_list(char *path)
   return(0);
 }
 
-int mtntool_set(char *save_path, char *file_path)
+int mtntool_put(char *save_path, char *file_path)
 {
   int f = 0;
   if(strcmp("-", file_path)){
@@ -95,7 +95,7 @@ int mtntool_set(char *save_path, char *file_path)
       return(-1);
     }
   }
-  mtn_set(mtn, f, save_path);
+  mtn_put(mtn, f, save_path);
   if(f){
     close(f);
   }
@@ -139,8 +139,8 @@ static struct option opts[]={
   "info",    0, NULL, 'i',
   "list",    1, NULL, 'l',
   "file",    1, NULL, 'f',
-  "set",     1, NULL, 's',
-  "get",     1, NULL, 'g',
+  "put",     1, NULL, 'P',
+  "get",     1, NULL, 'G',
   "console", 0, NULL, 'C',
   NULL,      0, NULL, 0
 };
@@ -151,7 +151,7 @@ int main(int argc, char *argv[])
   char local_path[PATH_MAX] ={0};
   char remote_path[PATH_MAX]={0};
   mtn = mtn_init(MODULE_NAME);
-  while((r = getopt_long(argc, argv, "f:s:g:l:hviC", opts, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "f:P:G:l:hviC", opts, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -169,15 +169,15 @@ int main(int argc, char *argv[])
         r = mtntool_list(optarg);
         exit(r);
 
-      case 's':
+      case 'P':
         if(local_path[0]){
-          r = mtntool_set(optarg, local_path);
+          r = mtntool_put(optarg, local_path);
         }else{
-          r = mtntool_set(optarg, optarg);
+          r = mtntool_put(optarg, optarg);
         }
         exit(r);
 
-      case 'g':
+      case 'G':
         if(local_path[0]){
           r = mtntool_get(optarg, local_path);
         }else{

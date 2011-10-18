@@ -83,14 +83,18 @@ typedef struct mtnjob
   gid_t   gid;
   int     efd;
   int     con;
+  int     fin; // コマンドが終了したかどうか
   int     rfd; // プロセス間通信用(親->子)
   int     wfd; // プロセス間通信用(親<-子)
   int      in; // stdinのファイルディスクリプタ
   int     out; // stdoutのファイルディスクリプタ
   int     err; // stderrのファイルディスクリプタ
+  int    conv;
   ARG     std;
   ARG    args;
   ARG    argl;
+  ARG  putarg;
+  ARG  getarg;
   MTNSVR *svr;
 } MTNJOB; 
 
@@ -161,8 +165,11 @@ MTNSVR  *mtn_info(MTN *mtn);
 void     mtn_break(void);
 
 int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st);
+int mtn_open_file(MTN *mtn, int s, const char *path, int flags, MTNSTAT *st);
 int mtn_get(MTN *mtn, int f, char *path);
-int mtn_set(MTN *mtn, int f, char *path);
+int mtn_get_data(MTN *mtn, int s, int f);
+int mtn_put(MTN *mtn, int f, char *path);
+int mtn_put_data(MTN *mtn, int s, int f);
 int mtn_fgetattr(MTN *mtn, int s, struct stat *st);
 int mtn_fchown(MTN *mtn, int s, uid_t uid, gid_t gid);
 int mtn_mkdir(MTN *mtn, const char *path, uid_t uid, gid_t gid);
@@ -208,7 +215,7 @@ void clrarg(ARG args);
 STR  joinarg(ARG args);
 ARG  copyarg(ARG args);
 STR  convarg(STR arg, ARG argl, int *conv);
-ARG  fullargs(ARG args, ARG argl);
+ARG  cmdargs(MTNJOB *job);
 
 size_t set_mtnstatus_members(MTN *mtn);
 size_t set_mtnstatus_debuginfo(MTN *mtn);

@@ -5,16 +5,16 @@ lib: libmtn.c libmtn.h
 	ar r libmtn.a libmtn.o
 
 mtnd: mtnd.c lib
-	gcc -DMODULE_NAME=\"mtnd\" -o mtnd -Wall mtnd.c common.c libmtn.a
+	gcc -DMODULE_NAME=\"mtnd\" -g -o mtnd -Wall mtnd.c common.c libmtn.a
 
 mtnfs: mtnfs.c lib
-	gcc -DMODULE_NAME=\"mtnfs\" -o mtnfs -Wall -l fuse mtnfs.c common.c libmtn.a -I. -I/usr/klab/app/fuse/include -L/usr/klab/app/fuse/lib
+	gcc -DMODULE_NAME=\"mtnfs\" -g -o mtnfs -Wall -l fuse mtnfs.c common.c libmtn.a -I. -I/usr/klab/app/fuse/include -L/usr/klab/app/fuse/lib
 
 tool: mtntool.c lib
-	gcc -DMODULE_NAME=\"mtntool\" -o mtntool -I. mtntool.c libmtn.a
+	gcc -DMODULE_NAME=\"mtntool\" -g -o mtntool -I. mtntool.c libmtn.a
 
 exec: mtnexec.c mtnexec.h lib
-	gcc -DMODULE_NAME=\"mtnexec\" -o mtnexec -Wall -I. mtnexec.c libmtn.a
+	gcc -DMODULE_NAME=\"mtnexec\" -g -o mtnexec -Wall -I. mtnexec.c libmtn.a
 
 test: mtntest.c mtnd fuse
 	gcc -DMODULE_NAME=\"mtntest\" -o mtntest -I. mtntest.c libmtn.a

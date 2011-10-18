@@ -12,7 +12,7 @@
 #define MTNCMD_INFO      3
 #define MTNCMD_STAT      4
 #define MTNCMD_LIST      5
-#define MTNCMD_SET       6
+#define MTNCMD_PUT       6
 #define MTNCMD_GET       7
 #define MTNCMD_DEL       8
 #define MTNCMD_DATA      9
@@ -79,10 +79,11 @@ typedef struct kdata
 
 typedef struct mtntask
 {
-  int     fd;
+  int      fd;
   int     con;
   int     res;
   int  std[3];
+  pid_t   pid;
   DIR    *dir;
   uint8_t type;
   uint8_t fin;
