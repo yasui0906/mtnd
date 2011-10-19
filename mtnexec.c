@@ -146,33 +146,52 @@ ARG parse(int argc, char *argv[])
         break;
 
       case 'M':
-        ctx->mode = atoi(optarg);
-        if(ctx->mode >= MTNEXECMODE_ALL0){
-          usage();
-          exit(0);
+        switch(atoi(optarg)){
+          case 0:
+            ctx->mode = MTNEXECMODE_LOCAL;
+            break;
+          case 1:
+            ctx->mode = MTNEXECMODE_HYBRID;
+            break;
+          case 2:
+            ctx->mode = MTNEXECMODE_REMOTE;
+            break;
+          default:
+            usage();
+            exit(0);
         }
         break;
+
       case 'A':
-        ctx->mode = atoi(optarg);
-        if(ctx->mode < 2){
-          ctx->mode += MTNEXECMODE_ALL0;
-        }else{
-          usage();
-          exit(0);
+        switch(atoi(optarg)){
+          case 0:
+            ctx->mode = MTNEXECMODE_ALL0;
+            break;
+          case 1:
+            ctx->mode = MTNEXECMODE_ALL1;
+            break;
+          default:
+            usage();
+            exit(0);
         }
         break;
+
       case 'j':
         ctx->job_max = atoi(optarg);
         break;
+
       case 'N':
         ctx->arg_num = atoi(optarg);
         break;
+
       case 'm':
         strcpy(mtn->mcast_addr, optarg);
         break;
+
       case 'p':
         mtn->mcast_port = atoi(optarg);
         break;
+
       case '?':
         usage();
         exit(1);

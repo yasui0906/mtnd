@@ -33,11 +33,12 @@
 #define MTNCMD_READLINK 24
 #define MTNCMD_UTIME    25
 #define MTNCMD_RESULT   26
-#define MTNCMD_CONNECT  27
-#define MTNCMD_EXEC     28
-#define MTNCMD_STDIN    29
-#define MTNCMD_STDOUT   30
-#define MTNCMD_STDERR   31
+#define MTNCMD_INIT     27
+#define MTNCMD_EXIT     28
+#define MTNCMD_EXEC     29
+#define MTNCMD_STDIN    30
+#define MTNCMD_STDOUT   31
+#define MTNCMD_STDERR   32
 #define MTNCMD_ERROR    97
 #define MTNCMD_SUCCESS  98
 #define MTNCMD_MAX      99
@@ -51,6 +52,14 @@ typedef struct meminfo
   uint64_t  data;
   long page_size;
 } meminfo;
+
+typedef struct
+{
+  int  init;
+  int  mode;
+  uid_t uid;
+  gid_t gid;
+} MTNINIT;
 
 typedef struct
 {
@@ -90,6 +99,7 @@ typedef struct mtntask
   uint8_t create;
   struct  timeval tv;
   struct  stat  stat;
+  MTNINIT init;
   MTNADDR addr;
   MTNDATA send;
   MTNDATA recv;
@@ -98,6 +108,7 @@ typedef struct mtntask
   struct mtntask *prev;
   struct mtntask *next;
   char  path[PATH_MAX];
+  char  work[PATH_MAX];
 }__attribute__((packed)) MTNTASK;
 
 extern char *mtncmdstr[];
@@ -125,7 +136,7 @@ int send_data_stream(MTN *mtn, int s, MTNDATA *data);
 int recv_data_stream(MTN *mtn, int s, MTNDATA *kd);
 int send_recv_stream(MTN *mtn, int s, MTNDATA *sd, MTNDATA *rd);
 
-char *v4addr(MTNADDR *addr, char *buff, socklen_t size);
+char *v4addr(MTNADDR *addr, char *buff);
 int v4port(MTNADDR *addr);
 void mtn_startup(MTN *mtn, int f);
 void mtn_shutdown(MTN *mtn);

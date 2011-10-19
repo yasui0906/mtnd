@@ -16,7 +16,7 @@ tool: mtntool.c lib
 exec: mtnexec.c mtnexec.h lib
 	gcc -DMODULE_NAME=\"mtnexec\" -g -o mtnexec -Wall -I. mtnexec.c libmtn.a
 
-test: mtntest.c mtnd fuse
+test: mtntest.c mtnd mtnfs
 	gcc -DMODULE_NAME=\"mtntest\" -o mtntest -I. mtntest.c libmtn.a
 
 clean:
@@ -30,6 +30,8 @@ install:
 	rsync -a mtnd    /usr/klab/sbin/mtnd
 	rsync -a mtnfs   /usr/klab/sbin/mtnfs
 	rsync -a mtntool /usr/klab/sbin/mtntool
+	rsync -a mtnexec /usr/klab/sbin/mtnexec
 	chown root:root  /usr/klab/sbin/mtnd
 	chown root:root  /usr/klab/sbin/mtnfs
 	chown root:root  /usr/klab/sbin/mtntool
+	chown root:root  /usr/klab/sbin/mtnexec

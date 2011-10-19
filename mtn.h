@@ -166,6 +166,8 @@ void     mtn_break(void);
 
 int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st);
 int mtn_open_file(MTN *mtn, int s, const char *path, int flags, MTNSTAT *st);
+int mtn_close(MTN *mtn, int s);
+int mtn_close_file(MTN *mtn, int s);
 int mtn_get(MTN *mtn, int f, char *path);
 int mtn_get_data(MTN *mtn, int s, int f);
 int mtn_put(MTN *mtn, int f, char *path);
@@ -181,7 +183,6 @@ int mtn_chmod(MTN *mtn, const char *path, mode_t mode);
 int mtn_chown(MTN *mtn, const char *path, uid_t uid, gid_t gid);
 int mtn_utime(MTN *mtn, const char *path, time_t act, time_t mod);
 int mtn_truncate(MTN *mtn, const char *path, off_t offset);
-int mtn_close(MTN *mtn, int s);
 int mtn_read(MTN *mtn, int s, char *buf, size_t size, off_t offset);
 int mtn_write(MTN *mtn, int s, const char *buf, size_t size, off_t offset);
 int mtn_flush(MTN *mtn, int s);

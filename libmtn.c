@@ -463,13 +463,13 @@ int create_msocket(MTN *mtn)
 //==================================================
 // データアクセス関数
 //==================================================
-char *v4addr(MTNADDR *addr, char *buff, socklen_t size)
+char *v4addr(MTNADDR *addr, char *buff)
 {
   if(!addr){
     strcpy(buff, "0.0.0.0");
     return(buff);
   }
-  if(inet_ntop(AF_INET, &(addr->addr.in.sin_addr), buff, size) == NULL){
+  if(!inet_ntop(AF_INET, &(addr->addr.in.sin_addr), buff, INET_ADDRSTRLEN)){
     strcpy(buff, "0.0.0.0");
   }
   return(buff);
@@ -1653,7 +1653,7 @@ int mtn_utime(MTN *mtn, const char *path, time_t act, time_t mod)
 //-------------------------------------------------------------------
 // TCP
 //-------------------------------------------------------------------
-static int mtn_connect(MTN *mtn, MTNSVR *svr, uid_t uid, gid_t gid, int mode)
+static int mtn_connect(MTN *mtn, MTNSVR *svr, MTNINIT *mi)
 {
   int s;
   MTNDATA sd;
@@ -1672,15 +1672,11 @@ static int mtn_connect(MTN *mtn, MTNSVR *svr, uid_t uid, gid_t gid, int mode)
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.flag = 0;
-  sd.head.type = MTNCMD_CONNECT;
-  mtn_set_int(&uid,  &sd, sizeof(uid));
-  mtn_set_int(&gid,  &sd, sizeof(gid));
-  mtn_set_int(&mode, &sd, sizeof(mode));
-  if(send_data_stream(mtn, s, &sd) == -1){
-    close(s);
-    return(-1);
-  }
-  if(recv_data_stream(mtn, s, &rd) == -1){
+  sd.head.type = MTNCMD_INIT;
+  mtn_set_int(&(mi->uid),  &sd, sizeof(mi->uid));
+  mtn_set_int(&(mi->gid),  &sd, sizeof(mi->gid));
+  mtn_set_int(&(mi->mode), &sd, sizeof(mi->mode));
+  if(send_recv_stream(mtn, s, &sd, &rd) == -1){
     close(s);
     return(-1);
   }
@@ -1832,6 +1828,7 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
   STR cmd;
   MTNDATA sd;
   MTNDATA rd;
+  MTNINIT mi;
   MTNSVR *sv;
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
 
@@ -1842,7 +1839,10 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
     return(-1);
   }
 
-  job->con = mtn_connect(mtn, sv, job->uid, job->gid, 1);
+  mi.mode = 1;
+  mi.uid  = job->uid;
+  mi.gid  = job->gid;
+  job->con = mtn_connect(mtn, sv, &mi);
   clrsvr(sv);
   if(job->con == -1){
     return(-1);
@@ -1893,6 +1893,8 @@ int mtn_open_file(MTN *mtn, int s, const char *path, int flags, MTNSTAT *st)
 
 int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
 {
+  int s;
+  MTNINIT  mi;
   MTNSTAT *fs;
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
   fs = mtn_find(mtn, path, ((flags & O_CREAT) != 0));
@@ -1901,7 +1903,11 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
     errno = EACCES;
     return(-1);
   }
-  int s = mtn_connect(mtn, fs->svr, st->stat.st_uid, st->stat.st_gid, 0);
+
+  mi.mode = 0;
+  mi.uid  = st->stat.st_uid;
+  mi.gid  = st->stat.st_gid;
+  s = mtn_connect(mtn, fs->svr, &mi);
   clrstat(fs);
   if(s == -1){
     return(-1);
@@ -2014,7 +2020,7 @@ int mtn_write(MTN *mtn, int s, const char *buf, size_t size, off_t offset)
   return(sz);
 }
 
-int mtn_close(MTN *mtn, int s)
+int mtn_close_file(MTN *mtn, int s)
 {
   int r = 0;
   MTNDATA sd;
@@ -2030,6 +2036,29 @@ int mtn_close(MTN *mtn, int s)
   if(mtn_flush(mtn, s) == -1){
     r = -errno;
   }
+  if(send_recv_stream(mtn, s, &sd, &rd) == -1){
+    r = -errno;
+  }else if(rd.head.type == MTNCMD_ERROR){
+    mtn_set_int(&errno, &rd, sizeof(errno));
+    r = -errno;
+  }
+  return(r);
+}
+
+int mtn_close(MTN *mtn, int s)
+{
+  int r = 0;
+  MTNDATA sd;
+  MTNDATA rd;
+	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
+  if(s == 0){
+    return(0);
+  }
+  r = mtn_close_file(mtn, s);
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.type = MTNCMD_EXIT;
+  sd.head.size = 0;
+  sd.head.flag = 0;
   if(send_recv_stream(mtn, s, &sd, &rd) == -1){
     r = -errno;
   }else if(rd.head.type == MTNCMD_ERROR){
@@ -2238,7 +2267,7 @@ size_t set_mtnstatus_members(MTN *mtn)
   uint64_t pfree;
   uint64_t vsz;
   uint64_t res;
-  char ipstr[64];
+  char ipstr[INET_ADDRSTRLEN];
   MTNSVR *mb;
   MTNSVR *members;
   pthread_mutex_lock(&(mtn->mutex.status));
@@ -2255,7 +2284,7 @@ size_t set_mtnstatus_members(MTN *mtn)
     pfree = dfree * 100 / dsize;
     vsz   = mb->vsz / 1024;
     res   = mb->res / 1024;
-    v4addr(&(mb->addr), ipstr, sizeof(ipstr));
+    v4addr(&(mb->addr), ipstr);
     exsprintf(buff, size, "%s %s %d %2d%% %llu %llu %llu %llu %d\n", 
       mb->host,
       ipstr, 
