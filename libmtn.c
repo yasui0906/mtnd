@@ -27,15 +27,11 @@
 #include <sys/resource.h>
 typedef void (*MTNPROCFUNC)(MTN *mtn, MTNSVR *, MTNDATA *, MTNDATA *, MTNADDR *);
 
-static int is_loop       = 1;
-static int svr_count     = 0;
-static int dir_count     = 0;
-static int stat_count    = 0;
-static int malloc_count  = 0;
+static int is_loop = 1;
 static int socket_rcvbuf = 0;
-static pthread_mutex_t sqno_mutex   = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t count_mutex  = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t malloc_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int count[MTNCOUNT_MAX];
+static pthread_mutex_t sqno_mutex  = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 char *mtncmdstr[]={
   "STARTUP",
@@ -67,22 +63,34 @@ char *mtncmdstr[]={
   "RESULT",
 };
 
-static void setcount(int dir_delta, int stat_delta, int svr_delta)
+static void inccount(int id)
 {
   pthread_mutex_lock(&(count_mutex));
-  svr_count  += svr_delta;
-  dir_count  += dir_delta;
-  stat_count += stat_delta;
+  count[id]++;
   pthread_mutex_unlock(&(count_mutex));
+}
+
+static void deccount(int id)
+{
+  pthread_mutex_lock(&(count_mutex));
+  count[id]--;
+  pthread_mutex_unlock(&(count_mutex));
+}
+
+int getcount(int id)
+{
+  int r;
+  pthread_mutex_lock(&(count_mutex));
+  r = count[id];
+  pthread_mutex_unlock(&(count_mutex));
+  return(r);
 }
 
 static void *xmalloc(size_t size)
 {
   void *p = malloc(size);
   if(p){
-    pthread_mutex_lock(&(malloc_mutex));
-    malloc_count++;
-    pthread_mutex_unlock(&(malloc_mutex));
+    inccount(MTNCOUNT_MALLOC);
   }
   return(p);
 }
@@ -91,9 +99,7 @@ static void *xrealloc(void *p, size_t size)
 {
   void *n = realloc(p, size);
   if(n && (p == NULL)){
-    pthread_mutex_lock(&(malloc_mutex));
-    malloc_count++;
-    pthread_mutex_unlock(&(malloc_mutex));
+    inccount(MTNCOUNT_MALLOC);
   }
   return(n);
 }
@@ -101,9 +107,7 @@ static void *xrealloc(void *p, size_t size)
 static void xfree(void *p)
 {
   if(p){
-    pthread_mutex_lock(&(malloc_mutex));
-    malloc_count--;
-    pthread_mutex_unlock(&(malloc_mutex));
+    deccount(MTNCOUNT_MALLOC);
   }
   free(p);
 }
@@ -772,7 +776,7 @@ MTNDIR *newdir(const char *path)
   kd = xmalloc(sizeof(MTNDIR));
   memset(kd,0,sizeof(MTNDIR));
   strcpy(kd->path, path);
-  setcount(1,0,0);
+  inccount(MTNCOUNT_DIR);
   return(kd);
 }
 
@@ -794,7 +798,7 @@ MTNDIR *deldir(MTNDIR *kd)
   kd->prev = NULL;
   kd->next = NULL;
   xfree(kd);
-  setcount(-1,0,0);
+  deccount(MTNCOUNT_DIR);
 	return(n);
 }
 
@@ -815,7 +819,7 @@ MTNSTAT *newstat(const char *name)
   strcpy(f, basename(b));
   kst->name = xmalloc(strlen(f) + 1);
   strcpy(kst->name, f);
-  setcount(0,1,0);
+  inccount(MTNCOUNT_STAT);
   return(kst);
 }
 
@@ -841,7 +845,7 @@ MTNSTAT *delstat(MTNSTAT *kst)
   clrsvr(kst->svr);
   kst->svr = NULL;
   xfree(kst);
-  setcount(0, -1, 0);
+  deccount(MTNCOUNT_STAT);
 	return(r);
 }
 
@@ -936,7 +940,7 @@ MTNSVR *newsvr()
   MTNSVR *km;
   km = xmalloc(sizeof(MTNSVR));
   memset(km,0,sizeof(MTNSVR));
-  setcount(0,0,1);
+  inccount(MTNCOUNT_SVR);
   return(km);
 }
 
@@ -960,7 +964,7 @@ MTNSVR *delsvr(MTNSVR *svr)
   svr->next = NULL;
   svr->prev = NULL;
   xfree(svr);
-  setcount(0, 0, -1);
+  deccount(MTNCOUNT_SVR);
   return(nsv);
 }
 
@@ -2309,7 +2313,6 @@ size_t set_mtnstatus_debuginfo(MTN *mtn)
   size_t result;
   meminfo minfo;
 
-  pthread_mutex_lock(&(count_mutex));
   pthread_mutex_lock(&(mtn->mutex.status));
   buff = &(mtn->status.debuginfo.buff);
   size = &(mtn->status.debuginfo.size);
@@ -2320,14 +2323,15 @@ size_t set_mtnstatus_debuginfo(MTN *mtn)
   exsprintf(buff, size, "[DEBUG INFO]\n");
   exsprintf(buff, size, "VSZ   : %llu KB\n", minfo.vsz / 1024);
   exsprintf(buff, size, "RSS   : %llu KB\n", minfo.res / 1024);
-  exsprintf(buff, size, "MALLOC: %d\n", malloccnt());
-  exsprintf(buff, size, "DIR   : %d\n", dir_count);
-  exsprintf(buff, size, "STAT  : %d\n", stat_count);
-  exsprintf(buff, size, "MEMBER: %d\n", svr_count);
+  exsprintf(buff, size, "MALLOC: %d\n", getcount(MTNCOUNT_MALLOC));
+  exsprintf(buff, size, "DIR   : %d\n", getcount(MTNCOUNT_DIR));
+  exsprintf(buff, size, "STAT  : %d\n", getcount(MTNCOUNT_STAT));
+  exsprintf(buff, size, "MEMBER: %d\n", getcount(MTNCOUNT_SVR));
+  exsprintf(buff, size, "STR   : %d\n", getcount(MTNCOUNT_STR));
+  exsprintf(buff, size, "ARG   : %d\n", getcount(MTNCOUNT_ARG));
   exsprintf(buff, size, "RCVBUF: %d\n", socket_rcvbuf);
   result = strlen(*buff);
   pthread_mutex_unlock(&(mtn->mutex.status));
-  pthread_mutex_unlock(&(count_mutex));
   return(result);
 }
 
@@ -2461,15 +2465,6 @@ int get_meminfo(meminfo *m)
   return(0);
 }
 
-int malloccnt()
-{
-  int c;
-  pthread_mutex_lock(&(malloc_mutex));
-  c = malloc_count;
-  pthread_mutex_unlock(&(malloc_mutex));
-  return(c);
-}
-
 void mtn_break()
 {
   is_loop = 0;
@@ -2503,6 +2498,7 @@ MTN *mtn_init(const char *name)
   FILE *fp;
   char buff[256];
   mtn = calloc(1, sizeof(MTN));
+  memset(count, 0, sizeof(count));
   sprintf(mtn->mcast_addr,     "224.1.0.110");
   sprintf(mtn->module_name, name ? name : "");
   mtn->mcast_port = 6000;
@@ -2555,6 +2551,7 @@ STR newstr(char *str)
   }
   nstr = xmalloc(strlen(str) + 1);
   strcpy(nstr, str);
+  inccount(MTNCOUNT_STR);
   return(nstr);
 }
 
@@ -2582,6 +2579,7 @@ STR catstr(STR str1, STR str2)
 STR clrstr(STR str)
 {
   xfree(str);
+  deccount(MTNCOUNT_STR);
   return(NULL);
 }
 
@@ -2625,6 +2623,7 @@ ARG splitstr(STR str, STR delim)
 
 ARG newarg(int c)
 {
+  inccount(MTNCOUNT_ARG);
   return(calloc(c + 1, sizeof(STR)));
 }
 
@@ -2654,6 +2653,7 @@ void clrarg(ARG args)
     args[i] = NULL;
   }
   free(args);
+  deccount(MTNCOUNT_ARG);
 }
 
 STR joinarg(ARG args){

@@ -13,6 +13,7 @@
 #include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
 #include <signal.h>
 #include <errno.h>
@@ -33,7 +34,7 @@ MTNTASK *tasklist = NULL;
 MTNTASK *tasksave = NULL;
 typedef void (*MTNFSTASKFUNC)(MTNTASK *);
 MTNFSTASKFUNC taskfunc[2][MTNCMD_MAX];
-int is_loop = 1;
+static int is_loop = 1;
 
 void version()
 {
@@ -247,7 +248,7 @@ static void mtnd_info_process(MTNTASK *kt)
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   get_meminfo(&mi);
   mb.limit = ctx->free_limit;
-  mb.malloccnt = malloccnt();
+  mb.malloccnt = getcount(MTNCOUNT_MALLOC);
   mb.membercnt = get_members_count(ctx->members);
   get_diskfree(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
   mtn_set_int(&(mb.bsize),     &(kt->send), sizeof(mb.bsize));
@@ -1051,7 +1052,7 @@ void mtnd_child_exec(MTNTASK *kt)
     close(pp[0][0]);
     close(pp[1][1]);
     close(pp[2][1]);
-    e = epoll_create(3);
+    e = epoll_create(4);
     ev.data.fd = kt->std[0];
     ev.events  = EPOLLOUT;
     epoll_ctl(e, EPOLL_CTL_ADD, kt->std[0], &ev);
@@ -1061,6 +1062,9 @@ void mtnd_child_exec(MTNTASK *kt)
     ev.data.fd = kt->std[2];
     ev.events  = EPOLLIN;
     epoll_ctl(e, EPOLL_CTL_ADD, kt->std[2], &ev);
+    ev.data.fd = kt->con;
+    ev.events  = EPOLLIN;
+    epoll_ctl(e, EPOLL_CTL_ADD, kt->con, &ev);
 
     size = 0;
     kt->recv.head.size = 0;
@@ -1073,6 +1077,10 @@ void mtnd_child_exec(MTNTASK *kt)
       r = epoll_wait(e, &ev, 1, 1000);
       if(r != 1){
         continue;
+      }
+      if(ev.data.fd == kt->con){
+        kill(pid, SIGINT);
+        break;
       }
       if(ev.data.fd == kt->std[0]){
         if(size < kt->recv.head.size){
@@ -1148,12 +1156,9 @@ void mtnd_child_exec(MTNTASK *kt)
   dup2(pp[0][0],0); // stfdin
   dup2(pp[1][1],1); // stdout
   dup2(pp[2][1],2); // stderr
-  status = system(cmd);
-  if(status == -1){
-    mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), cmd);
-    _exit(127);
-  }
-  _exit(WEXITSTATUS(status)); 
+  execlp("sh", "sh", "-c", cmd, NULL);
+  mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), cmd);
+  _exit(127);
 }
 
 void mtnd_child_error(MTNTASK *kt)

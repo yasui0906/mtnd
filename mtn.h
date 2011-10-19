@@ -83,9 +83,8 @@ typedef struct mtnjob
   gid_t   gid;
   int     efd;
   int     con;
-  int     fin; // コマンドが終了したかどうか
-  int     rfd; // プロセス間通信用(親->子)
-  int     wfd; // プロセス間通信用(親<-子)
+  int     fin; // コマンドが終了したら1になる
+  int     pfd; // プロセス間通信用ディスクリプタ
   int      in; // stdinのファイルディスクリプタ
   int     out; // stdoutのファイルディスクリプタ
   int     err; // stderrのファイルディスクリプタ

@@ -43,6 +43,14 @@
 #define MTNCMD_SUCCESS  98
 #define MTNCMD_MAX      99
 
+#define MTNCOUNT_SVR    0
+#define MTNCOUNT_DIR    1
+#define MTNCOUNT_STAT   2
+#define MTNCOUNT_STR    3
+#define MTNCOUNT_ARG    4
+#define MTNCOUNT_MALLOC 5
+#define MTNCOUNT_MAX    6
+
 typedef struct meminfo
 {
   uint64_t   vsz;
@@ -129,7 +137,7 @@ int mtn_set_stat(struct stat *st, MTNDATA *kd);
 int mtn_set_data(void *buff, MTNDATA *kd, size_t size);
 uint32_t get_members_count(MTNSVR *mb);
 int get_meminfo(meminfo *m);
-int malloccnt(void);
+int getcount(int id);
 int send_dgram(MTN *mtn, int s, MTNDATA *data, MTNADDR *addr);
 int recv_dgram(MTN *mtn, int s, MTNDATA *data, struct sockaddr *addr, socklen_t *alen);
 int send_data_stream(MTN *mtn, int s, MTNDATA *data);
