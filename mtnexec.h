@@ -13,7 +13,9 @@ typedef struct mtnexec_context
   int efd;
   int mode;
   int zero;
+  int conv;
   int nobuf;
+  int child;
   STR group;
   STR stdin;
   STR stdout;
@@ -22,8 +24,11 @@ typedef struct mtnexec_context
   ARG putarg;
   MTNSVR *svr;
   MTNJOB *job;
+  int dryrun;
+  int verbose;
   int arg_num;
   int job_max;
   ARG linearg;
+  int fsig[2];
 } CTX;
 extern int optind;

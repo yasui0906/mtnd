@@ -137,6 +137,9 @@ void setstat_dircache(const char *path, MTNSTAT *st)
   pthread_mutex_unlock(&(mtnfs->cache_mutex));
 }
 
+//-------------------------------------------------------------
+//
+//-------------------------------------------------------------
 static void *mtnfs_init(struct fuse_conn_info *conn)
 {
   int i;
@@ -523,9 +526,10 @@ static int mtnfs_release(const char *path, struct fuse_file_info *fi)
       free_mtnstatus_debuginfo((char *)(fi->fh));
       fi->fh = 0;
     }else if(strcmp("loglevel", f) == 0){
-      free_mtnstatus_loglevel((char *)(fi->fh));
       mtn->loglevel = atoi((char *)(fi->fh));
+      free_mtnstatus_loglevel((char *)(fi->fh));
       fi->fh = 0;
+      MTNDEBUG("loglevel=%d\n", mtn->loglevel);
     }else{
       r = -EBADF;
     }
@@ -571,9 +575,9 @@ static int mtnfs_read(const char *path, char *buf, size_t size, off_t offset, st
 
 static int mtnfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
+  int r;
   MTNFS *mtnfs = fuse_get_context()->private_data;
   MTN   *mtn   = mtnfs->mtn;
-  int r;
   mtnlogger(mtn, offset ? 9 : 8, "[debug] %s: path=%s %u-%u (%u)\n", __func__, path, offset, offset + size, size);
   if(is_mtnstatus(path, NULL)){
     fi->fh = (uint64_t)realloc((void *)(fi->fh), size);
@@ -627,10 +631,15 @@ static int mtnfs_releasedir(const char *path, struct fuse_file_info *fi)
   return(0);
 }
 
-//-------------------------------------------------------------------------------------
-// 以下未実装
-//-------------------------------------------------------------------------------------
-/*
+static int mtnfs_ftruncate(const char *path, off_t offset, struct fuse_file_info *fi)
+{
+  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTN   *mtn   = mtnfs->mtn;
+  mtnlogger(mtn, 0, "[debug] %s: CALL path=%s\n", __func__, path);
+  mtnlogger(mtn, 0, "[debug] %s: EXIT path=%s\n", __func__, path);
+  return(0);
+}
+
 static int mtnfs_flush(const char *path, struct fuse_file_info *fi)
 {
   MTNFS *mtnfs = fuse_get_context()->private_data;
@@ -647,6 +656,10 @@ static int mtnfs_fsync(const char *path, int sync, struct fuse_file_info *fi)
   return(0);
 }
 
+//-------------------------------------------------------------------------------------
+// 以下未実装
+//-------------------------------------------------------------------------------------
+/*
 static int mtnfs_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
 {
   MTNFS *mtnfs = fuse_get_context()->private_data;
@@ -692,15 +705,6 @@ static int mtnfs_access(const char *path, int mode)
   MTNFS *mtnfs = fuse_get_context()->private_data;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "[debug] %s: path=%s\n", __func__, path);
-  return(0);
-}
-
-static int mtnfs_ftruncate(const char *path, off_t offset, struct fuse_file_info *fi)
-{
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
-  mtnlogger(mtn, 0, "[debug] %s: CALL path=%s\n", __func__, path);
-  mtnlogger(mtn, 0, "[debug] %s: EXIT path=%s\n", __func__, path);
   return(0);
 }
 
@@ -761,11 +765,11 @@ static struct fuse_operations mtn_oper = {
   .destroy     = mtnfs_destroy,
   .fgetattr    = mtnfs_fgetattr,
   .utimens     = mtnfs_utimens,
+  .ftruncate   = mtnfs_ftruncate,
+  .flush       = mtnfs_flush,
+  .fsync       = mtnfs_fsync,
   //.fsyncdir    = mtnfs_fsyncdir,
-  //.ftruncate   = mtnfs_ftruncate,
   //.access      = mtnfs_access,
-  //.flush       = mtnfs_flush,
-  //.fsync       = mtnfs_fsync,
   //.setxattr    = mtnfs_setxattr,
   //.getxattr    = mtnfs_getxattr,
   //.listxattr   = mtnfs_listxattr,

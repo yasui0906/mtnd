@@ -145,7 +145,6 @@ int recv_data_stream(MTN *mtn, int s, MTNDATA *kd);
 int send_recv_stream(MTN *mtn, int s, MTNDATA *sd, MTNDATA *rd);
 
 char *v4addr(MTNADDR *addr, char *buff);
-int v4port(MTNADDR *addr);
+int  v4port(MTNADDR *addr);
 void mtn_startup(MTN *mtn, int f);
 void mtn_shutdown(MTN *mtn);
-

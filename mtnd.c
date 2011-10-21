@@ -357,6 +357,29 @@ static void mtnd_stat_process(MTNTASK *kt)
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
+static void mtnd_truncate_process(MTNTASK *kt)
+{
+  off_t offset;
+  char path[PATH_MAX];
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
+  kt->fin = 1;
+  kt->send.head.type = MTNCMD_SUCCESS;
+  kt->send.head.fin  = 1;
+  kt->send.head.size = 0;
+  mtn_get_string(path, &(kt->recv));
+  mtn_get_int(&offset, &(kt->recv), sizeof(offset));
+  mtnd_fix_path(path);
+  sprintf(kt->path, "./%s", path);
+  if(truncate(kt->path, offset) == -1){
+    if(errno != ENOENT){
+      kt->send.head.type = MTNCMD_ERROR;
+      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtnlogger(mtn, 0, "[error] %s: %s path=%s offset=%llu\n", __func__, strerror(errno), kt->path, offset);
+    }
+  }
+  mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
+}
+
 static void mtnd_mkdir_process(MTNTASK *kt)
 {
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
@@ -576,6 +599,8 @@ void mtnd_task_process(int s)
       t->send.head.fin  = 1;
       t->send.head.size = 0;
       t->send.head.type = MTNCMD_ERROR;
+      errno = EPERM;
+      mtn_set_int(&errno, &(t->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: Function Not Found type=%d\n", __func__, t->type);
     }
     if(t->fin){
@@ -1468,6 +1493,7 @@ void init_task()
   taskfunc[0][MTNCMD_INFO]     = (MTNFSTASKFUNC)mtnd_info_process;
   taskfunc[0][MTNCMD_LIST]     = (MTNFSTASKFUNC)mtnd_list_process;
   taskfunc[0][MTNCMD_STAT]     = (MTNFSTASKFUNC)mtnd_stat_process;
+  taskfunc[0][MTNCMD_TRUNCATE] = (MTNFSTASKFUNC)mtnd_truncate_process;
   taskfunc[0][MTNCMD_MKDIR]    = (MTNFSTASKFUNC)mtnd_mkdir_process;
   taskfunc[0][MTNCMD_RMDIR]    = (MTNFSTASKFUNC)mtnd_rm_process;
   taskfunc[0][MTNCMD_UNLINK]   = (MTNFSTASKFUNC)mtnd_rm_process;

@@ -78,23 +78,31 @@ typedef struct mtndir
 
 typedef struct mtnjob
 {
+  int      id;
   pid_t   pid;
   uid_t   uid;
   gid_t   gid;
-  int     efd;
   int     con;
+  int     efd; // epoll用のディスクリプタ
   int     fin; // コマンドが終了したら1になる
   int     pfd; // プロセス間通信用ディスクリプタ
   int      in; // stdinのファイルディスクリプタ
   int     out; // stdoutのファイルディスクリプタ
   int     err; // stderrのファイルディスクリプタ
   int    conv;
+  STR     cmd;
   ARG     std;
   ARG    args;
   ARG    argl;
+  ARG    argc;
   ARG  putarg;
   ARG  getarg;
   MTNSVR *svr;
+  struct {
+    size_t buffsize;
+    size_t datasize;
+    char   *stdbuff;
+  }stdout;
 } MTNJOB; 
 
 struct mtnstatus
@@ -201,7 +209,7 @@ MTNSVR  *addsvr(MTNSVR *svr, MTNADDR *addr, char *host);
 MTNSVR  *cpsvr(MTNSVR *svr);
 MTNSVR  *getsvr(MTNSVR *svr, MTNADDR *addr);
 MTNSVR  *delsvr(MTNSVR *svr);
-void     clrsvr(MTNSVR *svr);
+MTNSVR  *clrsvr(MTNSVR *svr);
 
 STR newstr(char *str);
 STR modstr(STR str, char *n);
@@ -209,13 +217,14 @@ STR clrstr(STR str);
 STR catstr(STR str1, STR str2);
 ARG splitstr(STR str, STR delim);
 
-ARG  newarg(int c);
-ARG  addarg(ARG arg, STR str);
-void clrarg(ARG args);
-STR  joinarg(ARG args);
-ARG  copyarg(ARG args);
-STR  convarg(STR arg, ARG argl, int *conv);
-ARG  cmdargs(MTNJOB *job);
+ARG newarg(int c);
+ARG addarg(ARG arg, STR str);
+ARG clrarg(ARG args);
+STR joinarg(ARG args);
+ARG copyarg(ARG args);
+STR poparg(ARG args);
+STR convarg(STR arg, ARG argl);
+ARG cmdargs(MTNJOB *job);
 
 size_t set_mtnstatus_members(MTN *mtn);
 size_t set_mtnstatus_debuginfo(MTN *mtn);

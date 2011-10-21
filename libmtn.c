@@ -14,6 +14,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
+#include <libgen.h>
 #include <syslog.h>
 #include <errno.h>
 #include <pthread.h>
@@ -968,11 +969,12 @@ MTNSVR *delsvr(MTNSVR *svr)
   return(nsv);
 }
 
-void clrsvr(MTNSVR *svr)
+MTNSVR *clrsvr(MTNSVR *svr)
 {
   while(svr){
     svr = delsvr(svr);
   }
+  return(NULL);
 }
 
 MTNSVR *getsvr(MTNSVR *svr, MTNADDR *addr)
@@ -1654,6 +1656,31 @@ int mtn_utime(MTN *mtn, const char *path, time_t act, time_t mod)
   return(0);
 }
 
+void mtn_truncate_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
+{
+	if(rd->head.type == MTNCMD_ERROR){
+    mtn_get_int(&errno, rd, sizeof(errno));
+	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
+  }
+}
+
+int mtn_truncate(MTN *mtn, const char *path, off_t offset)
+{
+	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
+  MTNDATA sd;
+  MTNSVR  *m;
+  m = get_members(mtn);
+	memset(&sd, 0, sizeof(sd));
+  sd.head.type = MTNCMD_TRUNCATE;
+  sd.head.size = 0;
+  sd.head.flag = 0;
+  mtn_set_string((char *)path, &sd);
+  mtn_set_int(&offset, &sd, sizeof(offset));
+  mtn_process(mtn, m, &sd, (MTNPROCFUNC)mtn_truncate_process);
+  clrsvr(m);
+  return(0);
+}
+
 //-------------------------------------------------------------------
 // TCP
 //-------------------------------------------------------------------
@@ -1703,6 +1730,7 @@ int mtn_exec_put(MTN *mtn, MTNJOB *job)
 {
   int i;
   int f;
+  STR path;
   MTNSTAT st;
   if(!job->putarg){
     return(0);
@@ -1717,8 +1745,10 @@ int mtn_exec_put(MTN *mtn, MTNJOB *job)
       mtnlogger(mtn, 0, "[error] %s %s\n", strerror(errno), job->putarg[i]);
       continue;
     }
-    mtn_open_file(mtn, job->con, job->putarg[i], O_WRONLY | O_CREAT , &st);
+    path = newstr(job->putarg[i]);
+    mtn_open_file(mtn, job->con, basename(path), O_WRONLY | O_CREAT , &st);
     mtn_put_data(mtn, job->con, f);
+    path = clrstr(path);
     close(f);
   }
   return(0);
@@ -1828,8 +1858,6 @@ int mtn_exec_wait(MTN *mtn, MTNJOB *job)
 
 int mtn_exec(MTN *mtn, MTNJOB *job)
 {
-  ARG arg;
-  STR cmd;
   MTNDATA sd;
   MTNDATA rd;
   MTNINIT mi;
@@ -1857,12 +1885,7 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_EXEC;
-
-  arg = cmdargs(job);
-  cmd = joinarg(arg);
-  mtn_set_string(cmd, &sd);
-  clrarg(arg);
-  clrstr(cmd);
+  mtn_set_string(job->cmd, &sd);
 
   if(send_recv_stream(mtn, job->con, &sd, &rd) == -1){
     return(-1);
@@ -1900,6 +1923,7 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
   int s;
   MTNINIT  mi;
   MTNSTAT *fs;
+  char buff[64];
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
   fs = mtn_find(mtn, path, ((flags & O_CREAT) != 0));
   if(fs == NULL){
@@ -1914,6 +1938,7 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
   s = mtn_connect(mtn, fs->svr, &mi);
   clrstat(fs);
   if(s == -1){
+    mtnlogger(mtn, 0, "[error] %s: can't connect %s %s\n", __func__, strerror(errno), v4addr(&(fs->svr->addr), buff));
     return(-1);
   }
   if(mtn_open_file(mtn, s, path, flags, st) == -1){
@@ -1968,6 +1993,7 @@ int mtn_flush(MTN *mtn, int s)
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.type = MTNCMD_RESULT;
   sd.head.flag = 0;
+  sd.head.size = 0;
   if(mtn->sendsize[s] == 0){
     return(0);
   }
@@ -2119,18 +2145,6 @@ int mtn_fchown(MTN *mtn, int s, uid_t uid, gid_t gid)
   kt.con  = s;
   mtn_set_int(&uid, &(kt.send), sizeof(uid));
   mtn_set_int(&gid, &(kt.send), sizeof(gid));
-  return((mtn_callcmd(mtn, &kt) == -1) ? -errno : 0);
-}
-
-int mtn_truncate(MTN *mtn, const char *path, off_t offset)
-{
-  MTNTASK kt;
-  memset(&kt, 0, sizeof(kt));
-  strcpy(kt.path, path);
-  kt.type   = MTNCMD_TRUNCATE;
-  kt.create = 1;
-  mtn_set_string((char *)path, &(kt.send));
-  mtn_set_int(&offset, &(kt.send), sizeof(offset));
   return((mtn_callcmd(mtn, &kt) == -1) ? -errno : 0);
 }
 
@@ -2642,11 +2656,11 @@ ARG addarg(ARG arg, STR str)
   return(arg);
 }
 
-void clrarg(ARG args)
+ARG clrarg(ARG args)
 {
   int i;
   if(!args){
-    return;
+    return(NULL);
   }
   for(i=0;args[i];i++){
     clrstr(args[i]);
@@ -2654,6 +2668,7 @@ void clrarg(ARG args)
   }
   free(args);
   deccount(MTNCOUNT_ARG);
+  return(NULL);
 }
 
 STR joinarg(ARG args){
@@ -2687,84 +2702,110 @@ ARG copyarg(ARG args)
   return(n);
 }
 
-STR convarg(STR arg, ARG argl, int *conv)
+STR poparg(ARG args)
 {
-  int  n;
-  int  m;
-  STR  s1,s2,s3;
-  char *p1, *p2, *pe;
-  char buff[PATH_MAX];
+  int c;
+  STR s;
+  if(!args){
+    return(NULL);
+  }
+  for(c=0;args[c];c++);
+  s = args[0];
+  memmove(args, &args[1], sizeof(STR) * c);
+  return(s);
+}
 
-  if(!argl){
-    return(arg);
-  }
 
-  for(m=0;argl[m];m++);
-  strcpy(buff, arg);
-  p1 = buff;
-  pe = buff + strlen(buff);
-
-  while(p1 < pe){
-    if(*p1 == '{'){
-      *p1 = 0;
-      break;
-    }
-    p1++;
-  }
-  if(p1 == pe){
-    return(arg);
-  }
-
-  p2 = p1 + 1;
-  while(p2 < pe){
-    if(*p2 == '}'){
-      *p2 = 0;
-      break;
-    }
-    p2++;
-  }
-  if(p2 == pe){
-    return(arg);
-  }
-
-  p1++;
-  p2++;
-  if(conv){
-    *conv = 1;
-  }
-  s1 = newstr(buff);
-  s3 = newstr(p2);
-  if((n = atoi(p1))){
-    if(n > m){
-      s2 = newstr("");
-    }else{
-      s2 = newstr(argl[n-1]);
-    }
+static STR convarg3(STR arg, ARG argl)
+{
+  STR a;
+  if(strcmp(arg, "") == 0){
+    a = joinarg(argl);
+    arg = modstr(arg, a);
+    a = clrstr(a);
+  }else if(strcmp(arg, "/") == 0){
+    a = joinarg(argl);
+    a = basestr(a);
+    arg = modstr(arg, a);
+    a = clrstr(a);
+  }else if(strcmp(arg, ".") == 0){
+    a = joinarg(argl);
+    a = dotstr(a);
+    arg = modstr(arg, a);
+    a = clrstr(a);
+  }else if(strcmp(arg, "/.") == 0){
+    a = joinarg(argl);
+    a = basestr(a);
+    a = dotstr(a);
+    arg = modstr(arg, a);
+    a = clrstr(a);
   }else{
-    s2 = joinarg(argl);
+    a = newstr("{");
+    a = catstr(a, arg);
+    a = catstr(a, "}");
+    arg = modstr(arg, a);
+    clrstr(a);
   }
-  while((*p1 >= '0') && (*p1 <= '9')){
-    p1++;
+  return(arg);
+}
+
+static STR convarg2(STR arg, ARG argl)
+{
+  int i;
+  STR p;
+  STR q;
+  STR r;
+  if(!argl || !arg){
+    return(arg);
   }
-  while(*p1){
-    switch(*p1){
-      case '/':
-        s2 = basestr(s2);
-        break;
-      case '.':
-        s2 = dotstr(s2);
-        break;
+  i = 0;
+  p = newstr(arg);
+  while(*(p + i)){
+    if(*(p + i) == '}'){
+      *(p + i) = 0;
+      i++;
+      q = newstr(p);
+      r = newstr(p + i);
+      q = convarg3(q,argl);
+      arg = modstr(arg, q);
+      arg = catstr(arg, r);
+      clrstr(q);
+      clrstr(r);
+      break;
     }
-    p1++;
+    i++;
+  }
+  clrstr(p);
+  return(arg);
+}
+
+STR convarg(STR arg, ARG argl)
+{
+  int i;
+  STR p;
+  STR q;
+  if(!argl || !arg){
+    return(arg);
   }
 
-  arg = modstr(arg, s1);
-  arg = catstr(arg, s2);
-  arg = catstr(arg, s3);
-  clrstr(s1);
-  clrstr(s2);
-  clrstr(s3);
-  return(convarg(arg, argl, NULL));
+  i = 0;
+  p = newstr(arg);
+  while(*(p + i)){
+    if(*(p + i) == '{'){
+      *(p + i) = 0;
+      i++;
+      q = newstr(p + i);
+      q = convarg2(q, argl);
+      arg = modstr(arg, p);
+      arg = catstr(arg, q);
+      p = modstr(p, arg);
+      q = clrstr(q);
+      continue;
+    }
+    i++;
+  }
+  clrstr(p);
+  return(arg);
 }
 
 //
@@ -2776,10 +2817,13 @@ ARG cmdargs(MTNJOB *job)
 {
   int i;
   ARG cmd = newarg(0);
-
   if(job->args){
     for(i=0;job->args[i];i++){
-      cmd = addarg(cmd, convarg(newstr(job->args[i]), job->argl, &(job->conv)));
+      if(job->conv){
+        cmd = addarg(cmd, convarg(newstr(job->args[i]), job->argl));
+      }else{
+        cmd = addarg(cmd, newstr(job->args[i]));
+      }
     }
   }
   if(!job->conv && job->argl){
