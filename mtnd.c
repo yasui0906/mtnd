@@ -73,6 +73,56 @@ int get_diskfree(uint32_t *bsize, uint32_t *fsize, uint64_t *dsize, uint64_t *df
   return(0);
 }
 
+int getmeminfo(uint64_t *size, uint64_t *free)
+{
+  FILE *f;
+  char key[64];
+  char val[64];
+  char unit[8];
+  char buff[1024];
+  uint64_t data;
+
+  *size = 0;
+  *free = 0;
+  f = fopen("/proc/meminfo","r");
+  while(fgets(buff, sizeof(buff), f)){
+    key[0]=0;
+    val[0]=0;
+    unit[0]=0;
+    sscanf(buff, "%s%s%s", key, val, unit);
+    if(strcmp("MemTotal:", key) == 0){
+      data = atoi(val);
+      if(strcmp("kB", unit) == 0){
+        data *= 1024;
+      }
+      *size = data;
+    }
+    if(strcmp("MemFree:", key) == 0){
+      data = atoi(val);
+      if(strcmp("kB", unit) == 0){
+        data *= 1024;
+      }
+      *free += data;
+    }
+    if(strcmp("Buffers:", key) == 0){
+      data = atoi(val);
+      if(strcmp("kB", unit) == 0){
+        data *= 1024;
+      }
+      *free += data;
+    }
+    if(strcmp("Cached", key) == 0){
+      data = atoi(val);
+      if(strcmp("kB", unit) == 0){
+        data *= 1024;
+      }
+      *free += data;
+    }
+  }
+  fclose(f);
+  return(0);
+}
+
 int is_freelimit()
 {
   uint32_t bsize;
@@ -245,12 +295,19 @@ static void mtnd_info_process(MTNTASK *kt)
 {
   meminfo mi;
   MTNSVR mb;
+  double loadavg[3];
+
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   get_meminfo(&mi);
   mb.limit = ctx->free_limit;
   mb.malloccnt = getcount(MTNCOUNT_MALLOC);
   mb.membercnt = get_members_count(ctx->members);
   get_diskfree(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
+  mb.cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
+  getloadavg(loadavg, 3);
+  getmeminfo(&(mb.memsize), &(mb.memfree));
+  mb.loadavg = (uint32_t)(loadavg[0] * 100);
+  mb.pscount = getpscount();
   mtn_set_int(&(mb.bsize),     &(kt->send), sizeof(mb.bsize));
   mtn_set_int(&(mb.fsize),     &(kt->send), sizeof(mb.fsize));
   mtn_set_int(&(mb.dsize),     &(kt->send), sizeof(mb.dsize));
@@ -260,6 +317,11 @@ static void mtnd_info_process(MTNTASK *kt)
   mtn_set_int(&(mb.membercnt), &(kt->send), sizeof(mb.membercnt));
   mtn_set_int(&(mi.vsz),       &(kt->send), sizeof(mi.vsz));
   mtn_set_int(&(mi.res),       &(kt->send), sizeof(mi.res));
+  mtn_set_int(&(mb.cpu_num),   &(kt->send), sizeof(mb.cpu_num));
+  mtn_set_int(&(mb.loadavg),   &(kt->send), sizeof(mb.loadavg));
+  mtn_set_int(&(mb.pscount),   &(kt->send), sizeof(mb.pscount));
+  mtn_set_int(&(mb.memsize),   &(kt->send), sizeof(mb.memsize));
+  mtn_set_int(&(mb.memfree),   &(kt->send), sizeof(mb.memfree));
   kt->send.head.fin = 1;
   kt->fin = 1;
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
@@ -1041,25 +1103,14 @@ void mtnd_child_exit(MTNTASK *kt)
   kt->fin = 1;
 }
 
-void mtnd_child_exec(MTNTASK *kt)
+void mtnd_child_fork(MTNTASK *kt, MTNJOB *job)
 {
-  int e;
-  int r;
-  pid_t pid;
-  int size;
-  int status;
   int pp[3][2];
-  struct epoll_event ev;
-  char cmd[PATH_MAX];
-  char buff[MTN_MAX_DATASIZE];
-  mtn_get_string(cmd, &(kt->recv));
-  mtnlogger(mtn, 0, "[debug] %s: %s\n", __func__, cmd);
-
   pipe(pp[0]);
   pipe(pp[1]);
   pipe(pp[2]);
-  pid = fork();
-  if(pid == -1){
+  job->pid = fork();
+  if(job->pid == -1){
     close(pp[0][0]);
     close(pp[0][1]);
     close(pp[1][0]);
@@ -1070,120 +1121,173 @@ void mtnd_child_exec(MTNTASK *kt)
     mtn_set_int(&errno, &(kt->send), sizeof(errno));
     return;
   }
-  if(pid){
-    kt->std[0] = pp[0][1];
-    kt->std[1] = pp[1][0];
-    kt->std[2] = pp[2][0];
+  if(job->pid > 0){
     close(pp[0][0]);
     close(pp[1][1]);
     close(pp[2][1]);
-    e = epoll_create(4);
-    ev.data.fd = kt->std[0];
-    ev.events  = EPOLLOUT;
-    epoll_ctl(e, EPOLL_CTL_ADD, kt->std[0], &ev);
-    ev.data.fd = kt->std[1];
-    ev.events  = EPOLLIN;
-    epoll_ctl(e, EPOLL_CTL_ADD, kt->std[1], &ev);
-    ev.data.fd = kt->std[2];
-    ev.events  = EPOLLIN;
-    epoll_ctl(e, EPOLL_CTL_ADD, kt->std[2], &ev);
-    ev.data.fd = kt->con;
-    ev.events  = EPOLLIN;
-    epoll_ctl(e, EPOLL_CTL_ADD, kt->con, &ev);
-
-    size = 0;
-    kt->recv.head.size = 0;
-    kt->send.head.size = 0;
-    kt->send.head.ver  = PROTOCOL_VERSION;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    send_data_stream(mtn, kt->con, &(kt->send));
-
-    while(is_loop && (kt->std[1] || kt->std[2])){
-      r = epoll_wait(e, &ev, 1, 1000);
-      if(r != 1){
-        continue;
-      }
-      if(ev.data.fd == kt->con){
-        kill(pid, SIGINT);
-        break;
-      }
-      if(ev.data.fd == kt->std[0]){
-        if(size < kt->recv.head.size){
-          r = write(kt->std[0], kt->recv.data.data + size, kt->recv.head.size - size);
-          if(r == -1){
-            mtnlogger(mtn, 0, "[error] %s: STDIN %s\n", __func__, strerror(errno));
-          }else{
-            size += r;
-          }
-        }else{
-          size = 0;
-          kt->send.head.size = 0;
-          kt->send.head.type = MTNCMD_STDIN;
-          send_recv_stream(mtn, kt->con, &(kt->send), &(kt->recv));
-          mtnlogger(mtn, 0, "[debug] %s: STDIN  FD=%d SIZE=%d\n", __func__, kt->std[0], kt->recv.head.size);
-          if(kt->recv.head.size == 0){
-            epoll_ctl(e, EPOLL_CTL_DEL, kt->std[0], NULL);
-            close(kt->std[0]);
-            kt->std[0] = 0;
-          }
-        }
-      }
-      if(ev.data.fd == kt->std[1]){
-        r = read(kt->std[1], buff, sizeof(buff));
-        mtnlogger(mtn, 0, "[debug] %s: STDOUT FD=%d R=%d\n", __func__, kt->std[1],r );
-        if(r > 0){
-          kt->send.head.type = MTNCMD_STDOUT;
-          kt->send.head.size = 0;
-          mtn_set_data(buff, &(kt->send), r);
-          send_data_stream(mtn, kt->con, &(kt->send));
-        }
-        if(r == 0){
-          epoll_ctl(e, EPOLL_CTL_DEL, kt->std[1], NULL);
-          close(kt->std[1]);
-          kt->std[1] = 0;
-        }
-      }
-      if(ev.data.fd == kt->std[2]){
-        r = read(kt->std[2], buff, sizeof(buff));
-        mtnlogger(mtn, 0, "[debug] %s: STDERR FD=%d R=%d\n", __func__, kt->std[2],r);
-        if(r > 0){
-          kt->send.head.type = MTNCMD_STDERR;
-          kt->send.head.size = 0;
-          mtn_set_data(buff, &(kt->send), r);
-          send_data_stream(mtn, kt->con, &(kt->send));
-        }
-        if(r == 0){
-          epoll_ctl(e, EPOLL_CTL_DEL, kt->std[2], NULL);
-          close(kt->std[2]);
-          kt->std[2] = 0;
-        }
-      }
-    }
-    while(waitpid(pid, &status, 0) != pid);
-    close(e);
-    if(kt->std[0]){
-      close(kt->std[0]);
-      kt->std[0] = 0;
-    }
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    mtnlogger(mtn, 0, "[debug] %s: return\n", __func__);
+    kt->std[0] = pp[0][1];
+    kt->std[1] = pp[1][0];
+    kt->std[2] = pp[2][0];
+    fcntl(kt->std[0], F_SETFD, FD_CLOEXEC);
+    fcntl(kt->std[1], F_SETFD, FD_CLOEXEC);
+    fcntl(kt->std[2], F_SETFD, FD_CLOEXEC);
     return;
   }
-
   //===== exec process =====
+  setpgid(0,0);
   close(0);
   close(1);
   close(2);
-  close(pp[0][1]);
-  close(pp[1][0]);
-  close(pp[2][0]);
   dup2(pp[0][0],0); // stfdin
   dup2(pp[1][1],1); // stdout
   dup2(pp[2][1],2); // stderr
-  execlp("sh", "sh", "-c", cmd, NULL);
-  mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), cmd);
+  close(pp[0][0]);
+  close(pp[0][1]);
+  close(pp[1][0]);
+  close(pp[1][1]);
+  close(pp[2][0]);
+  close(pp[2][1]);
+  execlp("sh", "sh", "-c", job->cmd, NULL);
+  mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), job->cmd);
   _exit(127);
+}
+
+void mtnd_child_exec_poll(MTNTASK *kt, MTNJOB *job)
+{
+  int r;
+  static int size  = 0;
+  static int wtime = 200;
+  struct epoll_event  ev;
+  struct timeval  polltv;
+  struct timeval keikatv;
+  char buff[MTN_MAX_DATASIZE];
+
+  gettimeofday(&polltv, NULL);
+  timersub(&polltv, &(job->start), &keikatv);
+  if(wtime < (keikatv.tv_sec * 1000 + keikatv.tv_usec / 1000)){
+    memcpy(&(job->start), &polltv, sizeof(struct timeval));
+    scanprocess(job, 1);
+    getjobusage(job);
+    wtime = getwaittime(job, 1);
+  }
+  r = epoll_wait(job->efd, &ev, 1, wtime);
+  if(r != 1){
+    return;
+  }
+  if(ev.data.fd == kt->con){
+    kill(-(getpgid(job->pid)), SIGINT);
+    return;
+  }
+  if(ev.data.fd == kt->std[0]){
+    if(size == kt->recv.head.size){
+      size = 0;
+      kt->send.head.size = 0;
+      kt->send.head.type = MTNCMD_STDIN;
+      send_recv_stream(mtn, kt->con, &(kt->send), &(kt->recv));
+      if(kt->recv.head.size == 0){
+        mtnlogger(mtn, 8, "[debug] %s: STDIN:  FD=%d SIZE=%d HSIZE=%d\n", __func__, kt->std[0], size, kt->recv.head.size);
+        epoll_ctl(job->efd, EPOLL_CTL_DEL, kt->std[0], NULL);
+        close(kt->std[0]);
+        kt->std[0] = 0;
+      }else{
+        mtnlogger(mtn, 9, "[debug] %s: STDIN:  FD=%d SIZE=%d HSIZE=%d\n", __func__, kt->std[0], size, kt->recv.head.size);
+        r = write(kt->std[0], kt->recv.data.data + size, kt->recv.head.size - size);
+        if(r == -1){
+          mtnlogger(mtn, 0, "[error] %s: STDIN %s\n", __func__, strerror(errno));
+        }else{
+          size += r;
+        }
+      }
+    }else{
+      r = write(kt->std[0], kt->recv.data.data + size, kt->recv.head.size - size);
+      if(r == -1){
+        mtnlogger(mtn, 0, "[error] %s: STDIN %s\n", __func__, strerror(errno));
+      }else{
+        size += r;
+      }
+      mtnlogger(mtn, 9, "[debug] %s: STDIN: FD=%d SIZE=%d HSIZE=%d\n", __func__, kt->std[0], size, kt->recv.head.size);
+    }
+  }
+  if(ev.data.fd == kt->std[1]){
+    r = read(kt->std[1], buff, sizeof(buff));
+    mtnlogger(mtn, r ? 9 : 8, "[debug] %s: STDOUT: FD=%d R=%d\n", __func__, kt->std[1],r );
+    if(r > 0){
+      kt->send.head.type = MTNCMD_STDOUT;
+      kt->send.head.size = 0;
+      mtn_set_data(buff, &(kt->send), r);
+      send_data_stream(mtn, kt->con, &(kt->send));
+    }
+    if(r == 0){
+      epoll_ctl(job->efd, EPOLL_CTL_DEL, kt->std[1], NULL);
+      close(kt->std[1]);
+      kt->std[1] = 0;
+    }
+  }
+  if(ev.data.fd == kt->std[2]){
+    r = read(kt->std[2], buff, sizeof(buff));
+    mtnlogger(mtn, r ? 9 : 8, "[debug] %s: STDERR: FD=%d R=%d\n", __func__, kt->std[2],r);
+    if(r > 0){
+      kt->send.head.type = MTNCMD_STDERR;
+      kt->send.head.size = 0;
+      mtn_set_data(buff, &(kt->send), r);
+      send_data_stream(mtn, kt->con, &(kt->send));
+    }
+    if(r == 0){
+      epoll_ctl(job->efd, EPOLL_CTL_DEL, kt->std[2], NULL);
+      close(kt->std[2]);
+      kt->std[2] = 0;
+    }
+  }
+}
+
+void mtnd_child_exec(MTNTASK *kt)
+{
+  int status;
+  MTNJOB job;
+  struct epoll_event ev;
+  char buff[MTN_MAX_DATASIZE];
+
+  memset(&job, 0, sizeof(job));
+  mtn_get_string(buff, &(kt->recv));
+  mtn_get_int(&(job.lim), &(kt->recv), sizeof(job.lim));
+  job.cmd = newstr(buff);
+  gettimeofday(&(job.start), NULL);
+  mtnlogger(mtn, 0, "[debug] %s: %s\n", __func__, job.cmd);
+  
+  mtnd_child_fork(kt, &job);
+  job.efd = epoll_create(4);
+  ev.events  = EPOLLOUT;
+  ev.data.fd = kt->std[0];
+  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+  ev.events  = EPOLLIN;
+  ev.data.fd = kt->std[1];
+  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+  ev.data.fd = kt->std[2];
+  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+  ev.data.fd = kt->con;
+  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+  fcntl(kt->std[0], F_SETFL , O_NONBLOCK);
+  fcntl(kt->std[1], F_SETFL , O_NONBLOCK);
+  fcntl(kt->std[2], F_SETFL , O_NONBLOCK);
+
+  kt->recv.head.size = 0;
+  kt->send.head.size = 0;
+  kt->send.head.ver  = PROTOCOL_VERSION;
+  kt->send.head.type = MTNCMD_SUCCESS;
+  send_data_stream(mtn, kt->con, &(kt->send));
+  while(is_loop && (kt->std[1] || kt->std[2])){
+    mtnd_child_exec_poll(kt, &job);
+  }
+  kill(-(getpgid(job.pid)), SIGCONT);
+  while(waitpid(job.pid, &status, 0) != job.pid);
+  job_close(&job);
+  if(kt->std[0]){
+    close(kt->std[0]);
+    kt->std[0] = 0;
+  }
+  kt->send.head.type = MTNCMD_SUCCESS;
+  kt->send.head.size = 0;
+  mtnlogger(mtn, 0, "[debug] %s: return\n", __func__);
 }
 
 void mtnd_child_error(MTNTASK *kt)
@@ -1268,6 +1372,7 @@ void mtnd_accept_process(int l)
 
   //----- child process -----
   close(l);
+  fcntl(kt.con, F_SETFD, FD_CLOEXEC);
   mtnd_child(&kt);
   close(kt.con);
   _exit(0);
@@ -1354,6 +1459,7 @@ void mtnd_main()
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
   }
+  fcntl(e, F_SETFD, FD_CLOEXEC);
 
   m = create_msocket(mtn);
   if(m == -1){
@@ -1617,6 +1723,7 @@ int mtnd()
 void mtnd_init()
 {
   mtn = mtn_init(MODULE_NAME);
+  mtn->logverbose = 1;
   mtn->logmode = MTNLOG_STDERR;
   ctx = malloc(sizeof(MTND));
   ctx->daemonize = 1;

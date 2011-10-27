@@ -29,9 +29,9 @@ sync:
 install:
 	rsync -a mtnd    /usr/klab/sbin/mtnd
 	rsync -a mtnfs   /usr/klab/sbin/mtnfs
-	rsync -a mtntool /usr/klab/sbin/mtntool
-	rsync -a mtnexec /usr/klab/sbin/mtnexec
+	rsync -a mtntool /usr/klab/bin/mtntool
+	rsync -a mtnexec /usr/klab/bin/mtnexec
 	chown root:root  /usr/klab/sbin/mtnd
 	chown root:root  /usr/klab/sbin/mtnfs
-	chown root:root  /usr/klab/sbin/mtntool
-	chown root:root  /usr/klab/sbin/mtnexec
+	chown root:root  /usr/klab/bin/mtntool
+	chown root:root  /usr/klab/bin/mtnexec

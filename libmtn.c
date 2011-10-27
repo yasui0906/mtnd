@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <libgen.h>
 #include <syslog.h>
+#include <signal.h>
 #include <errno.h>
 #include <pthread.h>
 #include <fcntl.h>
@@ -85,6 +86,248 @@ int getcount(int id)
   r = count[id];
   pthread_mutex_unlock(&(count_mutex));
   return(r);
+}
+
+int is_numeric(STR str)
+{
+  while(*str){
+    if(*str < '0' || *str > '9'){
+      return(0);
+    }
+    str++;
+  }
+  return(1);
+}
+
+int getpscount()
+{
+  int i = 0;
+  DIR *d = opendir("/proc");
+  struct dirent *ent;
+  while((ent = readdir(d))){
+    if(!is_numeric(ent->d_name)){
+      continue;
+    }
+    i++;
+  }
+  closedir(d);
+  return(i);
+}
+
+int getprocstat(MTNPROCSTAT *ps)
+{
+  int i;
+  int f;
+  int r;
+  int t;
+  char *ptr;
+  char *save;
+  char buff[8192];
+  char path[PATH_MAX];
+  int ctick = sysconf(_SC_CLK_TCK);
+
+  sprintf(path, "/proc/%d/stat", ps->pid);
+  f = open(path, O_RDONLY);
+  if(f == -1){
+    return(-1); 
+  }
+  r = read(f, buff, sizeof(buff));
+  close(f);
+  if(r == -1){
+    return(-1);
+  }
+  buff[r] = 0;
+
+  t = 0;
+  i = 2;
+  strtok_r(buff, " ", &save);
+  while((ptr=strtok_r(NULL, " ", &save))){
+    switch(i++){
+      case 3:
+        ps->state = *ptr;
+        break;
+      case 14:
+        ps->utime = atoi(ptr) * 1000 / ctick; // cpu user time [ms]
+        break;
+      case 15:
+        ps->stime = atoi(ptr) * 1000 / ctick; // cpu system time [ms]
+        break;
+    }
+  }
+  return(0);
+}
+
+int getjobusage(MTNJOB *job)
+{
+  int i;
+  int rtime;
+  struct timeval tv;
+  struct timeval tr;
+
+  if(!job){
+    return(-1);
+  }
+  gettimeofday(&tv, NULL);
+  timersub(&tv, &(job->start), &tr);
+  rtime = tr.tv_sec * 1000 + tr.tv_usec / 1000;
+  if(!rtime){
+    return(-1);
+  }
+
+  job->cpu = 0;
+  job->ctm = 0;
+  job->rtm = rtime;
+  for(i=0;i<job->cct;i++){
+    job->ctm += job->pstat[i].utime;
+    job->ctm += job->pstat[i].stime;
+  }
+  return(job->cpu = job->ctm * 1000 / rtime);
+}
+
+int scanprocess(MTNJOB *job, int job_max)
+{
+  int i;
+  int j;
+  pid_t pid;
+  pid_t sid;
+  pid_t pgid;
+  pid_t mysid = getsid(0);
+  DIR *d = opendir("/proc");
+  struct dirent *ent;
+
+  while((ent = readdir(d))){
+    if(!is_numeric(ent->d_name)){
+      continue;
+    }
+    pid = atoi(ent->d_name);
+    sid = getsid(pid);
+    if(sid != mysid){
+      continue;
+    }
+    pgid = getpgid(pid);
+    for(i=0;i<job_max;i++){
+      if(!job[i].pid){
+        continue;
+      }
+      if(getpgid(job[i].pid) == pgid){
+        for(j=0;j<job[i].cct;j++){
+          if(job[i].pstat[j].pid == pid){
+            break;
+          }
+        }
+        if(j == job[i].cct){
+          (job[i].cct)++;
+          job[i].pstat = realloc(job[i].pstat, sizeof(MTNPROCSTAT) * job[i].cct);
+          memset(&(job[i].pstat[j]), 0, sizeof(MTNPROCSTAT));
+          job[i].pstat[j].pid = pid;
+        }
+        getprocstat(&(job[i].pstat[j]));
+      }
+    }
+  }
+  closedir(d);
+  return(0);
+}
+
+int scheprocess(MTN *mtn, MTNJOB *job, int job_max, int cpu_lim, int cpu_num)
+{
+  int i;
+  int cpu_id;
+  int cpu_use;
+  cpu_set_t cpumask;
+
+  cpu_id  = 0;
+  cpu_use = 0;
+  scanprocess(job, job_max);
+  for(i=0;i<job_max;i++){
+    if(!job[i].pid){
+      continue;
+    }
+    getjobusage(job + i);
+    if(cpu_id != job[i].cid){
+      CPU_ZERO(&cpumask);
+      CPU_SET(cpu_id, &cpumask);
+      if(sched_setaffinity(job[i].pid, cpu_num, &cpumask) == -1){
+        mtnlogger(mtn, 0, "[error] %s: sched_setaffinity: %s\n", __func__, strerror(errno));
+        job->cid = -1;
+      }else{
+        job->cid = cpu_id;
+      }
+    }
+    cpu_id  += 1;
+    cpu_id  %= cpu_num;
+    cpu_use += job[i].cpu;
+    //MTNDEBUG("CMD=%s STATE=%c CPU=%d.%d\n", job->cmd, job->pstat[0].state, job->cpu / 10, job->cpu % 10);
+  }
+  //MTNDEBUG("[CPU=%d.%d%% LIM=%d CPU=%d]\n", ctx->cpu_use / 10, ctx->cpu_use % 10, ctx->cpu_lim / 10, ctx->cpu_num);
+
+  if(!cpu_lim){
+    return(cpu_use);
+  }
+
+  for(i=0;i<job_max;i++){
+    if(!job[i].pid){
+      continue;
+    }
+    if(cpu_lim * cpu_num < cpu_use){
+      // 過負荷状態
+      if(job[i].pstat[0].state != 'T'){
+        if(job[i].cpu > cpu_lim){
+          kill(-(job[i].pid), SIGSTOP);
+          return(cpu_use);
+        }
+      }
+    }else{
+      // アイドル状態
+      if(job[i].pstat[0].state == 'T'){
+        if(job[i].cpu < cpu_lim){
+          kill(-(job[i].pid), SIGCONT);
+          return(cpu_use);
+        }
+      }
+    }
+  }
+
+  for(i=0;i<job_max;i++){
+    if(!job[i].pid){
+      continue;
+    }
+    if(job[i].pstat[0].state != 'T'){
+      if(job[i].cpu > cpu_lim){
+        kill(-(job[i].pid), SIGSTOP);
+      }
+    }else{
+      if(job[i].cpu < cpu_lim){
+        kill(-(job[i].pid), SIGCONT);
+      }
+    }
+  }
+  return(cpu_use);
+}
+
+int getwaittime(MTNJOB *job, int job_max)
+{
+  int i;
+  int w;
+  int wtime = 500;
+  for(i=0;i<job_max;i++){
+    if(!job[i].pid){
+      continue;
+    }
+    if(job[i].pstat[0].state == 'T'){
+      w = (job[i].ctm * 1000 / job[i].lim) - job[i].rtm;
+    }else{
+      w  = job[i].ctm * 1000;
+      w -= (job[i].rtm + job[i].lim);
+      w /= (job[i].lim - 1000);
+    }
+    if(w <= 0){
+      wtime = 100;
+    }else if(w < wtime){
+      wtime = w;
+    }
+  }
+  return(wtime);
 }
 
 static void *xmalloc(size_t size)
@@ -246,16 +489,13 @@ static int send_stream(MTN *mtn, int s, uint8_t *buff, size_t size)
 {
   int r;
 	mtnlogger(mtn, 9, "[debug] %s:\n", __func__);
-  while(send_readywait(s)){
+  while(size && send_readywait(s)){
     r = send(s, buff, size, 0);
     if(r == -1){
       if(errno == EINTR){
         continue;
       }
       return(-1);
-    }
-    if(size == r){
-      break;
     }
     size -= r;
     buff += r;
@@ -422,6 +662,11 @@ int create_lsocket(MTN *mtn)
   if(s == -1){
     return(-1);
   }
+  if(fcntl(s, F_SETFD, FD_CLOEXEC)){
+    close(s);
+    mtnlogger(mtn, 0, "[error] %s: FD_CLOEXEC %s\n", __func__, strerror(errno));
+    return(-1);
+  }
   return(s);
 }
 
@@ -440,6 +685,11 @@ int create_msocket(MTN *mtn)
   if(fcntl(s, F_SETFL , O_NONBLOCK)){
     close(s);
     mtnlogger(mtn, 0, "[error] %s: O_NONBLOCK %s\n", __func__, strerror(errno));
+    return(-1);
+  }
+  if(fcntl(s, F_SETFD, FD_CLOEXEC)){
+    close(s);
+    mtnlogger(mtn, 0, "[error] %s: FD_CLOEXEC %s\n", __func__, strerror(errno));
     return(-1);
   }
   if(setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&mg, sizeof(mg)) == -1){
@@ -1015,15 +1265,22 @@ MTNSVR *cpsvr(MTNSVR *svr)
     return(NULL);
   }
   nsv = addsvr(NULL, &(svr->addr), svr->host);
-  nsv->mark  = svr->mark;
-  nsv->bsize = svr->bsize;
-  nsv->fsize = svr->fsize;
-  nsv->dsize = svr->dsize;
-  nsv->dfree = svr->dfree;
-  nsv->vsz   = svr->vsz;
-  nsv->res   = svr->res;
+  nsv->mark    = svr->mark;
+  nsv->bsize   = svr->bsize;
+  nsv->fsize   = svr->fsize;
+  nsv->dsize   = svr->dsize;
+  nsv->dfree   = svr->dfree;
+  nsv->vsz     = svr->vsz;
+  nsv->res     = svr->res;
+  nsv->cpu_num = svr->cpu_num;
+  nsv->loadavg = svr->loadavg;
   memcpy(&(nsv->tv), &(svr->tv), sizeof(struct timeval));
   return(nsv);
+}
+
+int cmpsvr(MTNSVR *s1, MTNSVR *s2)
+{
+  return(cmpaddr(&(s1->addr), &(s2->addr)));
 }
 
 //----------------------------------------------------------------
@@ -1191,7 +1448,9 @@ static void mtn_process_loop(MTN *mtn, int s, MTNSVR *members, MTNDATA *sdata, M
     t = 200;
     switch(r){
       case -1:
-        mtnlogger(mtn, 0, "[error] %s: epoll %s\n", __func__, strerror(errno));
+        if(errno != EINTR){
+          mtnlogger(mtn, 0, "[error] %s: epoll %s\n", __func__, strerror(errno));
+        }
         break;
       case 0:
         if((l = ((o -= t) > 0))){
@@ -1305,6 +1564,11 @@ void mtn_info_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, 
   mtn_get_int(&(member->membercnt), rdata, sizeof(member->membercnt));
   mtn_get_int(&(member->vsz),       rdata, sizeof(member->vsz));
   mtn_get_int(&(member->res),       rdata, sizeof(member->res));
+  mtn_get_int(&(member->cpu_num),   rdata, sizeof(member->cpu_num));
+  mtn_get_int(&(member->loadavg),   rdata, sizeof(member->loadavg));
+  mtn_get_int(&(member->pscount),   rdata, sizeof(member->pscount));
+  mtn_get_int(&(member->memsize),   rdata, sizeof(member->memsize));
+  mtn_get_int(&(member->memfree),   rdata, sizeof(member->memfree));
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -1824,31 +2088,25 @@ int mtn_exec_wait(MTN *mtn, MTNJOB *job)
         sd.head.size = 0;
         sd.head.flag = 0;
         sd.head.type = MTNCMD_STDIN;
-        if(job->in){
-          rsize = read(job->in, buff, sizeof(buff));
-          if(rsize > 0){
-            mtn_set_data(buff, &sd, rsize);
-          }else{
-            close(job->in);
-            job->in = 0;
-            if(rsize == -1){
-              sprintf(buff, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[0]);
-              write(job->err, buff, strlen(buff));
-            }
-          }
+        rsize = read(0, buff, sizeof(buff));
+        if(rsize > 0){
+          mtn_set_data(buff, &sd, rsize);
+        }else if(rsize == -1){
+          sprintf(buff, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[0]);
+          write(2, buff, strlen(buff));
         }
         send_data_stream(mtn, job->con, &sd);
         break;
       case MTNCMD_STDOUT:
         ssize = 0;
         while(ssize < rd.head.size){
-          ssize += write(job->out, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+          ssize += write(1, (void *)(rd.data.data + ssize), rd.head.size - ssize);
         }
         break;
       case MTNCMD_STDERR:
         ssize = 0;
         while(ssize < rd.head.size){
-          ssize += write(job->err, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+          ssize += write(2, (void *)(rd.data.data + ssize), rd.head.size - ssize);
         }
         break;
     }
@@ -1886,6 +2144,7 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
   sd.head.flag = 0;
   sd.head.type = MTNCMD_EXEC;
   mtn_set_string(job->cmd, &sd);
+  mtn_set_int(&(job->lim), &sd, sizeof(job->lim));
 
   if(send_recv_stream(mtn, job->con, &sd, &rd) == -1){
     return(-1);
@@ -2015,29 +2274,32 @@ int mtn_flush(MTN *mtn, int s)
 
 int mtn_write(MTN *mtn, int s, const char *buf, size_t size, off_t offset)
 {
-  int r = 0;
+  int  r = 0;
   int     sz;
   MTNDATA sd;
+
   sz = size;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.type = MTNCMD_WRITE;
   sd.head.flag = 1;
-  while(size){
+
+  char peer[INET_ADDRSTRLEN];
+  socklen_t addr_len;
+  struct sockaddr_in addr;
+  addr_len = sizeof(addr);
+  getpeername(s, (struct sockaddr *)(&addr), &addr_len);
+  inet_ntop(AF_INET, &(addr.sin_addr), peer, INET_ADDRSTRLEN);
+
+  while(sz){
     sd.head.size = 0;
     mtn_set_int(&offset, &sd, sizeof(offset));
-    r = mtn_set_data((void *)buf, &sd, size);
-    size   -= r;
+    r = mtn_set_data((void *)buf, &sd, sz);
+    sz     -= r;
     buf    += r;
     offset += r;
     if(mtn->sendsize[s] + sd.head.size + sizeof(sd.head) > MTN_TCP_BUFFSIZE){
       if(mtn_flush(mtn, s) == -1){
         r = -errno;
-        char peer[INET_ADDRSTRLEN];
-        socklen_t addr_len;
-        struct sockaddr_in addr;
-        addr_len = sizeof(addr);
-        getpeername(s, (struct sockaddr *)(&addr), &addr_len);
-        inet_ntop(AF_INET, &(addr.sin_addr), peer, INET_ADDRSTRLEN);
         mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(-r), peer);
         return(r);
       }
@@ -2047,7 +2309,7 @@ int mtn_write(MTN *mtn, int s, const char *buf, size_t size, off_t offset)
     memcpy(mtn->sendbuff[s] + mtn->sendsize[s], &(sd.data), sd.head.size);
     mtn->sendsize[s] += sd.head.size;
   }
-  return(sz);
+  return(size);
 }
 
 int mtn_close_file(MTN *mtn, int s)
@@ -2303,7 +2565,7 @@ size_t set_mtnstatus_members(MTN *mtn)
     vsz   = mb->vsz / 1024;
     res   = mb->res / 1024;
     v4addr(&(mb->addr), ipstr);
-    exsprintf(buff, size, "%s %s %d %2d%% %llu %llu %llu %llu %d\n", 
+    exsprintf(buff, size, "%s %s %d %2d%% %llu %llu %llu %llu %d %d %d.%02d %d\n", 
       mb->host,
       ipstr, 
       mb->membercnt,
@@ -2312,7 +2574,11 @@ size_t set_mtnstatus_members(MTN *mtn)
       dsize, 
       vsz, 
       res, 
-      mb->malloccnt); 
+      mb->malloccnt,
+      mb->cpu_num,
+      mb->loadavg / 100,
+      mb->loadavg % 100,
+      mb->pscount); 
   }
   clrsvr(members);
   result = (*buff == NULL) ? 0 : strlen(*buff);
@@ -2407,7 +2673,7 @@ void mtnlogger(MTN *mtn, int l, char *fmt, ...)
 {
   va_list arg;
   struct timeval tv;
-  char b[1024];
+  char b[8192];
   if(mtn && (mtn->loglevel < l)){
     return;
   }
@@ -2415,28 +2681,28 @@ void mtnlogger(MTN *mtn, int l, char *fmt, ...)
   vsnprintf(b, sizeof(b), fmt, arg);
   va_end(arg);
   b[sizeof(b) - 1] = 0;
-#ifdef MTN_DEBUG
-  gettimeofday(&tv, NULL);
-  switch(mtn ? mtn->logmode : MTNLOG_STDERR){
-    case MTNLOG_SYSLOG:
-      openlog((const char *)(mtn->module_name), 0, LOG_DAEMON);
-      syslog(LOG_INFO,"%02u.%06u [%05u] %s", (uint32_t)(tv.tv_sec % 60), (uint32_t)(tv.tv_usec), (uint32_t)(syscall(SYS_gettid)), b);
-      break;
-    case MTNLOG_STDERR:
-      fprintf(stderr, "%02u.%06u [%05u] %s", (uint32_t)(tv.tv_sec % 60), (uint32_t)(tv.tv_usec), (uint32_t)(syscall(SYS_gettid)), b);
-      break;
+  if(mtn ? mtn->logverbose : 0){
+    gettimeofday(&tv, NULL);
+    switch(mtn ? mtn->logmode : MTNLOG_STDERR){
+      case MTNLOG_SYSLOG:
+        openlog((const char *)(mtn->module_name), 0, LOG_DAEMON);
+        syslog(LOG_INFO,"%02u.%06u [%05u] %s", (uint32_t)(tv.tv_sec % 60), (uint32_t)(tv.tv_usec), (uint32_t)(syscall(SYS_gettid)), b);
+        break;
+      case MTNLOG_STDERR:
+        fprintf(stderr, "%02u.%06u [%05u] %s", (uint32_t)(tv.tv_sec % 60), (uint32_t)(tv.tv_usec), (uint32_t)(syscall(SYS_gettid)), b);
+        break;
+    }
+  }else{
+    switch(mtn ? mtn->logmode : MTNLOG_STDERR){
+      case MTNLOG_SYSLOG:
+        openlog(mtn->module_name, 0, LOG_DAEMON);
+        syslog(LOG_INFO, "%s", b);
+        break;
+      case MTNLOG_STDERR:
+        fprintf(stderr, "%s", b);
+        break;
+    }
   }
-#else
-  switch(mtn ? mtn->logmode : MTNLOG_STDERR){
-    case MTNLOG_SYSLOG:
-      openlog(mtn->module_name, 0, LOG_DAEMON);
-      syslog(LOG_INFO, "%s", b);
-      break;
-    case MTNLOG_STDERR:
-      fprintf(stderr, "%s", b);
-      break;
-  }
-#endif
 }
 
 int get_meminfo(meminfo *m)
@@ -2806,6 +3072,58 @@ STR convarg(STR arg, ARG argl)
   }
   clrstr(p);
   return(arg);
+}
+
+static int job_flush(MTNJOB *job)
+{
+  int r;
+  size_t size = 0;
+  while(job->stdout.datasize - size){
+    r = write(1, job->stdout.stdbuff + size, job->stdout.datasize - size);
+    if(r == -1){
+      return(-1);
+    }
+    size += r;
+  }
+  if(job->stdout.stdbuff){
+    free(job->stdout.stdbuff);
+    job->stdout.stdbuff  = NULL;
+    job->stdout.buffsize = 0;
+    job->stdout.datasize = 0;
+  }
+  return(0);
+}
+
+int job_close(MTNJOB *job)
+{
+  if(job->efd > 0){
+    close(job->efd);
+    job->efd = 0;
+  }
+  if(job->pfd){
+    close(job->pfd);
+    job->pfd = 0;
+  }
+  if(job->con > 0){
+    close(job->con);
+    job->con = 0;
+  }
+  if(job->cct){
+    free(job->pstat);
+    job->pstat = NULL;
+    job->cct   = 0;
+  }
+  job_flush(job);
+  clrstr(job->cmd);
+  clrarg(job->std);
+  clrarg(job->putarg);
+  clrarg(job->getarg);
+  clrarg(job->args);
+  clrarg(job->argl);
+  clrarg(job->argc);
+  clrsvr(job->svr);
+  memset(job, 0, sizeof(MTNJOB));
+  return(0);
 }
 
 //

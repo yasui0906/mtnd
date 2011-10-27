@@ -58,10 +58,10 @@ int mtntool_list(char *path)
   struct passwd *pw;
   struct group  *gr;
   MTNSTAT *kst = mtn_list(mtn, path);
-  sprintf(field[0], "%%s: %%s ");
-  sprintf(field[1], "%%s "     );
-  sprintf(field[2], "%%s "     );
-  sprintf(field[3], "%%llu "   );
+  sprintf(field[0], "%%s: " );
+  sprintf(field[1], "%%s "  );
+  sprintf(field[2], "%%s "  );
+  sprintf(field[3], "%%llu ");
   while(kst){
     tm = localtime(&(kst->stat.st_mtime));
     if(pw = getpwuid(kst->stat.st_uid)){
@@ -75,7 +75,8 @@ int mtntool_list(char *path)
       sprintf(gname, "%d", kst->stat.st_gid);
     }
     get_mode_string(m, kst->stat.st_mode);
-    printf(field[0], kst->svr->host, m);
+    printf(field[0], kst->svr->host);
+    printf("%s ", m);
     printf(field[1], pname);
     printf(field[2], gname);
     printf(field[3], kst->stat.st_size);
@@ -137,7 +138,7 @@ static struct option opts[]={
   "help",    0, NULL, 'h',
   "version", 0, NULL, 'v',
   "info",    0, NULL, 'i',
-  "list",    1, NULL, 'l',
+  "list",    0, NULL, 'l',
   "file",    1, NULL, 'f',
   "put",     1, NULL, 'P',
   "get",     1, NULL, 'G',
@@ -151,7 +152,7 @@ int main(int argc, char *argv[])
   char local_path[PATH_MAX] ={0};
   char remote_path[PATH_MAX]={0};
   mtn = mtn_init(MODULE_NAME);
-  while((r = getopt_long(argc, argv, "f:P:G:l:hviC", opts, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "f:P:G:lhviC", opts, NULL)) != -1){
     switch(r){
       case 'h':
         usage();

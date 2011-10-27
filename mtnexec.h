@@ -11,9 +11,12 @@
 typedef struct mtnexec_context
 {
   int efd;
-  int mode;
   int zero;
   int conv;
+  int mode;
+  int opt_R;
+  int opt_A;
+  int opt_L;
   int nobuf;
   int child;
   STR group;
@@ -25,10 +28,15 @@ typedef struct mtnexec_context
   MTNSVR *svr;
   MTNJOB *job;
   int dryrun;
+  int signal;
   int verbose;
   int arg_num;
   int job_max;
+  int cpu_lim;
+  int cpu_num;
+  int cpu_use;
   ARG linearg;
   int fsig[2];
+  struct timeval polltv;
 } CTX;
 extern int optind;

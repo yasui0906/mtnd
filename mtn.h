@@ -52,6 +52,11 @@ typedef struct mtnsvr
   uint64_t limit;
   uint64_t vsz;
   uint64_t res;
+  uint32_t cpu_num;
+  uint32_t loadavg;
+  uint32_t pscount;
+  uint64_t memsize;
+  uint64_t memfree;
   int malloccnt;
   int membercnt;
   struct timeval tv;
@@ -76,28 +81,42 @@ typedef struct mtndir
   char path[PATH_MAX];
 } MTNDIR;
 
+typedef struct
+{
+  pid_t      pid;
+  uint8_t  state;
+  uint64_t utime;
+  uint64_t stime;
+  struct timeval tv;
+} MTNPROCSTAT;
+
 typedef struct mtnjob
 {
-  int      id;
-  pid_t   pid;
-  uid_t   uid;
-  gid_t   gid;
-  int     con;
-  int     efd; // epoll用のディスクリプタ
-  int     fin; // コマンドが終了したら1になる
-  int     pfd; // プロセス間通信用ディスクリプタ
-  int      in; // stdinのファイルディスクリプタ
-  int     out; // stdoutのファイルディスクリプタ
-  int     err; // stderrのファイルディスクリプタ
-  int    conv;
-  STR     cmd;
-  ARG     std;
-  ARG    args;
-  ARG    argl;
-  ARG    argc;
-  ARG  putarg;
-  ARG  getarg;
-  MTNSVR *svr;
+  int       id;
+  pid_t    pid;
+  uid_t    uid;
+  gid_t    gid;
+  int      cid; // CPU-ID
+  int      cpu; // CPU使用率(整数で処理するために10倍)
+  int      lim; // CPU使用率の上限値
+  uint64_t ctm; // CPU時間
+  uint64_t rtm; // 経過時間
+  int      cct; // 起動した子プロセスの数
+  int      con; // mtndと接続するソケット
+  int      efd; // epoll用のディスクリプタ
+  int      fin; // コマンドが終了したら1になる
+  int      pfd; // プロセス間通信用ディスクリプタ
+  int     conv;
+  STR      cmd;
+  ARG      std;
+  ARG     args;
+  ARG     argl;
+  ARG     argc;
+  ARG   putarg;
+  ARG   getarg;
+  MTNSVR  *svr;
+  MTNPROCSTAT   *pstat;
+  struct timeval start;
   struct {
     size_t buffsize;
     size_t datasize;
@@ -152,6 +171,7 @@ typedef struct mtn_context
   char     mcast_addr[INET_ADDRSTRLEN];
   MTNLOG   logmode;
   uint16_t loglevel;
+  uint16_t logverbose;
   size_t  *sendsize;
   uint8_t **sendbuff;
   struct mtnmutex   mutex;
@@ -160,6 +180,17 @@ typedef struct mtn_context
   struct mtnmembers members;
 } MTN;
 
+/*=========================================================================*/
+int is_numeric(STR str);
+int getpscount();
+int getprocstat(MTNPROCSTAT *ps);
+int getjobusage(MTNJOB *job);
+int scanprocess(MTNJOB *job, int job_max);
+int scheprocess(MTN *mtn, MTNJOB *job, int job_max, int cpu_lim, int cpu_num);
+int job_close(MTNJOB *job);
+int getwaittime(MTNJOB *job, int job_max);
+
+/*-------------------------------------------------------------------------*/
 void     mtnlogger(MTN *mtn, int l, char *fmt, ...);
 void     mtndebug(const char *func, char *fmt, ...);
 
@@ -210,6 +241,7 @@ MTNSVR  *cpsvr(MTNSVR *svr);
 MTNSVR  *getsvr(MTNSVR *svr, MTNADDR *addr);
 MTNSVR  *delsvr(MTNSVR *svr);
 MTNSVR  *clrsvr(MTNSVR *svr);
+int      cmpsvr(MTNSVR *s1, MTNSVR *s2);
 
 STR newstr(char *str);
 STR modstr(STR str, char *n);

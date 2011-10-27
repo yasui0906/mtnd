@@ -590,7 +590,7 @@ static int mtnfs_write(const char *path, const char *buf, size_t size, off_t off
     mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(-r), path);
   }
   pthread_mutex_unlock(&(mtnfs->file_mutex[fi->fh]));
-  return r;
+  return(r);
 }
 
 static int mtnfs_statfs(const char *path, struct statvfs *sv)
@@ -644,7 +644,7 @@ static int mtnfs_flush(const char *path, struct fuse_file_info *fi)
 {
   MTNFS *mtnfs = fuse_get_context()->private_data;
   MTN   *mtn   = mtnfs->mtn;
-  mtnlogger(mtn, 0, "[debug] %s: path=%s\n", __func__, path);
+  mtnlogger(mtn, 9, "[debug] %s: path=%s\n", __func__, path);
   return(0);
 }
 
