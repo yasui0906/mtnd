@@ -45,6 +45,7 @@ typedef struct mtnsvr
   MTNADDR  addr;
   char    *host;
   uint8_t  mark;
+  uint16_t flags;
   uint32_t bsize;
   uint32_t fsize;
   uint64_t dsize;
@@ -57,8 +58,10 @@ typedef struct mtnsvr
   uint32_t pscount;
   uint64_t memsize;
   uint64_t memfree;
-  int malloccnt;
-  int membercnt;
+  int    malloccnt;
+  int    membercnt;
+  STR     groupstr;
+  ARG     grouparg;
   struct timeval tv;
 } MTNSVR;
 
@@ -163,15 +166,18 @@ struct mtnmembers
 
 typedef struct mtn_context
 {
+  STR      groupstr;
+  ARG      grouparg;
   char     host[HOST_NAME_MAX];
   char     module_name[64];
+  char     strerror[8192];
   uint16_t max_packet_size;
   uint32_t max_open;
   uint16_t mcast_port;
   char     mcast_addr[INET_ADDRSTRLEN];
   MTNLOG   logmode;
+  uint16_t logtype;
   uint16_t loglevel;
-  uint16_t logverbose;
   size_t  *sendsize;
   uint8_t **sendbuff;
   struct mtnmutex   mutex;
@@ -182,6 +188,9 @@ typedef struct mtn_context
 
 /*=========================================================================*/
 int is_numeric(STR str);
+int is_export(MTNSVR *svr);
+int is_execute(MTNSVR *svr);
+int is_grpsvr(MTNSVR *svr, ARG grp);
 int getpscount();
 int getprocstat(MTNPROCSTAT *ps);
 int getjobusage(MTNJOB *job);
@@ -233,7 +242,7 @@ MTNSTAT *newstat(const char *name);
 MTNSTAT *delstat(MTNSTAT *mst);
 MTNSTAT *cpstat(MTNSTAT *mst);
 MTNSTAT *mgstat(MTNSTAT *mrt, MTNSTAT *mst);
-void     clrstat(MTNSTAT *mst);
+MTNSTAT *clrstat(MTNSTAT *mst);
 
 MTNSVR  *newsvr(void);
 MTNSVR  *addsvr(MTNSVR *svr, MTNADDR *addr, char *host);
@@ -241,6 +250,7 @@ MTNSVR  *cpsvr(MTNSVR *svr);
 MTNSVR  *getsvr(MTNSVR *svr, MTNADDR *addr);
 MTNSVR  *delsvr(MTNSVR *svr);
 MTNSVR  *clrsvr(MTNSVR *svr);
+MTNSVR  *pushsvr(MTNSVR *list, MTNSVR *svr);
 int      cmpsvr(MTNSVR *s1, MTNSVR *s2);
 
 STR newstr(char *str);
@@ -252,10 +262,11 @@ ARG splitstr(STR str, STR delim);
 ARG newarg(int c);
 ARG addarg(ARG arg, STR str);
 ARG clrarg(ARG args);
-STR joinarg(ARG args);
 ARG copyarg(ARG args);
 STR poparg(ARG args);
 STR convarg(STR arg, ARG argl);
+STR joinarg(ARG args, STR delim);
+STR findarg(ARG arg, STR str);
 ARG cmdargs(MTNJOB *job);
 
 size_t set_mtnstatus_members(MTN *mtn);

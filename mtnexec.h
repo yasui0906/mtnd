@@ -14,6 +14,7 @@ typedef struct mtnexec_context
   int zero;
   int conv;
   int mode;
+  int info;
   int opt_R;
   int opt_A;
   int opt_L;
@@ -35,6 +36,7 @@ typedef struct mtnexec_context
   int cpu_lim;
   int cpu_num;
   int cpu_use;
+  ARG cmdargs;
   ARG linearg;
   int fsig[2];
   struct timeval polltv;

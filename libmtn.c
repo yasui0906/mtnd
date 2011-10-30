@@ -99,6 +99,39 @@ int is_numeric(STR str)
   return(1);
 }
 
+int is_export(MTNSVR *svr)
+{
+  if(!svr){
+    return(0);
+  }
+  return(svr->flags & MTNMODE_EXPORT);
+}
+
+int is_execute(MTNSVR *svr)
+{
+  if(!svr){
+    return(0);
+  }
+  return(svr->flags & MTNMODE_EXECUTE);
+}
+
+int is_grpsvr(MTNSVR *svr, ARG grp)
+{
+  int i;
+  if(!svr){
+    return(0);
+  }
+  if(!svr->groupstr){
+    return(grp ? 0 : 1); 
+  }
+  for(i=0;svr->grouparg[i];i++){
+    if(findarg(grp, svr->grouparg[i])){
+      return(1);
+    }
+  }
+  return(0);
+}
+
 int getpscount()
 {
   int i = 0;
@@ -338,6 +371,16 @@ static void *xmalloc(size_t size)
   }
   return(p);
 }
+
+static void *xcalloc(size_t size)
+{
+  void *p = calloc(1, size);
+  if(p){
+    inccount(MTNCOUNT_MALLOC);
+  }
+  return(p);
+}
+
 
 static void *xrealloc(void *p, size_t size)
 {
@@ -1059,52 +1102,48 @@ MTNDIR *deldir(MTNDIR *kd)
 MTNSTAT *newstat(const char *name)
 {
   char b[PATH_MAX];
-  char f[PATH_MAX];
-  MTNSTAT *kst = xmalloc(sizeof(MTNSTAT));
-  memset(kst, 0, sizeof(MTNSTAT));
+  MTNSTAT *st = xcalloc(sizeof(MTNSTAT));
+  if(!st){
+    return(NULL);
+  }
   if(!name){
     b[0] = 0;
   }else{
     strcpy(b, name);
   }
-  strcpy(f, basename(b));
-  kst->name = xmalloc(strlen(f) + 1);
-  strcpy(kst->name, f);
+  st->name = newstr(basename(b));
   inccount(MTNCOUNT_STAT);
-  return(kst);
+  return(st);
 }
 
-MTNSTAT *delstat(MTNSTAT *kst)
+MTNSTAT *delstat(MTNSTAT *mst)
 {
 	MTNSTAT *r = NULL;
-  if(!kst){
+  if(!mst){
     return NULL;
   }
-  if(kst->prev){
-		kst->prev->next = kst->next;
+  if(mst->prev){
+		mst->prev->next = mst->next;
 	}
-  if(kst->next){
-		r = kst->next;
-		kst->next->prev = kst->prev;
+  if(mst->next){
+		r = mst->next;
+		mst->next->prev = mst->prev;
   }
-  kst->prev = NULL;
-  kst->next = NULL;
-  if(kst->name){
-    xfree(kst->name);
-    kst->name = NULL;
-  }
-  clrsvr(kst->svr);
-  kst->svr = NULL;
-  xfree(kst);
+  mst->prev = NULL;
+  mst->next = NULL;
+  mst->name = clrstr(mst->name);
+  mst->svr  = clrsvr(mst->svr);
+  xfree(mst);
   deccount(MTNCOUNT_STAT);
 	return(r);
 }
 
-void clrstat(MTNSTAT *kst)
+MTNSTAT *clrstat(MTNSTAT *mst)
 {
-	while(kst){
-		kst = delstat(kst);
+	while(mst){
+		mst = delstat(mst);
 	}
+  return(NULL);
 }
 
 MTNSTAT *mkstat(MTNSVR *svr, MTNADDR *addr, MTNDATA *data)
@@ -1166,21 +1205,21 @@ MTNSTAT *mgstat(MTNSTAT *krt, MTNSTAT *kst)
   return(krt);
 }
 
-MTNSTAT *cpstat(MTNSTAT *kst)
+MTNSTAT *cpstat(MTNSTAT *mst)
 {
-  MTNSTAT *ks = NULL;
-  MTNSTAT *kr = NULL;
-  while(kst){
-    ks = newstat(kst->name);
-    memcpy(&(ks->stat), &(kst->stat), sizeof(struct stat));
-    ks->svr = cpsvr(kst->svr);
-    if((ks->next = kr)){
-      kr->prev = ks;
+  MTNSTAT *ms = NULL;
+  MTNSTAT *mr = NULL;
+  while(mst){
+    ms = newstat(mst->name);
+    memcpy(&(ms->stat), &(mst->stat), sizeof(struct stat));
+    ms->svr = cpsvr(mst->svr);
+    if((ms->next = mr)){
+      mr->prev = ms;
     }
-    kr = ks;
-    kst=kst->next;
+    mr = ms;
+    mst=mst->next;
   }
-  return(kr);
+  return(mr);
 }
 
 //----------------------------------------------------------------
@@ -1265,17 +1304,33 @@ MTNSVR *cpsvr(MTNSVR *svr)
     return(NULL);
   }
   nsv = addsvr(NULL, &(svr->addr), svr->host);
-  nsv->mark    = svr->mark;
-  nsv->bsize   = svr->bsize;
-  nsv->fsize   = svr->fsize;
-  nsv->dsize   = svr->dsize;
-  nsv->dfree   = svr->dfree;
-  nsv->vsz     = svr->vsz;
-  nsv->res     = svr->res;
-  nsv->cpu_num = svr->cpu_num;
-  nsv->loadavg = svr->loadavg;
+  nsv->mark     = svr->mark;
+  nsv->bsize    = svr->bsize;
+  nsv->fsize    = svr->fsize;
+  nsv->dsize    = svr->dsize;
+  nsv->dfree    = svr->dfree;
+  nsv->vsz      = svr->vsz;
+  nsv->res      = svr->res;
+  nsv->cpu_num  = svr->cpu_num;
+  nsv->loadavg  = svr->loadavg;
+  nsv->memsize  = svr->memsize;
+  nsv->memfree  = svr->memfree;
+  nsv->flags    = svr->flags;
+  nsv->groupstr = svr->groupstr;
+  nsv->grouparg = splitstr(svr->groupstr, ",");
   memcpy(&(nsv->tv), &(svr->tv), sizeof(struct timeval));
   return(nsv);
+}
+
+MTNSVR *pushsvr(MTNSVR *list, MTNSVR *svr)
+{
+  if((svr = cpsvr(svr))){
+    if((svr->next = list)){
+      list->prev = svr;
+    }
+    list = svr;
+  }
+  return(list);
 }
 
 int cmpsvr(MTNSVR *s1, MTNSVR *s2)
@@ -1554,21 +1609,49 @@ MTNSVR *mtn_hello(MTN *mtn)
 
 void mtn_info_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
 {
+  char buff[512];
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
-  mtn_get_int(&(member->bsize),     rdata, sizeof(member->bsize));
-  mtn_get_int(&(member->fsize),     rdata, sizeof(member->fsize));
-  mtn_get_int(&(member->dsize),     rdata, sizeof(member->dsize));
-  mtn_get_int(&(member->dfree),     rdata, sizeof(member->dfree));
-  mtn_get_int(&(member->limit),     rdata, sizeof(member->limit));
-  mtn_get_int(&(member->malloccnt), rdata, sizeof(member->malloccnt));
-  mtn_get_int(&(member->membercnt), rdata, sizeof(member->membercnt));
-  mtn_get_int(&(member->vsz),       rdata, sizeof(member->vsz));
-  mtn_get_int(&(member->res),       rdata, sizeof(member->res));
-  mtn_get_int(&(member->cpu_num),   rdata, sizeof(member->cpu_num));
-  mtn_get_int(&(member->loadavg),   rdata, sizeof(member->loadavg));
-  mtn_get_int(&(member->pscount),   rdata, sizeof(member->pscount));
-  mtn_get_int(&(member->memsize),   rdata, sizeof(member->memsize));
-  mtn_get_int(&(member->memfree),   rdata, sizeof(member->memfree));
+  if(mtn_get_int(&(member->bsize), rdata, sizeof(member->bsize))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->fsize), rdata, sizeof(member->fsize))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->dsize), rdata, sizeof(member->dsize))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->dfree), rdata, sizeof(member->dfree))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->limit), rdata, sizeof(member->limit))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->malloccnt), rdata, sizeof(member->malloccnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->membercnt), rdata, sizeof(member->membercnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->vsz), rdata, sizeof(member->vsz))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->res), rdata, sizeof(member->res))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->cpu_num), rdata, sizeof(member->cpu_num))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->loadavg), rdata, sizeof(member->loadavg))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->pscount), rdata, sizeof(member->pscount))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->memsize), rdata, sizeof(member->memsize))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->memfree), rdata, sizeof(member->memfree))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->flags), rdata, sizeof(member->flags))){
+    mtnlogger(mtn, 0, "[error] %s: flags: protocol error\n", __func__);
+  }else if(mtn_get_string(buff, rdata) == -1){
+    mtnlogger(mtn, 0, "[error] %s: group: protocol error\n", __func__);
+  }else{
+    if(strlen(buff)){
+      member->groupstr = newstr(buff);
+      member->grouparg = splitstr(buff, ",");
+    }else{
+      member->groupstr = NULL;
+      member->grouparg = NULL;
+    }
+  }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -1576,15 +1659,20 @@ MTNSVR *mtn_info(MTN *mtn)
 {
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   MTNDATA data;
-  MTNSVR  *svr;
-  MTNSVR  *members = get_members(mtn);
+  MTNSVR *svr;
+  MTNSVR *members = NULL;
+  MTNSVR *svrlist = get_members(mtn);
   data.head.type  = MTNCMD_INFO;
   data.head.size  = 0;
   data.head.flag  = 0;
-  mtn_process(mtn, members, &data, (MTNPROCFUNC)mtn_info_process);
-  for(svr=members;svr;svr=svr->next){
+  mtn_process(mtn, svrlist, &data, (MTNPROCFUNC)mtn_info_process);
+  for(svr=svrlist;svr;svr=svr->next){
     svr->mark = 0;
+    if(is_grpsvr(svr, mtn->grouparg)){
+      members = pushsvr(members, svr);
+    }
   }
+  clrsvr(svrlist);
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
   return(members);
 }
@@ -2129,7 +2217,7 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
     return(-1);
   }
 
-  mi.mode = 1;
+  mi.mode = MTNMODE_EXECUTE;
   mi.uid  = job->uid;
   mi.gid  = job->gid;
   job->con = mtn_connect(mtn, sv, &mi);
@@ -2191,7 +2279,7 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
     return(-1);
   }
 
-  mi.mode = 0;
+  mi.mode = MTNMODE_EXPORT;
   mi.uid  = st->stat.st_uid;
   mi.gid  = st->stat.st_gid;
   s = mtn_connect(mtn, fs->svr, &mi);
@@ -2559,6 +2647,9 @@ size_t set_mtnstatus_members(MTN *mtn)
   members = mtn_info(mtn);
   //exsprintf(buff, size, "%-10s %-15s %s %s %s %s %s\n", "Host", "IP", "Free[%]", "Free[MB]", "Total[MB]", "VSZ", "RSS");
   for(mb=members;mb;mb=mb->next){
+    if(!is_export(mb)){
+      continue;
+    }
     dsize = (mb->dsize * mb->fsize - mb->limit) / 1024 / 1024;
     dfree = (mb->dfree * mb->bsize - mb->limit) / 1024 / 1024;
     pfree = dfree * 100 / dsize;
@@ -2588,10 +2679,10 @@ size_t set_mtnstatus_members(MTN *mtn)
 
 size_t set_mtnstatus_debuginfo(MTN *mtn)
 {
+  statm      sm;
   char   **buff;
   size_t  *size;
   size_t result;
-  meminfo minfo;
 
   pthread_mutex_lock(&(mtn->mutex.status));
   buff = &(mtn->status.debuginfo.buff);
@@ -2599,10 +2690,10 @@ size_t set_mtnstatus_debuginfo(MTN *mtn)
   if(*buff){
     **buff = 0;
   }
-  get_meminfo(&minfo);
+  getstatm(&sm);
   exsprintf(buff, size, "[DEBUG INFO]\n");
-  exsprintf(buff, size, "VSZ   : %llu KB\n", minfo.vsz / 1024);
-  exsprintf(buff, size, "RSS   : %llu KB\n", minfo.res / 1024);
+  exsprintf(buff, size, "VSZ   : %llu KB\n", sm.vsz / 1024);
+  exsprintf(buff, size, "RSS   : %llu KB\n", sm.res / 1024);
   exsprintf(buff, size, "MALLOC: %d\n", getcount(MTNCOUNT_MALLOC));
   exsprintf(buff, size, "DIR   : %d\n", getcount(MTNCOUNT_DIR));
   exsprintf(buff, size, "STAT  : %d\n", getcount(MTNCOUNT_STAT));
@@ -2681,7 +2772,7 @@ void mtnlogger(MTN *mtn, int l, char *fmt, ...)
   vsnprintf(b, sizeof(b), fmt, arg);
   va_end(arg);
   b[sizeof(b) - 1] = 0;
-  if(mtn ? mtn->logverbose : 0){
+  if(mtn ? mtn->logtype : 0){
     gettimeofday(&tv, NULL);
     switch(mtn ? mtn->logmode : MTNLOG_STDERR){
       case MTNLOG_SYSLOG:
@@ -2705,7 +2796,7 @@ void mtnlogger(MTN *mtn, int l, char *fmt, ...)
   }
 }
 
-int get_meminfo(meminfo *m)
+int getstatm(statm *m)
 {
   int   i;
   int   f;
@@ -2717,7 +2808,7 @@ int get_meminfo(meminfo *m)
   m->page_size = sysconf(_SC_PAGESIZE);
   f = open("/proc/self/statm", O_RDONLY);
   if(f == -1){
-    memset(m, 0, sizeof(meminfo));
+    memset(m, 0, sizeof(statm));
     return(-1);
   }
   read(f, buff, sizeof(buff) - 1);
@@ -2745,9 +2836,81 @@ int get_meminfo(meminfo *m)
   return(0);
 }
 
+int getmeminfo(uint64_t *size, uint64_t *free)
+{
+  FILE *f;
+  char key[64];
+  char val[64];
+  char unit[8];
+  char buff[1024];
+  uint64_t data;
+
+  *size = 0;
+  *free = 0;
+  f = fopen("/proc/meminfo","r");
+  while(fgets(buff, sizeof(buff), f)){
+    key[0]=0;
+    val[0]=0;
+    unit[0]=0;
+    sscanf(buff, "%s%s%s", key, val, unit);
+    if(strcmp("MemTotal:", key) == 0){
+      data = atoi(val);
+      if(strcmp("kB", unit) == 0){
+        data *= 1024;
+      }
+      *size = data;
+    }
+    if(strcmp("MemFree:", key) == 0){
+      data = atoi(val);
+      if(strcmp("kB", unit) == 0){
+        data *= 1024;
+      }
+      *free += data;
+    }
+    if(strcmp("Buffers:", key) == 0){
+      data = atoi(val);
+      if(strcmp("kB", unit) == 0){
+        data *= 1024;
+      }
+      *free += data;
+    }
+    if(strcmp("Cached", key) == 0){
+      data = atoi(val);
+      if(strcmp("kB", unit) == 0){
+        data *= 1024;
+      }
+      *free += data;
+    }
+  }
+  fclose(f);
+  return(0);
+}
+
+
 void mtn_break()
 {
   is_loop = 0;
+}
+
+static int mtn_init_sockopt(MTN *mtn)
+{
+  FILE *fp;
+  char buff[256];
+  if((fp = fopen("/proc/sys/net/core/rmem_max", "r"))){
+    if(fread(buff, 1, sizeof(buff), fp) > 0){
+      socket_rcvbuf = atoi(buff);
+    }
+    fclose(fp);
+  }
+  return(0);
+}
+
+static int mtn_init_mutex(MTN *mtn)
+{
+  pthread_mutex_init(&(mtn->mutex.member),   NULL);
+  pthread_mutex_init(&(mtn->mutex.status),   NULL);
+  pthread_mutex_init(&(mtn->mutex.loglevel), NULL);
+  return(0);
 }
 
 static int mtn_init_sendbuff(MTN *mtn)
@@ -2764,32 +2927,38 @@ static int mtn_init_sendbuff(MTN *mtn)
   return(0);
 }
 
-static int mtn_init_mutex(MTN *mtn)
-{
-  pthread_mutex_init(&(mtn->mutex.member),   NULL);
-  pthread_mutex_init(&(mtn->mutex.status),   NULL);
-  pthread_mutex_init(&(mtn->mutex.loglevel), NULL);
-  return(0);
-}
-
 MTN *mtn_init(const char *name)
 {
-  MTN *mtn;
-  FILE *fp;
-  char buff[256];
-  mtn = calloc(1, sizeof(MTN));
-  memset(count, 0, sizeof(count));
-  sprintf(mtn->mcast_addr,     "224.1.0.110");
-  sprintf(mtn->module_name, name ? name : "");
-  mtn->mcast_port = 6000;
-  mtn->max_packet_size = 1024;
-  fp = fopen("/proc/sys/net/core/rmem_max", "r");
-  if(fread(buff, 1, sizeof(buff), fp) > 0){
-    socket_rcvbuf = atoi(buff);
+  MTN *mtn = calloc(1, sizeof(MTN));
+
+  if(!mtn){
+    mtnlogger(NULL, 0, "[error] %s: %s\n", __func__, strerror(errno));
+    return(NULL);
   }
-  fclose(fp);
-  mtn_init_mutex(mtn);
-  mtn_init_sendbuff(mtn);
+
+  memset(count, 0, sizeof(count));
+  mtn->max_packet_size = 1024;
+  mtn->mcast_port = MTN_DEFAULT_PORT;
+  sprintf(mtn->mcast_addr,  MTN_DEFAULT_ADDR);
+  sprintf(mtn->module_name, name ? name : "");
+  if(mtn_init_sockopt(mtn) == -1){
+    mtnlogger(NULL, 0, "[error] %s: sockopt: %s\n", __func__, strerror(errno));
+    free(mtn);
+    mtn = NULL;
+    return(NULL);
+  }
+  if(mtn_init_mutex(mtn) == -1){
+    mtnlogger(NULL, 0, "[error] %s: mutex: %s\n", __func__, strerror(errno));
+    free(mtn);
+    mtn = NULL;
+    return(NULL);
+  }
+  if(mtn_init_sendbuff(mtn) == -1){
+    mtnlogger(NULL, 0, "[error] %s: sendbuff: %s\n", __func__, strerror(errno));
+    free(mtn);
+    mtn = NULL;
+    return(NULL);
+  }
   return(mtn);
 }
 
@@ -2858,8 +3027,10 @@ STR catstr(STR str1, STR str2)
 
 STR clrstr(STR str)
 {
-  xfree(str);
-  deccount(MTNCOUNT_STR);
+  if(str){
+    xfree(str);
+    deccount(MTNCOUNT_STR);
+  }
   return(NULL);
 }
 
@@ -2937,7 +3108,7 @@ ARG clrarg(ARG args)
   return(NULL);
 }
 
-STR joinarg(ARG args){
+STR joinarg(ARG args, STR delim){
   int i;
   STR str; 
   if(!args){
@@ -2945,7 +3116,7 @@ STR joinarg(ARG args){
   }
   if((str = newstr(args[0]))){
     for(i=1;args[i];i++){
-      str = catstr(str, " ");
+      str = catstr(str, delim);
       str = catstr(str, args[i]);
     }
   }
@@ -2981,26 +3152,39 @@ STR poparg(ARG args)
   return(s);
 }
 
+STR findarg(ARG arg, STR str)
+{
+  int i;
+  if(!arg || !str){
+    return(NULL);
+  }
+  for(i=0;arg[i];i++){
+    if(!strcmp(arg[i], str)){
+      return(arg[i]);
+    }
+  }
+  return(NULL);
+}
 
 static STR convarg3(STR arg, ARG argl)
 {
   STR a;
   if(strcmp(arg, "") == 0){
-    a = joinarg(argl);
+    a = joinarg(argl, " ");
     arg = modstr(arg, a);
     a = clrstr(a);
   }else if(strcmp(arg, "/") == 0){
-    a = joinarg(argl);
+    a = joinarg(argl, " ");
     a = basestr(a);
     arg = modstr(arg, a);
     a = clrstr(a);
   }else if(strcmp(arg, ".") == 0){
-    a = joinarg(argl);
+    a = joinarg(argl, " ");
     a = dotstr(a);
     arg = modstr(arg, a);
     a = clrstr(a);
   }else if(strcmp(arg, "/.") == 0){
-    a = joinarg(argl);
+    a = joinarg(argl, " ");
     a = basestr(a);
     a = dotstr(a);
     arg = modstr(arg, a);

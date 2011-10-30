@@ -5,6 +5,8 @@
 #define PROTOCOL_VERSION 1
 #define MTN_MAX_DATASIZE 32768
 #define MTN_TCP_BUFFSIZE (1024 * 1024)
+#define MTN_DEFAULT_ADDR "224.1.0.110"
+#define MTN_DEFAULT_PORT 6000
 
 #define MTNCMD_STARTUP   0
 #define MTNCMD_SHUTDOWN  1
@@ -51,7 +53,10 @@
 #define MTNCOUNT_MALLOC 5
 #define MTNCOUNT_MAX    6
 
-typedef struct meminfo
+#define MTNMODE_EXPORT  1
+#define MTNMODE_EXECUTE 2
+
+typedef struct statm
 {
   uint64_t   vsz;
   uint64_t   res;
@@ -59,7 +64,7 @@ typedef struct meminfo
   uint64_t  text;
   uint64_t  data;
   long page_size;
-} meminfo;
+} statm;
 
 typedef struct
 {
@@ -136,7 +141,8 @@ int mtn_set_int(void *val, MTNDATA *kd, int size);
 int mtn_set_stat(struct stat *st, MTNDATA *kd);
 int mtn_set_data(void *buff, MTNDATA *kd, size_t size);
 uint32_t get_members_count(MTNSVR *mb);
-int get_meminfo(meminfo *m);
+int getstatm(statm *m);
+int getmeminfo(uint64_t *size, uint64_t *free);
 int getcount(int id);
 int send_dgram(MTN *mtn, int s, MTNDATA *data, MTNADDR *addr);
 int recv_dgram(MTN *mtn, int s, MTNDATA *data, struct sockaddr *addr, socklen_t *alen);

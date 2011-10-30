@@ -47,15 +47,17 @@ void usage()
   printf("usage: %s [OPTION]\n", MODULE_NAME);
   printf("\n");
   printf("  OPTION\n");
-  printf("   -h         # help\n");
-  printf("   -v         # version\n");
-  printf("   -n         # no daemon\n");
-  printf("   -e dir     # export dir\n");
-  printf("   -m addr    # mcast addr\n");
-  printf("   -p port    # TCP/UDP port(default: 6000)\n");
-  printf("   -D num     # debug level\n");
-  printf("   -l size    # limit size (MB)\n");
-  printf("   --pid=path # pid file(ex: /var/run/mtnfs.pid)\n");
+  printf("   -h               # help\n");
+  printf("   -v               # version\n");
+  printf("   -n               # no daemon\n");
+  printf("   -e dir           # export dir\n");
+  printf("   -E dir           # execute dir\n");
+  printf("   -g name,name,... # group list(MAX 64Bytes)\n");
+  printf("   -m addr          # mcast addr\n");
+  printf("   -p port          # TCP/UDP port(default: 6000)\n");
+  printf("   -D num           # debug level\n");
+  printf("   -l size          # limit size (MB)\n");
+  printf("   --pid=path       # pid file(ex: /var/run/mtnfs.pid)\n");
   printf("\n");
 }
 
@@ -70,56 +72,6 @@ int get_diskfree(uint32_t *bsize, uint32_t *fsize, uint64_t *dsize, uint64_t *df
   *fsize = vf.f_frsize;
   *dsize = vf.f_blocks;
   *dfree = vf.f_bfree;
-  return(0);
-}
-
-int getmeminfo(uint64_t *size, uint64_t *free)
-{
-  FILE *f;
-  char key[64];
-  char val[64];
-  char unit[8];
-  char buff[1024];
-  uint64_t data;
-
-  *size = 0;
-  *free = 0;
-  f = fopen("/proc/meminfo","r");
-  while(fgets(buff, sizeof(buff), f)){
-    key[0]=0;
-    val[0]=0;
-    unit[0]=0;
-    sscanf(buff, "%s%s%s", key, val, unit);
-    if(strcmp("MemTotal:", key) == 0){
-      data = atoi(val);
-      if(strcmp("kB", unit) == 0){
-        data *= 1024;
-      }
-      *size = data;
-    }
-    if(strcmp("MemFree:", key) == 0){
-      data = atoi(val);
-      if(strcmp("kB", unit) == 0){
-        data *= 1024;
-      }
-      *free += data;
-    }
-    if(strcmp("Buffers:", key) == 0){
-      data = atoi(val);
-      if(strcmp("kB", unit) == 0){
-        data *= 1024;
-      }
-      *free += data;
-    }
-    if(strcmp("Cached", key) == 0){
-      data = atoi(val);
-      if(strcmp("kB", unit) == 0){
-        data *= 1024;
-      }
-      *free += data;
-    }
-  }
-  fclose(f);
   return(0);
 }
 
@@ -293,21 +245,24 @@ static void mtnd_hello_process(MTNTASK *kt)
 
 static void mtnd_info_process(MTNTASK *kt)
 {
-  meminfo mi;
+  statm  sm;
   MTNSVR mb;
   double loadavg[3];
 
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
-  get_meminfo(&mi);
+  memset(&mb, 0, sizeof(mb));
+  getstatm(&sm);
+  getmeminfo(&(mb.memsize), &(mb.memfree));
   mb.limit = ctx->free_limit;
   mb.malloccnt = getcount(MTNCOUNT_MALLOC);
   mb.membercnt = get_members_count(ctx->members);
   get_diskfree(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
   mb.cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
   getloadavg(loadavg, 3);
-  getmeminfo(&(mb.memsize), &(mb.memfree));
   mb.loadavg = (uint32_t)(loadavg[0] * 100);
   mb.pscount = getpscount();
+  mb.flags  |= ctx->export  ? MTNMODE_EXPORT  : 0;
+  mb.flags  |= ctx->execute ? MTNMODE_EXECUTE : 0;
   mtn_set_int(&(mb.bsize),     &(kt->send), sizeof(mb.bsize));
   mtn_set_int(&(mb.fsize),     &(kt->send), sizeof(mb.fsize));
   mtn_set_int(&(mb.dsize),     &(kt->send), sizeof(mb.dsize));
@@ -315,13 +270,15 @@ static void mtnd_info_process(MTNTASK *kt)
   mtn_set_int(&(mb.limit),     &(kt->send), sizeof(mb.limit));
   mtn_set_int(&(mb.malloccnt), &(kt->send), sizeof(mb.malloccnt));
   mtn_set_int(&(mb.membercnt), &(kt->send), sizeof(mb.membercnt));
-  mtn_set_int(&(mi.vsz),       &(kt->send), sizeof(mi.vsz));
-  mtn_set_int(&(mi.res),       &(kt->send), sizeof(mi.res));
+  mtn_set_int(&(sm.vsz),       &(kt->send), sizeof(sm.vsz));
+  mtn_set_int(&(sm.res),       &(kt->send), sizeof(sm.res));
   mtn_set_int(&(mb.cpu_num),   &(kt->send), sizeof(mb.cpu_num));
   mtn_set_int(&(mb.loadavg),   &(kt->send), sizeof(mb.loadavg));
   mtn_set_int(&(mb.pscount),   &(kt->send), sizeof(mb.pscount));
   mtn_set_int(&(mb.memsize),   &(kt->send), sizeof(mb.memsize));
   mtn_set_int(&(mb.memfree),   &(kt->send), sizeof(mb.memfree));
+  mtn_set_int(&(mb.flags),     &(kt->send), sizeof(mb.flags));
+  mtn_set_string(mtn->groupstr, &(kt->send));
   kt->send.head.fin = 1;
   kt->fin = 1;
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
@@ -359,10 +316,21 @@ int mtnd_list_dir(MTNTASK *kt)
   return(0);
 }
 
+//-------------------------------------------------------------------
+// UDP EXPORT PROSESS
+//-------------------------------------------------------------------
 static void mtnd_list_process(MTNTASK *kt)
 {
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
+
   char buff[PATH_MAX];
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   if(kt->dir){
     mtnd_list_dir(kt);
   }else{
@@ -396,6 +364,13 @@ static void mtnd_list_process(MTNTASK *kt)
 
 static void mtnd_stat_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   char buff[PATH_MAX];
   char file[PATH_MAX];
@@ -421,6 +396,13 @@ static void mtnd_stat_process(MTNTASK *kt)
 
 static void mtnd_truncate_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   off_t offset;
   char path[PATH_MAX];
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
@@ -444,6 +426,13 @@ static void mtnd_truncate_process(MTNTASK *kt)
 
 static void mtnd_mkdir_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   uid_t uid;
   gid_t gid;
@@ -468,6 +457,13 @@ static void mtnd_mkdir_process(MTNTASK *kt)
 
 static void mtnd_rm_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   char buff[PATH_MAX];
   kt->fin = 1;
@@ -497,6 +493,13 @@ static void mtnd_rm_process(MTNTASK *kt)
 
 static void mtnd_rename_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   char obuff[PATH_MAX];
   char nbuff[PATH_MAX];
@@ -521,6 +524,13 @@ static void mtnd_rename_process(MTNTASK *kt)
 
 static void mtnd_symlink_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   char oldpath[PATH_MAX];
   char newpath[PATH_MAX];
@@ -541,6 +551,13 @@ static void mtnd_symlink_process(MTNTASK *kt)
 
 static void mtnd_readlink_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   ssize_t size;
   char newpath[PATH_MAX];
@@ -565,6 +582,13 @@ static void mtnd_readlink_process(MTNTASK *kt)
 
 static void mtnd_chmod_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   mode_t mode;
   char path[PATH_MAX];
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
@@ -587,6 +611,13 @@ static void mtnd_chmod_process(MTNTASK *kt)
 
 static void mtnd_chown_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   uid_t uid;
   gid_t gid;
   char path[PATH_MAX];
@@ -611,6 +642,13 @@ static void mtnd_chown_process(MTNTASK *kt)
 
 static void mtnd_utime_process(MTNTASK *kt)
 {
+  if(!ctx->export){
+    kt->fin = 1;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
+    kt->send.head.fin  = 1;
+    return;
+  }
   struct utimbuf ut;
   char path[PATH_MAX];
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
@@ -1020,9 +1058,18 @@ void mtnd_child_result(MTNTASK *kt)
   kt->keep.head.size = 0;
 }
 
+void mtnd_child_init_export(MTNTASK *kt)
+{
+  if(!ctx->export || !strlen(ctx->cwd)){
+    kt->fin = 1;
+    errno = EPERM;
+    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+  }
+}
+
 void mtnd_child_init_exec(MTNTASK *kt)
 {
-  if(!strlen(ctx->ewd)){
+  if(!ctx->execute || !strlen(ctx->ewd)){
     kt->fin = 1;
     errno = EPERM;
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
@@ -1084,7 +1131,11 @@ void mtnd_child_init(MTNTASK *kt)
   }
 
   switch(kt->init.mode){
-    case 1:
+    case MTNMODE_EXPORT:
+      mtnd_child_init_export(kt);
+      break;
+
+    case MTNMODE_EXECUTE:
       mtnd_child_init_exec(kt);
       break;
   }
@@ -1253,40 +1304,48 @@ void mtnd_child_exec(MTNTASK *kt)
   job.cmd = newstr(buff);
   gettimeofday(&(job.start), NULL);
   mtnlogger(mtn, 0, "[debug] %s: %s\n", __func__, job.cmd);
-  
-  mtnd_child_fork(kt, &job);
-  job.efd = epoll_create(4);
-  ev.events  = EPOLLOUT;
-  ev.data.fd = kt->std[0];
-  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
-  ev.events  = EPOLLIN;
-  ev.data.fd = kt->std[1];
-  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
-  ev.data.fd = kt->std[2];
-  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
-  ev.data.fd = kt->con;
-  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
-  fcntl(kt->std[0], F_SETFL , O_NONBLOCK);
-  fcntl(kt->std[1], F_SETFL , O_NONBLOCK);
-  fcntl(kt->std[2], F_SETFL , O_NONBLOCK);
+  if(!kt->init.init){
+    mtnlogger(mtn, 0, "[error] %s: \n", __func__);
+    errno = EACCES;
+    kt->send.head.size = 0;
+    kt->send.head.ver  = PROTOCOL_VERSION;
+    kt->send.head.type = MTNCMD_ERROR;
+    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  }else{
+    mtnd_child_fork(kt, &job);
+    job.efd = epoll_create(4);
+    ev.events  = EPOLLOUT;
+    ev.data.fd = kt->std[0];
+    epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+    ev.events  = EPOLLIN;
+    ev.data.fd = kt->std[1];
+    epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+    ev.data.fd = kt->std[2];
+    epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+    ev.data.fd = kt->con;
+    epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+    fcntl(kt->std[0], F_SETFL , O_NONBLOCK);
+    fcntl(kt->std[1], F_SETFL , O_NONBLOCK);
+    fcntl(kt->std[2], F_SETFL , O_NONBLOCK);
 
-  kt->recv.head.size = 0;
-  kt->send.head.size = 0;
-  kt->send.head.ver  = PROTOCOL_VERSION;
-  kt->send.head.type = MTNCMD_SUCCESS;
-  send_data_stream(mtn, kt->con, &(kt->send));
-  while(is_loop && (kt->std[1] || kt->std[2])){
-    mtnd_child_exec_poll(kt, &job);
+    kt->recv.head.size = 0;
+    kt->send.head.size = 0;
+    kt->send.head.ver  = PROTOCOL_VERSION;
+    kt->send.head.type = MTNCMD_SUCCESS;
+    send_data_stream(mtn, kt->con, &(kt->send));
+    while(is_loop && (kt->std[1] || kt->std[2])){
+      mtnd_child_exec_poll(kt, &job);
+    }
+    kill(-(getpgid(job.pid)), SIGCONT);
+    while(waitpid(job.pid, &status, 0) != job.pid);
+    job_close(&job);
+    if(kt->std[0]){
+      close(kt->std[0]);
+      kt->std[0] = 0;
+    }
+    kt->send.head.type = MTNCMD_SUCCESS;
+    kt->send.head.size = 0;
   }
-  kill(-(getpgid(job.pid)), SIGCONT);
-  while(waitpid(job.pid, &status, 0) != job.pid);
-  job_close(&job);
-  if(kt->std[0]){
-    close(kt->std[0]);
-    kt->std[0] = 0;
-  }
-  kt->send.head.type = MTNCMD_SUCCESS;
-  kt->send.head.size = 0;
   mtnlogger(mtn, 0, "[debug] %s: return\n", __func__);
 }
 
@@ -1319,6 +1378,10 @@ void mtnd_child(MTNTASK *kt)
     if(kt->res == 1){
       break;
     }
+    if(!kt->init.init && (kt->recv.head.type != MTNCMD_INIT)){
+      mtnlogger(mtn, 0, "[error] %s: not init: TYPE=%d\n", __func__, kt->recv.head.type);
+      break;
+    }
     if(taskfunc[1][kt->recv.head.type]){
       taskfunc[1][kt->recv.head.type](kt);
     }else{
@@ -1334,9 +1397,9 @@ void mtnd_child(MTNTASK *kt)
   }
   if(kt->init.init){
     switch(kt->init.mode){
-      case 0:
+      case MTNMODE_EXPORT:
         break;
-      case 1:
+      case MTNMODE_EXECUTE:
         if(chdir(ctx->ewd) != -1){
           sprintf(cmd, "rm -fr %s", kt->work);
           system(cmd);
@@ -1585,6 +1648,8 @@ struct option *get_optlist()
       {"help",    0, NULL, 'h'},
       {"version", 0, NULL, 'v'},
       {"export",  1, NULL, 'e'},
+      {"execute", 1, NULL, 'E'},
+      {"group",   1, NULL, 'g'},
       {0, 0, 0, 0}
     };
   return(opt);
@@ -1637,7 +1702,7 @@ void parse(int argc, char *argv[])
     usage();
     exit(0);
   }
-  while((r = getopt_long(argc, argv, "hvnE:e:l:m:p:P:D:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "hvng:E:e:l:m:p:P:D:", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -1655,11 +1720,18 @@ void parse(int argc, char *argv[])
         ctx->daemonize = 0;
         break;
 
+      case 'g':
+        mtn->groupstr = newstr(optarg);
+        mtn->grouparg = splitstr(optarg, ",");
+        break;
+
       case 'E':
+        ctx->execute = 1;
         strcpy(ctx->ewd, optarg);
         break;
 
       case 'e':
+        ctx->export = 1;
         if(chdir(optarg) == -1){
           mtnlogger(mtn, 0,"error: %s %s\n", strerror(errno), optarg);
           exit(1);
@@ -1694,7 +1766,7 @@ void parse(int argc, char *argv[])
   getcwd(ctx->cwd, sizeof(ctx->cwd));
 }
 
-int mtnd()
+void mtnd_bootmsg()
 {
   uint32_t bsize;
   uint32_t fsize;
@@ -1708,11 +1780,23 @@ int mtnd()
   mtnlogger(mtn, 0, "addr : %s\n", mtn->mcast_addr);
   mtnlogger(mtn, 0, "port : %d\n", mtn->mcast_port);
   mtnlogger(mtn, 0, "host : %s\n", ctx->host);
-  mtnlogger(mtn, 0, "base : %s\n", ctx->cwd);
+if(mtn->groupstr){
+  mtnlogger(mtn, 0, "group: %s\n", mtn->groupstr);
+}
+if(ctx->execute){
   mtnlogger(mtn, 0, "exec : %s\n", ctx->ewd);
+}
+if(ctx->export){
+  mtnlogger(mtn, 0, "base : %s\n", ctx->cwd);
   mtnlogger(mtn, 0, "size : %6llu [MB]\n", fsize * dsize / 1024 / 1024);
   mtnlogger(mtn, 0, "free : %6llu [MB]\n", bsize * dfree / 1024 / 1024);
   mtnlogger(mtn, 0, "limit: %6llu [MB]\n", ctx->free_limit/1024 / 1024);
+}
+}
+
+int mtnd()
+{
+  mtnd_bootmsg();
   mkpidfile(ctx->pid);
   mtnd_main();
   rmpidfile(ctx->pid);
@@ -1723,7 +1807,7 @@ int mtnd()
 void mtnd_init()
 {
   mtn = mtn_init(MODULE_NAME);
-  mtn->logverbose = 1;
+  mtn->logtype = 1;
   mtn->logmode = MTNLOG_STDERR;
   ctx = malloc(sizeof(MTND));
   ctx->daemonize = 1;

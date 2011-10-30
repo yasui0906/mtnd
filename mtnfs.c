@@ -16,6 +16,7 @@
 #include <sys/time.h>
 #include <fuse.h>
 
+struct cmdopt cmdopt;
 int is_mtnstatus(const char *path, char *buff)
 {
   int len = strlen(MTNFS_STATUSPATH);
@@ -47,7 +48,7 @@ MTNSTAT *get_dircache(const char *path, int flag)
   MTNSTAT  *st;
   struct timeval tv;
 
-  mtnfs = fuse_get_context()->private_data;
+  mtnfs = MTNFS_CONTEXT;
   pthread_mutex_lock(&(mtnfs->cache_mutex));
   gettimeofday(&tv, NULL);
   md = mtnfs->dircache;
@@ -84,10 +85,10 @@ MTNSTAT *get_dircache(const char *path, int flag)
 
 void addstat_dircache(const char *path, MTNSTAT *st)
 {
-  MTNFS *mtnfs;
   MTNDIR   *md;
+  MTNFS *mtnfs;
 
-  mtnfs = fuse_get_context()->private_data;
+  mtnfs = MTNFS_CONTEXT;
   if(st == NULL){
     return;
   }
@@ -113,8 +114,10 @@ void addstat_dircache(const char *path, MTNSTAT *st)
 
 void setstat_dircache(const char *path, MTNSTAT *st)
 {
-  MTNDIR *md;
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNDIR   *md;
+  MTNFS *mtnfs;
+
+  mtnfs = MTNFS_CONTEXT;
   pthread_mutex_lock(&(mtnfs->cache_mutex));
   md = mtnfs->dircache;
   while(md){
@@ -132,7 +135,7 @@ void setstat_dircache(const char *path, MTNSTAT *st)
   }
   clrstat(md->st);
   md->st   = cpstat(st);
-  md->flag = (st == NULL) ? 0 : 1;
+  md->flag = st ? 1 : 0;
   gettimeofday(&(md->tv), NULL);
   pthread_mutex_unlock(&(mtnfs->cache_mutex));
 }
@@ -143,29 +146,32 @@ void setstat_dircache(const char *path, MTNSTAT *st)
 static void *mtnfs_init(struct fuse_conn_info *conn)
 {
   int i;
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  MTN   *mtn   = mtn_init(MODULE_NAME);
+  MTNFS *mtnfs = calloc(1, sizeof(MTNFS));
 
+  mtnfs->mtn = mtn;
   getcwd(mtnfs->cwd, sizeof(mtnfs->cwd));
-  if(mtnfs->opt.port){
-    mtn->mcast_port = atoi(mtnfs->opt.port);
+  if(cmdopt.port){
+    mtn->mcast_port = atoi(cmdopt.port);
   }
-  if(mtnfs->opt.addr){
-    strcpy(mtn->mcast_addr, mtnfs->opt.addr);
+  if(cmdopt.addr){
+    strcpy(mtn->mcast_addr, cmdopt.addr);
   }
-  if(mtnfs->opt.loglevel){
-    mtn->loglevel = atoi(mtnfs->opt.loglevel);
+  if(cmdopt.group){
+    mtn->groupstr = newstr(cmdopt.group);
+    mtn->grouparg = splitstr(cmdopt.group, ",");
   }
-  if(mtnfs->opt.pid){
-    if(*(mtnfs->opt.pid) == '/'){
-      strcpy(mtnfs->pid, mtnfs->opt.pid);
+  if(cmdopt.loglevel){
+    mtn->loglevel = atoi(cmdopt.loglevel);
+  }
+  if(cmdopt.pid){
+    if(*(cmdopt.pid) == '/'){
+      strcpy(mtnfs->pid, cmdopt.pid);
     }else{
-      sprintf(mtnfs->pid, "%s/%s", mtnfs->cwd, mtnfs->opt.pid);
+      sprintf(mtnfs->pid, "%s/%s", mtnfs->cwd, cmdopt.pid);
     }
   }
-  if(mtnfs->opt.dontfork){
-    mtn->logmode = MTNLOG_STDERR;
-  }
+  mtn->logmode = cmdopt.dontfork ? MTNLOG_STDERR : MTNLOG_SYSLOG;
   mtnfs->file_mutex = malloc(sizeof(pthread_mutex_t) * mtn->max_open);
   for(i=0;i<mtn->max_open;i++){
     pthread_mutex_init(&(mtnfs->file_mutex[i]), NULL);
@@ -175,6 +181,9 @@ static void *mtnfs_init(struct fuse_conn_info *conn)
   mtnlogger(mtn, 0, "MulticastIP: %s\n", mtn->mcast_addr);
   mtnlogger(mtn, 0, "PortNumber : %d\n", mtn->mcast_port);
   mtnlogger(mtn, 0, "MaxOpen    : %d\n", mtn->max_open);
+if(mtn->groupstr){
+  mtnlogger(mtn, 0, "Group      : %s\n", mtn->groupstr);
+}
   mtnlogger(mtn, 0, "DebugLevel : %d\n", mtn->loglevel);
   mkpidfile(mtnfs->pid);
   return(mtnfs);
@@ -182,16 +191,14 @@ static void *mtnfs_init(struct fuse_conn_info *conn)
 
 static void mtnfs_destroy(void *buff)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   rmpidfile(mtnfs->pid);
-  mtnlogger(mtn, 0, "%s finished\n", MODULE_NAME);
+  mtnlogger(mtnfs->mtn, 0, "%s finished\n", MODULE_NAME);
 }
 
 static int mtnfs_getattr(const char *path, struct stat *stbuf)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN     *mtn = mtnfs->mtn;
+  MTN     *mtn = MTN_CONTEXT;
   MTNSTAT *krt = NULL;
   MTNSTAT *kst = NULL;
   struct timeval tv;
@@ -248,16 +255,15 @@ static int mtnfs_getattr(const char *path, struct stat *stbuf)
   }
   clrstat(krt);
   return(kst ? 0 : -ENOENT);
-  return(0);
 }
 
 static int mtnfs_fgetattr(const char *path, struct stat *st, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   int r;
   struct timeval tv;
   char  f[PATH_MAX];
+  MTNFS *mtnfs = MTNFS_CONTEXT;
+  MTN   *mtn   = MTN_CONTEXT;
   mtnlogger(mtn, 8, "[debug] %s: path=%s fh=%d\n", __func__, path, fi->fh);
   if(strcmp(path, "/") == 0) {
     st->st_mode  = S_IFDIR | 0755;
@@ -302,51 +308,46 @@ static int mtnfs_fgetattr(const char *path, struct stat *st, struct fuse_file_in
 
 static int mtnfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
-  MTNSTAT *krt = NULL;
-  MTNSTAT *kst = NULL;
+  MTN     *mtn = MTN_CONTEXT;
+  MTNSTAT *mrt = NULL;
+  MTNSTAT *mst = NULL;
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   filler(buf, ".",  NULL, 0);
   filler(buf, "..", NULL, 0);
   if(strcmp("/", path) == 0){
     filler(buf, MTNFS_STATUSNAME, NULL, 0);
   }
-  if(strcmp(path, MTNFS_STATUSPATH) == 0){
-    filler(buf, "members",    NULL, 0);
-    filler(buf, "debuginfo",  NULL, 0);
-    filler(buf, "loglevel", NULL, 0);
+  if(!strcmp(path, MTNFS_STATUSPATH)){
+    filler(buf, "members",   NULL, 0);
+    filler(buf, "debuginfo", NULL, 0);
+    filler(buf, "loglevel",  NULL, 0);
   }else{
-    krt = get_dircache(path,1);
-    if(krt == NULL){
-      krt = mtn_list(mtn, path);
-      setstat_dircache(path, krt);
+    mrt = get_dircache(path, 1);
+    if(!mrt){
+      mrt = mtn_list(mtn, path);
+      setstat_dircache(path, mrt);
     }
-    for(kst=krt;kst;kst=kst->next){
-      filler(buf, kst->name, NULL, 0);
+    for(mst=mrt;mst;mst=mst->next){
+      filler(buf, mst->name, NULL, 0);
     }
-    clrstat(krt);
+    clrstat(mrt);
   }
   return(0);
 }
 
 static int mtnfs_mkdir(const char *path, mode_t mode)
 {
+  MTN *mtn = MTN_CONTEXT;
   struct fuse_context *fuse = fuse_get_context();
-  MTNFS *mtnfs = fuse->private_data;
-  MTN   *mtn   = mtnfs->mtn;
-  int r;
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
-  r = mtn_mkdir(mtn, path, fuse->uid, fuse->gid);
-  return(r);
+  return(mtn_mkdir(mtn, path, fuse->uid, fuse->gid));
 }
 
 static int mtnfs_unlink(const char *path)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   int  r;
   char d[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   dirbase(path, d, NULL);
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   r = mtn_rm(mtn, path);
@@ -356,10 +357,9 @@ static int mtnfs_unlink(const char *path)
 
 static int mtnfs_rmdir(const char *path)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   int  r;
   char d[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   dirbase(path, d, NULL);
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   r = mtn_rm(mtn, path);
@@ -369,10 +369,9 @@ static int mtnfs_rmdir(const char *path)
 
 static int mtnfs_symlink(const char *oldpath, const char *newpath)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   int  r = 0;
   char d[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   dirbase(newpath, d, NULL);
   mtnlogger(mtn, 8, "[debug] %s: oldpath=%s newpath=%s\n", __func__, oldpath, newpath);
   r = mtn_symlink(mtn, oldpath, newpath);
@@ -382,21 +381,17 @@ static int mtnfs_symlink(const char *oldpath, const char *newpath)
 
 static int mtnfs_readlink(const char *path, char *buff, size_t size)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
-  int r;
+  MTN *mtn = MTN_CONTEXT;
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
-  r = mtn_readlink(mtn, path, buff, size);
-  return(r);
+  return(mtn_readlink(mtn, path, buff, size));
 }
 
 static int mtnfs_rename(const char *old_path, const char *new_path)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   int  r;
   char d0[PATH_MAX];
   char d1[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   dirbase(old_path, d0, NULL);
   dirbase(new_path, d1, NULL);
   mtnlogger(mtn, 8, "[debug] %s: old_path=%s new_path=%s\n", __func__, old_path, new_path);
@@ -408,34 +403,33 @@ static int mtnfs_rename(const char *old_path, const char *new_path)
 
 static int mtnfs_chmod(const char *path, mode_t mode)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  int r;
   char d[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   dirbase(path, d, NULL);
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
-  mtn_chmod(mtn, path, mode);
+  r = mtn_chmod(mtn, path, mode);
   setstat_dircache(d, NULL);
-  return(0);
+  return(r);
 }
 
 static int mtnfs_chown(const char *path, uid_t uid, gid_t gid)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  int r;
   char d[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   dirbase(path, d, NULL);
   mtnlogger(mtn, 8, "[debug] %s: path=%s uid=%d gid=%d\n", __func__, path, uid, gid);
-  mtn_chown(mtn, path, uid, gid);
+  r = mtn_chown(mtn, path, uid, gid);
   setstat_dircache(d, NULL);
-  return(0);
+  return(r);
 }
 
 static int mtnfs_utimens(const char *path, const struct timespec tv[2])
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   int  r;
   char d[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   dirbase(path, d, NULL);
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   r = mtn_utime(mtn, path, tv[0].tv_sec, tv[1].tv_sec);
@@ -445,19 +439,16 @@ static int mtnfs_utimens(const char *path, const struct timespec tv[2])
 
 static int mtnfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
-  struct fuse_context *fuse = fuse_get_context();
-  MTNFS *mtnfs = fuse->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  int r; 
   MTNSTAT st;
-  int  r = 0;
-
+  MTN *mtn = MTN_CONTEXT;
   mtnlogger(mtn, 8, "[debug] %s: path=%s fh=%llu mode=%o\n", __func__, path, fi->fh, mode);
   if(is_mtnstatus(path, NULL)){
     return(-EACCES);
   }
   st.stat.st_mode = mode;
-  st.stat.st_uid  = fuse->uid;
-  st.stat.st_gid  = fuse->gid;
+  st.stat.st_uid  = FUSE_UID;
+  st.stat.st_gid  = FUSE_GID;
   r = mtn_open(mtn, path, fi->flags, &st);
   if(r == -1){
     return(-errno);
@@ -468,20 +459,18 @@ static int mtnfs_create(const char *path, mode_t mode, struct fuse_file_info *fi
 
 static int mtnfs_open(const char *path, struct fuse_file_info *fi)
 {
-  struct fuse_context *fuse = fuse_get_context();
-  MTNFS *mtnfs = fuse->private_data;
-  MTN   *mtn   = mtnfs->mtn;
-  MTNSTAT st;
-  int  r = 0;
+  int r;
+  MTN *mtn = MTN_CONTEXT;
   char f[PATH_MAX];
+  MTNSTAT st;
 
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   if(is_mtnstatus(path, f)){
-    if(strcmp("members", f) == 0){
+    if(!strcmp("members", f)){
       fi->fh = (uint64_t)get_mtnstatus_members(mtn);
-    }else if(strcmp("debuginfo", f) == 0){
+    }else if(!strcmp("debuginfo", f)){
       fi->fh = (uint64_t)get_mtnstatus_debuginfo(mtn);
-    }else if(strcmp("loglevel", f) == 0){
+    }else if(!strcmp("loglevel", f)){
       fi->fh = (uint64_t)get_mtnstatus_loglevel(mtn);
     }else{
       return(-ENOENT);
@@ -489,8 +478,8 @@ static int mtnfs_open(const char *path, struct fuse_file_info *fi)
     return(0);
   }
   st.stat.st_mode = 0777;
-  st.stat.st_uid  = fuse->uid;
-  st.stat.st_gid  = fuse->gid;
+  st.stat.st_uid  = FUSE_UID;
+  st.stat.st_gid  = FUSE_GID;
   r = mtn_open(mtn, path, fi->flags, &st);
   fi->fh = (uint64_t)r;
   return((r == -1) ? -errno : 0);
@@ -498,12 +487,11 @@ static int mtnfs_open(const char *path, struct fuse_file_info *fi)
 
 static int mtnfs_truncate(const char *path, off_t offset)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   char f[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   if(is_mtnstatus(path, f)){
-    if(strcmp("loglevel", f) == 0){
+    if(!strcmp("loglevel", f)){
       return(0);
     }
     return(-EACCES);
@@ -513,13 +501,12 @@ static int mtnfs_truncate(const char *path, off_t offset)
 
 static int mtnfs_release(const char *path, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   int  r = 0;
   char f[PATH_MAX];
+  MTN *mtn = MTN_CONTEXT;
   mtnlogger(mtn, 8, "[debug] %s: path=%s fh=%llu\n", __func__, path, fi->fh);
   if(is_mtnstatus(path, f)){
-    if(strcmp("members", f) == 0){
+    if(!strcmp("members", f)){
       free_mtnstatus_members((char *)(fi->fh));
       fi->fh = 0;
     }else if(strcmp("debuginfo", f) == 0){
@@ -529,55 +516,50 @@ static int mtnfs_release(const char *path, struct fuse_file_info *fi)
       mtn->loglevel = atoi((char *)(fi->fh));
       free_mtnstatus_loglevel((char *)(fi->fh));
       fi->fh = 0;
-      MTNDEBUG("loglevel=%d\n", mtn->loglevel);
     }else{
       r = -EBADF;
     }
-  }else{
-    if(fi->fh){
-      if(mtn_close(mtn, fi->fh) != 0){
-        r = -errno;
-      }
-      fi->fh = 0;
+    return(r);
+  }
+  if(fi->fh){
+    if(mtn_close(mtn, fi->fh) != 0){
+      r = -errno;
     }
+    fi->fh = 0;
   }
   return(r);
 }
 
 static int mtnfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
   int r;
   int l;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
+  MTN   *mtn   = MTN_CONTEXT;
   mtnlogger(mtn, offset ? 9 : 8, "[debug] %s: path=%s %u-%u (%u)\n", __func__, path, offset, offset + size, size);
   if(is_mtnstatus(path, NULL)){
-    l = strlen((void *)(fi->fh));
-    if(offset > l){
-      l = 0;
-    }else{
-      l -= offset;
-    }
+    l = fi->fh ? strlen((void *)(fi->fh)) : 0;
+    l = (offset < l) ? l - offset : 0;
     r = (size > l) ? l : size;
     if(r){
       memcpy(buf, (char *)(fi->fh) + offset, r);
     }
-  }else{
-    pthread_mutex_lock(&(mtnfs->file_mutex[fi->fh]));
-    r = mtn_read(mtn, (int)(fi->fh), buf, size, offset);
-    if(r < 0){
-      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(-r), path);
-    }
-    pthread_mutex_unlock(&(mtnfs->file_mutex[fi->fh]));
+    return(r);
   }
+  pthread_mutex_lock(&(mtnfs->file_mutex[fi->fh]));
+  r = mtn_read(mtn, (int)(fi->fh), buf, size, offset);
+  if(r < 0){
+    mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(-r), path);
+  }
+  pthread_mutex_unlock(&(mtnfs->file_mutex[fi->fh]));
   return(r);
 }
 
 static int mtnfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
   int r;
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  MTN   *mtn   = MTN_CONTEXT;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   mtnlogger(mtn, offset ? 9 : 8, "[debug] %s: path=%s %u-%u (%u)\n", __func__, path, offset, offset + size, size);
   if(is_mtnstatus(path, NULL)){
     fi->fh = (uint64_t)realloc((void *)(fi->fh), size);
@@ -595,8 +577,7 @@ static int mtnfs_write(const char *path, const char *buf, size_t size, off_t off
 
 static int mtnfs_statfs(const char *path, struct statvfs *sv)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  MTN *mtn = MTN_CONTEXT;
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   MTNSVR *m;
   MTNSVR *km = mtn_info(mtn);
@@ -617,32 +598,28 @@ static int mtnfs_statfs(const char *path, struct statvfs *sv)
 
 static int mtnfs_opendir(const char *path, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  MTN *mtn = MTN_CONTEXT;
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   return(0);
 }
 
 static int mtnfs_releasedir(const char *path, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
+  MTN *mtn = MTN_CONTEXT;
   mtnlogger(mtn, 8, "[debug] %s: path=%s\n", __func__, path);
   return(0);
 }
 
 static int mtnfs_ftruncate(const char *path, off_t offset, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
-  MTN   *mtn   = mtnfs->mtn;
-  mtnlogger(mtn, 0, "[debug] %s: CALL path=%s\n", __func__, path);
-  mtnlogger(mtn, 0, "[debug] %s: EXIT path=%s\n", __func__, path);
+  MTN *mtn = MTN_CONTEXT;
+  mtnlogger(mtn, 0, "[debug] %s: path=%s\n", __func__, path);
   return(0);
 }
 
 static int mtnfs_flush(const char *path, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 9, "[debug] %s: path=%s\n", __func__, path);
   return(0);
@@ -650,7 +627,7 @@ static int mtnfs_flush(const char *path, struct fuse_file_info *fi)
 
 static int mtnfs_fsync(const char *path, int sync, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "[debug] %s: path=%s sync=%d\n", __func__, path, sync);
   return(0);
@@ -662,7 +639,7 @@ static int mtnfs_fsync(const char *path, int sync, struct fuse_file_info *fi)
 /*
 static int mtnfs_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "%s: path=%s flags=%d\n", __func__, path, flags);
   return(0);
@@ -670,7 +647,7 @@ static int mtnfs_setxattr(const char *path, const char *name, const char *value,
 
 static int mtnfs_getxattr(const char *path, const char *name, char *value, size_t size)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "%s: path=%s\n", __func__, path);
   return(0);
@@ -678,7 +655,7 @@ static int mtnfs_getxattr(const char *path, const char *name, char *value, size_
 
 static int mtnfs_listxattr(const char *path, char *list, size_t size)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "%s: path=%s\n", __func__, path);
   return(0);
@@ -686,7 +663,7 @@ static int mtnfs_listxattr(const char *path, char *list, size_t size)
 
 static int mtnfs_removexattr(const char *path, const char *name)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "%s: path=%s\n", __func__, path);
   return(0);
@@ -694,7 +671,7 @@ static int mtnfs_removexattr(const char *path, const char *name)
 
 static int mtnfs_fsyncdir(const char *path, int flags, struct fuse_file_info *fi)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "[debug] %s: path=%s\n", __func__, path);
   return(0);
@@ -702,7 +679,7 @@ static int mtnfs_fsyncdir(const char *path, int flags, struct fuse_file_info *fi
 
 static int mtnfs_access(const char *path, int mode)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "[debug] %s: path=%s\n", __func__, path);
   return(0);
@@ -710,7 +687,7 @@ static int mtnfs_access(const char *path, int mode)
 
 static int mtnfs_lock(const char *path, struct fuse_file_info *fi, int cmd, struct flock *l)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "[debug] %s: path=%s cmd=%d\n", __func__, path, cmd);
   return(0);
@@ -718,7 +695,7 @@ static int mtnfs_lock(const char *path, struct fuse_file_info *fi, int cmd, stru
 
 static int mtnfs_bmap(const char *path, size_t blocksize, uint64_t *idx)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "%s: path=%s\n", __func__, path);
   return(0);
@@ -726,7 +703,7 @@ static int mtnfs_bmap(const char *path, size_t blocksize, uint64_t *idx)
 
 static int mtnfs_ioctl(const char *path, int cmd, void *arg, struct fuse_file_info *fi, unsigned int flags, void *data)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "%s: path=%s\n", __func__, path);
   return(0);
@@ -734,7 +711,7 @@ static int mtnfs_ioctl(const char *path, int cmd, void *arg, struct fuse_file_in
 
 static int mtnfs_poll(const char *path, struct fuse_file_info *fi, struct fuse_pollhandle *ph, unsigned *reventsp)
 {
-  MTNFS *mtnfs = fuse_get_context()->private_data;
+  MTNFS *mtnfs = MTNFS_CONTEXT;
   MTN   *mtn   = mtnfs->mtn;
   mtnlogger(mtn, 0, "%s: path=%s\n", __func__, path);
   return(0);
@@ -784,6 +761,7 @@ static struct fuse_operations mtn_oper = {
 static struct fuse_opt mtnfs_opts[] = {
   MTNFS_OPT_KEY("-m %s",    addr),
   MTNFS_OPT_KEY("-p %s",    port),
+  MTNFS_OPT_KEY("-g %s",    group),
   MTNFS_OPT_KEY("-d %s",    loglevel),
   MTNFS_OPT_KEY("--pid=%s", pid),
   FUSE_OPT_KEY("-h",        1),
@@ -817,13 +795,11 @@ static int mtnfs_opt_parse(void *data, const char *arg, int key, struct fuse_arg
 
 int main(int argc, char *argv[])
 {
+  memset(&cmdopt, 0, sizeof(cmdopt));
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-  MTNFS *mtnfs = calloc(1, sizeof(MTNFS));
-  mtnfs->mtn = mtn_init(MODULE_NAME);
-  fuse_opt_parse(&args, &(mtnfs->opt), mtnfs_opts, mtnfs_opt_parse);
+  fuse_opt_parse(&args, &cmdopt, mtnfs_opts, mtnfs_opt_parse);
   fuse_opt_add_arg(&args, "-oallow_other");
   fuse_opt_add_arg(&args, "-odefault_permissions");
-  mtnfs->mtn->logmode = mtnfs->opt.dontfork ? MTNLOG_STDERR : MTNLOG_SYSLOG;
-  return(fuse_main(args.argc, args.argv, &mtn_oper, mtnfs));
+  return(fuse_main(args.argc, args.argv, &mtn_oper, NULL));
 }
 

@@ -46,7 +46,7 @@ void usage()
   printf("  OPTION\n");
   printf("   -i                 # replace string\n");
   printf("   -j num             # CPU usage limit(0-100[%%])\n");
-  printf("   -t                 # \n");
+  printf("   -v                 # verbose\n");
   printf("   -n                 # dryrun\n");
   printf("   -b                 # \n");
   printf("   -g group           # \n");
@@ -55,13 +55,24 @@ void usage()
   printf("   -m addr            # mcast addr(default:)\n");
   printf("   -p port            # TCP/UDP port(default: 6000)\n");
   printf("   -h                 # help\n");
-  printf("   -v                 # version\n");
+  printf("   --version          # version\n");
   printf("   --stdin=path       # \n");
   printf("   --stdout=path      # \n");
   printf("   --stderr=path      # \n");
   printf("   --put=path,path,,, # \n");
   printf("   --get=path,path,,, # \n");
   printf("\n");
+}
+
+MTNSVR *mtnexec_info()
+{
+  MTNSVR *s;
+  MTNSVR *svr = mtn_info(mtn);
+  while(svr && !is_execute(svr)){
+    svr = delsvr(svr);
+  }
+  for(s=svr;s;s=is_execute(s) ? s->next : delsvr(s));
+  return(svr);
 }
 
 void info()
@@ -71,12 +82,14 @@ void info()
   uint64_t memsize = 0;
   uint64_t memfree = 0;
   MTNSVR *svr;
-  for(svr=mtn_info(mtn);svr;svr=svr->next){
+  for(svr=mtnexec_info();svr;svr=svr->next){
+    if(!is_execute(svr)){
+      continue;
+    }
     node++;
     cpu_num += svr->cpu_num;
     memsize += svr->memsize/1024/1024;
     memfree += svr->memfree/1024/1024;
-
     printf("%5s: ",       svr->host);
     printf("CPU=%d ",     svr->cpu_num);
     printf("LA=%d.%02d ", svr->loadavg / 100, svr->loadavg % 100);
@@ -87,11 +100,15 @@ void info()
     printf("RES=%luK ",   svr->res/1024);
     printf("\n");
   }
-  printf("TOTAL: ");
-  printf("NODE=%d ",    node);
-  printf("CPU=%d ",   cpu_num);
-  printf("MEM=%luM ",  memsize);
-  printf("FREE=%luM ", memfree);
+  if(!node){
+    printf("node not found");
+  }else{
+    printf("TOTAL: ");
+    printf("%dCPU(%dnode) ", cpu_num, node);
+    if(memsize){
+      printf("MEM=%luM/%luM(%lu%%Free) ",  memfree, memsize, memfree * 100 / memsize);
+    }
+  }
   printf("\n");
 }
 
@@ -99,7 +116,7 @@ struct option *get_optlist()
 {
   static struct option opt[]={
       {"help",    0, NULL, 'h'},
-      {"version", 0, NULL, 'v'},
+      {"version", 0, NULL, 'V'},
       {"info",    0, NULL, 'F'},
       {"stdin",   1, NULL, 'I'},
       {"stdout",  1, NULL, 'O'},
@@ -168,31 +185,35 @@ ARG parse(int argc, char *argv[])
     exit(0);
   }
   optind = 0;
-  while((r = getopt_long(argc, argv, "+hvtnbij:I:RALP:N:m:p:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "+hVvnbig:j:I:RALP:N:m:p:", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
         exit(0);
 
-      case 'v':
+      case 'V':
         version();
         exit(0);
 
       case 'F':
-        info();
-        exit(0);
+        ctx->info = 1;
+        break;
 
-      case 't':
+      case 'v':
         ctx->verbose = 1;
         break;
 
       case 'n':
-        ctx->verbose = 1;
         ctx->dryrun  = 1;
         break;
 
       case 'i':
         ctx->conv = 1;
+        break;
+
+      case 'g':
+        mtn->groupstr = newstr(optarg);
+        mtn->grouparg = splitstr(optarg, ",");
         break;
 
       case 'j':
@@ -267,6 +288,11 @@ ARG parse(int argc, char *argv[])
   if(ctx->opt_A){
     ctx->mode = ctx->opt_L ? MTNEXECMODE_ALL1 : MTNEXECMODE_ALL0;
   }
+  if(ctx->info){
+    info();
+    exit(0);
+  }
+  ctx->verbose = ctx->dryrun ? 0 : ctx->verbose;
 
   args = newarg(0);
   while(optind < argc){
@@ -289,23 +315,6 @@ ARG parse(int argc, char *argv[])
     ctx->arg_num = 1;
   }
   return(args);
-}
-
-CTX *mtnexec_init(MTN *mtx)
-{
-  CTX *c = calloc(1, sizeof(CTX));
-  c->nobuf   = 1;
-  c->cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
-  c->job_max = sysconf(_SC_NPROCESSORS_ONLN);
-  c->arg_num = isatty(fileno(stdin)) ? 0 : 1;
-  gettimeofday(&(c->polltv), NULL);
-  mtx->logmode = MTNLOG_STDERR;
-  mtx->logverbose = 0;
-  pipe(c->fsig);
-  fcntl(c->fsig[0], F_SETFD, FD_CLOEXEC);
-  fcntl(c->fsig[1], F_SETFD, FD_CLOEXEC);
-  fcntl(c->fsig[0], F_SETFL, O_NONBLOCK);
-  return(c);
 }
 
 void signal_handler(int n, siginfo_t *info, void *ucs)
@@ -594,6 +603,38 @@ int mtnexec_fork(MTNJOB *job, int local)
     }
   }
 
+  if(ctx->verbose){
+    if(job->svr){
+      mtnlogger(mtn, 0, "[mtnexec] %s: %s ", job->svr->host, job->cmd);
+    }else{
+      mtnlogger(mtn, 0, "[mtnexec] local: %s ", job->cmd);
+    }
+    if(strlen(job->std[0]) && strcmp(job->std[0], "/dev/null")){
+      mtnlogger(mtn, 0, "stdin=%s ", job->std[0]);
+    }
+    if(strlen(job->std[1])){
+      mtnlogger(mtn, 0, ">%s ", job->std[1]);
+    }
+    if(strlen(job->std[2])){
+      mtnlogger(mtn, 0, "2>%s ", job->std[2]);
+    }
+    mtnlogger(mtn, 0, "\n");
+  }
+  if(ctx->dryrun){
+    mtnlogger(mtn, 0, "[dryrun] %s ", job->cmd);
+    if(strlen(job->std[0]) && strcmp(job->std[0], "/dev/null")){
+      mtnlogger(mtn, 0, "<%s ", job->std[0]);
+    }
+    if(strlen(job->std[1])){
+      mtnlogger(mtn, 0, ">%s ", job->std[1]);
+    }
+    if(strlen(job->std[2])){
+      mtnlogger(mtn, 0, "2>%s ", job->std[2]);
+    }
+    mtnlogger(mtn, 0, "\n");
+    jclose(job);
+    return(0);
+  }
   pipe(pp);
   gettimeofday(&(job->start), NULL);
   job->pid = fork();
@@ -740,7 +781,7 @@ int is_localbusy()
   return(1);
 }
 
-void mtnexec(ARG args, ARG argl)
+void mtnexec(ARG argp)
 {
   MTNJOB job;
   static int id = 0;
@@ -751,22 +792,15 @@ void mtnexec(ARG args, ARG argl)
   job.cid  = -1;
   job.lim  = ctx->cpu_lim;
   job.conv = ctx->conv;
-  job.args = copyarg(args);
-  job.argl = copyarg(argl);
+  job.args = copyarg(ctx->cmdargs);
+  job.argl = copyarg(argp);
   job.argc = cmdargs(&job);
-  job.cmd  = joinarg(job.argc);
+  job.cmd  = joinarg(job.argc, " ");
 
   if(is_empty(job.cmd)){
     jclose(&job);
     return;
   }    
-  if(ctx->verbose){
-    fprintf(stderr, "command: %s\n", job.cmd);
-  }
-  if(ctx->dryrun){
-    jclose(&job);
-    return;
-  }
   switch(ctx->mode){
     case MTNEXECMODE_LOCAL:
       mtnexec_fork(&job, 1);
@@ -825,69 +859,89 @@ ARG linearg()
   return(argl);
 }
 
-void argexec_line(ARG args)
+void argexec()
 {
-  ARG argl;
-  while((argl = linearg()) && is_loop){
-    mtnexec(args, argl);
-    clrarg(argl);
+  ARG argp;
+  while(is_loop && (argp = ctx->linearg ? linearg() : readarg(0, ctx->arg_num))){
+    mtnexec(argp);
+    clrarg(argp);
   }
 }
 
-void argexec_read(ARG args)
+int init_pipe()
 {
-  ARG argl;
-  while((argl = readarg(0, ctx->arg_num)) && is_loop){
-    mtnexec(args, argl);
-    clrarg(argl);
-  }
+  pipe(ctx->fsig);
+  fcntl(ctx->fsig[0], F_SETFD, FD_CLOEXEC);
+  fcntl(ctx->fsig[1], F_SETFD, FD_CLOEXEC);
+  fcntl(ctx->fsig[0], F_SETFL, O_NONBLOCK);
+  ctx->efd = epoll_create(ctx->job_max);
+  fcntl(ctx->efd, F_SETFD, FD_CLOEXEC);
+  return(0);
 }
 
-void argexec(ARG args)
+int init_poll()
 {
-  if(ctx->linearg){
-    argexec_line(args);
-  }else{
-    argexec_read(args);
+  struct epoll_event ev;
+  ev.events = EPOLLIN;
+  ev.data.ptr = NULL;
+  epoll_ctl(ctx->efd, EPOLL_CTL_ADD, ctx->fsig[0], &ev);
+  return(0);
+}
+
+int init(int argc, char *argv[])
+{
+  mtn = mtn_init(MODULE_NAME);
+  ctx = calloc(1,sizeof(CTX));
+
+  if(!mtn){
+    return(-1);
   }
+  if(!ctx){
+    mtnlogger(NULL, 0, "[error] %s: %s\n", __func__, strerror(errno));
+    return(-1);
+  }
+
+  mtn->logtype = 0;
+  mtn->logmode = MTNLOG_STDERR;
+  ctx->nobuf   = 1;
+  ctx->cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
+  ctx->job_max = sysconf(_SC_NPROCESSORS_ONLN);
+  ctx->arg_num = isatty(fileno(stdin)) ? 0 : 1;
+  ctx->cmdargs = parse(argc, argv);
+  gettimeofday(&(ctx->polltv), NULL);
+
+  if(init_pipe() == -1){
+    return(-1);
+  }
+  if(init_poll() == -1){
+    return(-1);
+  }
+  ctx->job = calloc(ctx->job_max, sizeof(MTNJOB));
+  ctx->svr = (ctx->mode == MTNEXECMODE_LOCAL) ? NULL : mtn_info(mtn);
+  if(!ctx->svr){
+    if(ctx->mode == MTNEXECMODE_REMOTE){
+      mtnlogger(mtn, 0, "[error] node not found\n");
+      return(-1);
+    }
+    if(ctx->mode == MTNEXECMODE_ALL0){
+      mtnlogger(mtn, 0, "[error] node not found\n");
+      return(-1);
+    }
+  }
+  set_signal_handler();
+  return(0);
 }
 
 int main(int argc, char *argv[])
 {
-  ARG arg;
-  struct epoll_event ev;
-
-  mtn = mtn_init(MODULE_NAME);
-  ctx = mtnexec_init(mtn);
-  arg = parse(argc, argv);
-
-  ctx->svr = (ctx->mode == MTNEXECMODE_LOCAL) ? NULL : mtn_info(mtn);
-  ctx->job = calloc(ctx->job_max, sizeof(MTNJOB));
-  ctx->efd = epoll_create(ctx->job_max);
-  fcntl(ctx->efd, F_SETFD, FD_CLOEXEC);
-
-  ev.events = EPOLLIN;
-  ev.data.ptr = NULL;
-  epoll_ctl(ctx->efd, EPOLL_CTL_ADD, ctx->fsig[0], &ev);
-
-  if(!ctx->svr){
-    if(ctx->mode == MTNEXECMODE_REMOTE){
-      mtnlogger(mtn, 0, "[error] node not found\n");
-      exit(0);
-    }
-    if(ctx->mode == MTNEXECMODE_ALL0){
-      mtnlogger(mtn, 0, "[error] node not found\n");
-      exit(0);
-    }
+  if(init(argc, argv) == -1){
+    exit(1);
   }
-
-  set_signal_handler();
   if(ctx->arg_num){
-    argexec(arg);
+    argexec();
   }else{
-    mtnexec(arg, NULL);
+    mtnexec(NULL);
   }
-  clrarg(arg);
   return(mtnexec_exit());
 }
 
