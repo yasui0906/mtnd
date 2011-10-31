@@ -64,15 +64,18 @@ void usage()
   printf("\n");
 }
 
-MTNSVR *mtnexec_info()
+MTNSVR *getinfo()
 {
   MTNSVR *s;
-  MTNSVR *svr = mtn_info(mtn);
-  while(svr && !is_execute(svr)){
-    svr = delsvr(svr);
+  MTNSVR *members = NULL;
+  MTNSVR *svrlist = mtn_info(mtn);
+  for(s=svrlist;s;s=s->next){
+    if(is_execute(s)){
+      members = pushsvr(members, s);
+    }
   }
-  for(s=svr;s;s=is_execute(s) ? s->next : delsvr(s));
-  return(svr);
+  clrsvr(svrlist);
+  return(members);
 }
 
 void info()
@@ -81,23 +84,29 @@ void info()
   int cpu_num = 0;
   uint64_t memsize = 0;
   uint64_t memfree = 0;
-  MTNSVR *svr;
-  for(svr=mtnexec_info();svr;svr=svr->next){
-    if(!is_execute(svr)){
-      continue;
-    }
+  MTNSVR *svrlist  = getinfo();
+  MTNSVR *s;
+  for(s=svrlist;s;s=s->next){
     node++;
-    cpu_num += svr->cpu_num;
-    memsize += svr->memsize/1024/1024;
-    memfree += svr->memfree/1024/1024;
-    printf("%5s: ",       svr->host);
-    printf("CPU=%d ",     svr->cpu_num);
-    printf("LA=%d.%02d ", svr->loadavg / 100, svr->loadavg % 100);
-    printf("MEM=%luM ",   svr->memsize/1024/1024);
-    printf("FREE=%luM ",  svr->memfree/1024/1024);
-    printf("PS=%d ",      svr->pscount);
-    printf("VSZ=%luK ",   svr->vsz/1024);
-    printf("RES=%luK ",   svr->res/1024);
+    cpu_num += s->cpu_num;
+    memsize += s->memsize/1024/1024;
+    memfree += s->memfree/1024/1024;
+    printf("%5s: ",       s->host);
+    printf("CPU=%d ",     s->cpu_num);
+    printf("LA=%d.%02d ", s->loadavg / 100, s->loadavg % 100);
+    printf("MEM=%luM ",   s->memsize/1024/1024);
+    printf("FREE=%luM ",  s->memfree/1024/1024);
+    printf("PS=%d ",      s->pscount);
+    printf("VSZ=%luK ",   s->vsz/1024);
+    printf("RES=%luK ",   s->res/1024);
+    printf("CNT=%d ",     s->malloccnt);
+    printf("TSK=%d ",     s->taskcnt);
+    printf("SVR=%d ",     s->svrcnt);
+    printf("DIR=%d ",     s->dircnt);
+    printf("STA=%d ",     s->statcnt);
+    printf("STR=%d ",     s->strcnt);
+    printf("ARG=%d ",     s->argcnt);
+    printf("CLD=%d ",     s->cldcnt);
     printf("\n");
   }
   if(!node){
@@ -683,12 +692,9 @@ int mtnexec_fork(MTNJOB *job, int local)
     close(1);
     dup2(f, 1);
     close(f);
-  }else if(ctx->nobuf){
-    close(pp[1]);
-  }else{
+  }else if(!ctx->nobuf){
     close(1);
     dup2(pp[1], 1);
-    close(pp[1]);
   }
 
   if(strlen(job->std[2])){
@@ -700,7 +706,11 @@ int mtnexec_fork(MTNJOB *job, int local)
     close(2);
     dup2(f, 2);
     close(f);
+  }else if(!ctx->nobuf){
+    close(2);
+    dup2(pp[1], 2);
   }
+  dup2(pp[1], 1);
 
   if(local){
     //===== local exec process =====
@@ -764,7 +774,7 @@ void mtnexec_remote_one(MTNJOB *job)
     }
     mtnexec_poll();
     clrsvr(ctx->svr);
-    ctx->svr = mtn_info(mtn);
+    ctx->svr = getinfo(mtn);
   }
   job->svr = cpsvr(job->svr);
   mtnexec_fork(job, 0);
@@ -874,7 +884,7 @@ int init_pipe()
   fcntl(ctx->fsig[0], F_SETFD, FD_CLOEXEC);
   fcntl(ctx->fsig[1], F_SETFD, FD_CLOEXEC);
   fcntl(ctx->fsig[0], F_SETFL, O_NONBLOCK);
-  ctx->efd = epoll_create(ctx->job_max);
+  ctx->efd = epoll_create(1);
   fcntl(ctx->efd, F_SETFD, FD_CLOEXEC);
   return(0);
 }
@@ -917,7 +927,7 @@ int init(int argc, char *argv[])
     return(-1);
   }
   ctx->job = calloc(ctx->job_max, sizeof(MTNJOB));
-  ctx->svr = (ctx->mode == MTNEXECMODE_LOCAL) ? NULL : mtn_info(mtn);
+  ctx->svr = (ctx->mode == MTNEXECMODE_LOCAL) ? NULL : getinfo(mtn);
   if(!ctx->svr){
     if(ctx->mode == MTNEXECMODE_REMOTE){
       mtnlogger(mtn, 0, "[error] node not found\n");

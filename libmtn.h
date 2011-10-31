@@ -45,13 +45,15 @@
 #define MTNCMD_SUCCESS  98
 #define MTNCMD_MAX      99
 
-#define MTNCOUNT_SVR    0
-#define MTNCOUNT_DIR    1
-#define MTNCOUNT_STAT   2
-#define MTNCOUNT_STR    3
-#define MTNCOUNT_ARG    4
-#define MTNCOUNT_MALLOC 5
-#define MTNCOUNT_MAX    6
+#define MTNCOUNT_TASK   0
+#define MTNCOUNT_SVR    1
+#define MTNCOUNT_DIR    2
+#define MTNCOUNT_STAT   3
+#define MTNCOUNT_STR    4
+#define MTNCOUNT_ARG    5
+#define MTNCOUNT_MALLOC 6
+#define MTNCOUNT_CLD    7
+#define MTNCOUNT_MAX    8
 
 #define MTNMODE_EXPORT  1
 #define MTNMODE_EXECUTE 2

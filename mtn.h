@@ -58,8 +58,15 @@ typedef struct mtnsvr
   uint32_t pscount;
   uint64_t memsize;
   uint64_t memfree;
-  int    malloccnt;
   int    membercnt;
+  int    malloccnt;
+  int      taskcnt;
+  int       svrcnt;
+  int       dircnt;
+  int      statcnt;
+  int       strcnt;
+  int       argcnt;
+  int       cldcnt;
   STR     groupstr;
   ARG     grouparg;
   struct timeval tv;

@@ -247,19 +247,26 @@ static void mtnd_info_process(MTNTASK *kt)
 {
   statm  sm;
   MTNSVR mb;
-  double loadavg[3];
+  double loadavg;
 
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   memset(&mb, 0, sizeof(mb));
   getstatm(&sm);
   getmeminfo(&(mb.memsize), &(mb.memfree));
   mb.limit = ctx->free_limit;
-  mb.malloccnt = getcount(MTNCOUNT_MALLOC);
   mb.membercnt = get_members_count(ctx->members);
+  mb.malloccnt = getcount(MTNCOUNT_MALLOC);
+  mb.taskcnt   = getcount(MTNCOUNT_TASK);
+  mb.svrcnt    = getcount(MTNCOUNT_SVR);
+  mb.dircnt    = getcount(MTNCOUNT_DIR);
+  mb.statcnt   = getcount(MTNCOUNT_STAT);
+  mb.strcnt    = getcount(MTNCOUNT_STR);
+  mb.argcnt    = getcount(MTNCOUNT_ARG);
+  mb.cldcnt    = ctx->cldcount;
   get_diskfree(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
   mb.cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
-  getloadavg(loadavg, 3);
-  mb.loadavg = (uint32_t)(loadavg[0] * 100);
+  getloadavg(&loadavg, 1);
+  mb.loadavg = (uint32_t)(loadavg * 100);
   mb.pscount = getpscount();
   mb.flags  |= ctx->export  ? MTNMODE_EXPORT  : 0;
   mb.flags  |= ctx->execute ? MTNMODE_EXECUTE : 0;
@@ -268,7 +275,6 @@ static void mtnd_info_process(MTNTASK *kt)
   mtn_set_int(&(mb.dsize),     &(kt->send), sizeof(mb.dsize));
   mtn_set_int(&(mb.dfree),     &(kt->send), sizeof(mb.dfree));
   mtn_set_int(&(mb.limit),     &(kt->send), sizeof(mb.limit));
-  mtn_set_int(&(mb.malloccnt), &(kt->send), sizeof(mb.malloccnt));
   mtn_set_int(&(mb.membercnt), &(kt->send), sizeof(mb.membercnt));
   mtn_set_int(&(sm.vsz),       &(kt->send), sizeof(sm.vsz));
   mtn_set_int(&(sm.res),       &(kt->send), sizeof(sm.res));
@@ -278,9 +284,18 @@ static void mtnd_info_process(MTNTASK *kt)
   mtn_set_int(&(mb.memsize),   &(kt->send), sizeof(mb.memsize));
   mtn_set_int(&(mb.memfree),   &(kt->send), sizeof(mb.memfree));
   mtn_set_int(&(mb.flags),     &(kt->send), sizeof(mb.flags));
+  mtn_set_int(&(mb.malloccnt), &(kt->send), sizeof(mb.malloccnt));
+  mtn_set_int(&(mb.taskcnt),   &(kt->send), sizeof(mb.taskcnt));
+  mtn_set_int(&(mb.svrcnt),    &(kt->send), sizeof(mb.svrcnt));
+  mtn_set_int(&(mb.dircnt),    &(kt->send), sizeof(mb.dircnt));
+  mtn_set_int(&(mb.statcnt),   &(kt->send), sizeof(mb.statcnt));
+  mtn_set_int(&(mb.strcnt),    &(kt->send), sizeof(mb.strcnt));
+  mtn_set_int(&(mb.argcnt),    &(kt->send), sizeof(mb.argcnt));
+  mtn_set_int(&(mb.cldcnt),    &(kt->send), sizeof(mb.cldcnt));
   mtn_set_string(mtn->groupstr, &(kt->send));
   kt->send.head.fin = 1;
   kt->fin = 1;
+  mtnlogger(mtn, 8, "[debug] %s: SIZE=%d\n", __func__, kt->send.head.size);
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -294,7 +309,7 @@ int mtnd_list_dir(MTNTASK *kt)
       continue;
     }
     sprintf(full, "%s/%s", kt->path, ent->d_name);
-    if(lstat(full, &(kt->stat)) == 0){
+    if(!lstat(full, &(kt->stat))){
       len  = mtn_set_string(ent->d_name, NULL);
       len += mtn_set_stat(&(kt->stat),   NULL);
       if(kt->send.head.size + len <= mtn->max_packet_size){
@@ -1313,7 +1328,7 @@ void mtnd_child_exec(MTNTASK *kt)
     mtn_set_int(&errno, &(kt->send), sizeof(errno));
   }else{
     mtnd_child_fork(kt, &job);
-    job.efd = epoll_create(4);
+    job.efd = epoll_create(1);
     ev.events  = EPOLLOUT;
     ev.data.fd = kt->std[0];
     epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
@@ -1429,6 +1444,7 @@ void mtnd_accept_process(int l)
     return;
   }
   if(kt.pid){
+    ctx->cldcount++;
     close(kt.con);
     return;
   }
@@ -1453,7 +1469,9 @@ void mtnd_loop(int e, int l)
 
   //===== Main Loop =====
   while(is_loop){
-    waitpid(-1, NULL, WNOHANG);
+    if(waitpid(-1, NULL, WNOHANG) > 0){
+      ctx->cldcount--;
+    }  
     r = epoll_wait(e, ev, 2, 1000);
     gettimeofday(&tv, NULL);
     if((tv.tv_sec - tv_health.tv_sec) > 60){
@@ -1517,7 +1535,7 @@ void mtnd_main()
   int e;
   struct epoll_event ev;
 
-  e = epoll_create(2);
+  e = epoll_create(1);
   if(e == -1){
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return;
@@ -1721,6 +1739,10 @@ void parse(int argc, char *argv[])
         break;
 
       case 'g':
+        if(strlen(optarg) > 63){
+          mtnlogger(mtn, 0, "[error] group too long. max 64bytes\n");
+          exit(1);
+        }
         mtn->groupstr = newstr(optarg);
         mtn->grouparg = splitstr(optarg, ",");
         break;
@@ -1766,7 +1788,7 @@ void parse(int argc, char *argv[])
   getcwd(ctx->cwd, sizeof(ctx->cwd));
 }
 
-void mtnd_bootmsg()
+void mtnd_startmsg()
 {
   uint32_t bsize;
   uint32_t fsize;
@@ -1780,27 +1802,32 @@ void mtnd_bootmsg()
   mtnlogger(mtn, 0, "addr : %s\n", mtn->mcast_addr);
   mtnlogger(mtn, 0, "port : %d\n", mtn->mcast_port);
   mtnlogger(mtn, 0, "host : %s\n", ctx->host);
-if(mtn->groupstr){
+  if(mtn->groupstr){
   mtnlogger(mtn, 0, "group: %s\n", mtn->groupstr);
-}
-if(ctx->execute){
+  }
+  if(ctx->execute){
   mtnlogger(mtn, 0, "exec : %s\n", ctx->ewd);
-}
-if(ctx->export){
+  }
+  if(ctx->export){
   mtnlogger(mtn, 0, "base : %s\n", ctx->cwd);
   mtnlogger(mtn, 0, "size : %6llu [MB]\n", fsize * dsize / 1024 / 1024);
   mtnlogger(mtn, 0, "free : %6llu [MB]\n", bsize * dfree / 1024 / 1024);
   mtnlogger(mtn, 0, "limit: %6llu [MB]\n", ctx->free_limit/1024 / 1024);
+  }
 }
+
+void mtnd_endmsg()
+{
+  mtnlogger(mtn, 0, "%s finished\n", MODULE_NAME);
 }
 
 int mtnd()
 {
-  mtnd_bootmsg();
+  mtnd_startmsg();
   mkpidfile(ctx->pid);
   mtnd_main();
   rmpidfile(ctx->pid);
-  mtnlogger(mtn, 0, "%s finished\n", MODULE_NAME);
+  mtnd_endmsg();
   return(0);
 }
 
@@ -1809,10 +1836,10 @@ void mtnd_init()
   mtn = mtn_init(MODULE_NAME);
   mtn->logtype = 1;
   mtn->logmode = MTNLOG_STDERR;
-  ctx = malloc(sizeof(MTND));
-  ctx->daemonize = 1;
+  ctx = calloc(1,sizeof(MTND));
   getcwd(ctx->cwd, sizeof(ctx->cwd));
   gethostname(ctx->host, sizeof(ctx->host));
+  ctx->daemonize = 1;
 }
 
 int main(int argc, char *argv[])

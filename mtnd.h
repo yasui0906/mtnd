@@ -9,6 +9,7 @@ typedef struct mtnd_context{
   char pid[PATH_MAX];
   char cwd[PATH_MAX];
   char ewd[PATH_MAX];
+  int  cldcount;
   int  export;
   int  execute;
 } MTND;

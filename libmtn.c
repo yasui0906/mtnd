@@ -42,7 +42,7 @@ char *mtncmdstr[]={
   "INFO",
   "STAT",
   "LIST",
-  "SET",
+  "PUT",
   "GET",
   "DEL",
   "DATA",
@@ -63,6 +63,12 @@ char *mtncmdstr[]={
   "READLINK",
   "UTIME",
   "RESULT",
+  "INIT",
+  "EXIT",
+  "EXEC",
+  "STDIN",
+  "STDOUT",
+  "STDERR",
 };
 
 static void inccount(int id)
@@ -137,11 +143,13 @@ int getpscount()
   int i = 0;
   DIR *d = opendir("/proc");
   struct dirent *ent;
+  if(!d){
+    return(-1);
+  }
   while((ent = readdir(d))){
-    if(!is_numeric(ent->d_name)){
-      continue;
+    if(is_numeric(ent->d_name)){
+      i++;
     }
-    i++;
   }
   closedir(d);
   return(i);
@@ -381,7 +389,6 @@ static void *xcalloc(size_t size)
   return(p);
 }
 
-
 static void *xrealloc(void *p, size_t size)
 {
   void *n = realloc(p, size);
@@ -562,8 +569,8 @@ int send_data_stream(MTN *mtn, int s, MTNDATA *data)
 
 int recv_data_stream(MTN *mtn, int s, MTNDATA *kd)
 {
-	mtnlogger(mtn, 9, "[debug] %s:\n", __func__);
   int r;
+	mtnlogger(mtn, 9, "[debug] %s:\n", __func__);
   if((r = recv_stream(mtn, s, &(kd->head), sizeof(kd->head)))){
     return(r);
   }
@@ -1253,6 +1260,8 @@ MTNSVR *delsvr(MTNSVR *svr)
   }
   svr->next = NULL;
   svr->prev = NULL;
+  svr->groupstr = clrstr(svr->groupstr);
+  svr->grouparg = clrarg(svr->grouparg);
   xfree(svr);
   deccount(MTNCOUNT_SVR);
   return(nsv);
@@ -1304,20 +1313,30 @@ MTNSVR *cpsvr(MTNSVR *svr)
     return(NULL);
   }
   nsv = addsvr(NULL, &(svr->addr), svr->host);
-  nsv->mark     = svr->mark;
-  nsv->bsize    = svr->bsize;
-  nsv->fsize    = svr->fsize;
-  nsv->dsize    = svr->dsize;
-  nsv->dfree    = svr->dfree;
-  nsv->vsz      = svr->vsz;
-  nsv->res      = svr->res;
-  nsv->cpu_num  = svr->cpu_num;
-  nsv->loadavg  = svr->loadavg;
-  nsv->memsize  = svr->memsize;
-  nsv->memfree  = svr->memfree;
-  nsv->flags    = svr->flags;
-  nsv->groupstr = svr->groupstr;
-  nsv->grouparg = splitstr(svr->groupstr, ",");
+  nsv->mark      = svr->mark;
+  nsv->bsize     = svr->bsize;
+  nsv->fsize     = svr->fsize;
+  nsv->dsize     = svr->dsize;
+  nsv->dfree     = svr->dfree;
+  nsv->vsz       = svr->vsz;
+  nsv->res       = svr->res;
+  nsv->cpu_num   = svr->cpu_num;
+  nsv->loadavg   = svr->loadavg;
+  nsv->pscount   = svr->pscount;
+  nsv->memsize   = svr->memsize;
+  nsv->memfree   = svr->memfree;
+  nsv->membercnt = svr->membercnt;
+  nsv->malloccnt = svr->malloccnt;
+  nsv->taskcnt   = svr->taskcnt;
+  nsv->svrcnt    = svr->svrcnt;
+  nsv->dircnt    = svr->dircnt;
+  nsv->statcnt   = svr->statcnt;
+  nsv->strcnt    = svr->strcnt;
+  nsv->argcnt    = svr->argcnt;
+  nsv->cldcnt    = svr->cldcnt;
+  nsv->flags     = svr->flags;
+  nsv->groupstr  = svr->groupstr;
+  nsv->grouparg  = splitstr(svr->groupstr, ",");
   memcpy(&(nsv->tv), &(svr->tv), sizeof(struct timeval));
   return(nsv);
 }
@@ -1344,8 +1363,9 @@ int cmpsvr(MTNSVR *s1, MTNSVR *s2)
 MTNTASK *newtask()
 {
   MTNTASK *kt;
-  kt = xmalloc(sizeof(MTNTASK));
-  memset(kt, 0, sizeof(MTNTASK));
+  if((kt = xcalloc(sizeof(MTNTASK)))){
+    inccount(MTNCOUNT_TASK);
+  }
   return(kt);
 }
 
@@ -1377,6 +1397,7 @@ MTNTASK *deltask(MTNTASK *t)
   }
   n = cuttask(t);
   xfree(t);
+  deccount(MTNCOUNT_TASK);
   return(n);
 }
 
@@ -1621,8 +1642,6 @@ void mtn_info_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, 
     mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
   }else if(mtn_get_int(&(member->limit), rdata, sizeof(member->limit))){
     mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->malloccnt), rdata, sizeof(member->malloccnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
   }else if(mtn_get_int(&(member->membercnt), rdata, sizeof(member->membercnt))){
     mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
   }else if(mtn_get_int(&(member->vsz), rdata, sizeof(member->vsz))){
@@ -1641,6 +1660,22 @@ void mtn_info_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, 
     mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
   }else if(mtn_get_int(&(member->flags), rdata, sizeof(member->flags))){
     mtnlogger(mtn, 0, "[error] %s: flags: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->malloccnt), rdata, sizeof(member->malloccnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->taskcnt), rdata, sizeof(member->taskcnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->svrcnt), rdata, sizeof(member->svrcnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->dircnt), rdata, sizeof(member->dircnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->statcnt), rdata, sizeof(member->statcnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->strcnt), rdata, sizeof(member->strcnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->argcnt), rdata, sizeof(member->argcnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
+  }else if(mtn_get_int(&(member->cldcnt), rdata, sizeof(member->cldcnt))){
+    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
   }else if(mtn_get_string(buff, rdata) == -1){
     mtnlogger(mtn, 0, "[error] %s: group: protocol error\n", __func__);
   }else{
@@ -1689,7 +1724,7 @@ MTNSTAT *mtn_list(MTN *mtn, const char *path)
 {
 	mtnlogger(mtn, 8, "[debug] %s:\n", __func__);
   MTNDATA data;
-  MTNSVR *members = get_members(mtn);
+  MTNSVR *members  = get_members(mtn);
   data.head.type   = MTNCMD_LIST;
   data.head.size   = 0;
   data.head.flag   = 0;
@@ -1753,10 +1788,10 @@ MTNSVR *mtn_choose(MTN *mtn, const char *path)
   MTNDATA data;
   MTNSVR *member;
   MTNSVR *members = get_members(mtn);
-  data.head.type = MTNCMD_INFO;
-  data.head.size = 0;
-  data.head.flag = 0;
-  data.option    = NULL;
+  data.head.type  = MTNCMD_INFO;
+  data.head.size  = 0;
+  data.head.flag  = 0;
+  data.option     = NULL;
   mtn_process(mtn, members, &data, (MTNPROCFUNC)mtn_choose_info);
   member = cpsvr(data.option);
   clrsvr(members);
@@ -1766,9 +1801,9 @@ MTNSVR *mtn_choose(MTN *mtn, const char *path)
 void mtn_find_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
 {
 	mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
-	mtnlogger(mtn, 9, "[debug] %s: P=%p  host=%s\n", __func__, sdata->option, member->host);
+	mtnlogger(mtn, 8, "[debug] %s: P=%p  host=%s\n", __func__, sdata->option, member->host);
   sdata->option = mgstat(sdata->option, mkstat(member, addr, rdata));
-	mtnlogger(mtn, 9, "[debug] %s: P=%p\n", __func__, sdata->option);
+	mtnlogger(mtn, 8, "[debug] %s: P=%p\n", __func__, sdata->option);
 	mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -2694,12 +2729,12 @@ size_t set_mtnstatus_debuginfo(MTN *mtn)
   exsprintf(buff, size, "[DEBUG INFO]\n");
   exsprintf(buff, size, "VSZ   : %llu KB\n", sm.vsz / 1024);
   exsprintf(buff, size, "RSS   : %llu KB\n", sm.res / 1024);
-  exsprintf(buff, size, "MALLOC: %d\n", getcount(MTNCOUNT_MALLOC));
+  exsprintf(buff, size, "SVR   : %d\n", getcount(MTNCOUNT_SVR));
   exsprintf(buff, size, "DIR   : %d\n", getcount(MTNCOUNT_DIR));
   exsprintf(buff, size, "STAT  : %d\n", getcount(MTNCOUNT_STAT));
-  exsprintf(buff, size, "MEMBER: %d\n", getcount(MTNCOUNT_SVR));
   exsprintf(buff, size, "STR   : %d\n", getcount(MTNCOUNT_STR));
   exsprintf(buff, size, "ARG   : %d\n", getcount(MTNCOUNT_ARG));
+  exsprintf(buff, size, "MALLOC: %d\n", getcount(MTNCOUNT_MALLOC));
   exsprintf(buff, size, "RCVBUF: %d\n", socket_rcvbuf);
   result = strlen(*buff);
   pthread_mutex_unlock(&(mtn->mutex.status));
