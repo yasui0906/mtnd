@@ -270,81 +270,6 @@ int scanprocess(MTNJOB *job, int job_max)
   return(0);
 }
 
-int scheprocess(MTN *mtn, MTNJOB *job, int job_max, int cpu_lim, int cpu_num)
-{
-  int i;
-  int cpu_id;
-  int cpu_use;
-  cpu_set_t cpumask;
-
-  cpu_id  = 0;
-  cpu_use = 0;
-  scanprocess(job, job_max);
-  for(i=0;i<job_max;i++){
-    if(!job[i].pid){
-      continue;
-    }
-    getjobusage(job + i);
-    if(cpu_id != job[i].cid){
-      CPU_ZERO(&cpumask);
-      CPU_SET(cpu_id, &cpumask);
-      if(sched_setaffinity(job[i].pid, cpu_num, &cpumask) == -1){
-        mtnlogger(mtn, 0, "[error] %s: sched_setaffinity: %s\n", __func__, strerror(errno));
-        job->cid = -1;
-      }else{
-        job->cid = cpu_id;
-      }
-    }
-    cpu_id  += 1;
-    cpu_id  %= cpu_num;
-    cpu_use += job[i].cpu;
-    //MTNDEBUG("CMD=%s STATE=%c CPU=%d.%d\n", job->cmd, job->pstat[0].state, job->cpu / 10, job->cpu % 10);
-  }
-  //MTNDEBUG("[CPU=%d.%d%% LIM=%d CPU=%d]\n", ctx->cpu_use / 10, ctx->cpu_use % 10, ctx->cpu_lim / 10, ctx->cpu_num);
-
-  if(!cpu_lim){
-    return(cpu_use);
-  }
-
-  for(i=0;i<job_max;i++){
-    if(!job[i].pid){
-      continue;
-    }
-    if(cpu_lim * cpu_num < cpu_use){
-      // 過負荷状態
-      if(job[i].pstat[0].state != 'T'){
-        if(job[i].cpu > cpu_lim){
-          kill(-(job[i].pid), SIGSTOP);
-          return(cpu_use);
-        }
-      }
-    }else{
-      // アイドル状態
-      if(job[i].pstat[0].state == 'T'){
-        if(job[i].cpu < cpu_lim){
-          kill(-(job[i].pid), SIGCONT);
-          return(cpu_use);
-        }
-      }
-    }
-  }
-
-  for(i=0;i<job_max;i++){
-    if(!job[i].pid){
-      continue;
-    }
-    if(job[i].pstat[0].state != 'T'){
-      if(job[i].cpu > cpu_lim){
-        kill(-(job[i].pid), SIGSTOP);
-      }
-    }else{
-      if(job[i].cpu < cpu_lim){
-        kill(-(job[i].pid), SIGCONT);
-      }
-    }
-  }
-  return(cpu_use);
-}
 
 int getwaittime(MTNJOB *job, int job_max)
 {
@@ -785,7 +710,7 @@ int v4port(MTNADDR *addr)
   return(ntohs(addr->addr.in.sin_port));
 }
 
-int mtn_get_string(char *str, MTNDATA *kd)
+int mtndata_get_string(char *str, MTNDATA *kd)
 {
   uint16_t len;
   uint16_t size = kd->head.size;
@@ -811,14 +736,14 @@ int mtn_get_string(char *str, MTNDATA *kd)
   return(len);
 }
 
-int mtn_get_svrhost(MTNSVR *svr, MTNDATA *kd)
+int mtndata_get_svrhost(MTNSVR *svr, MTNDATA *kd)
 {
-  int len = mtn_get_string(NULL, kd);
+  int len = mtndata_get_string(NULL, kd);
   svr->host = xrealloc(svr->host, len);
-  return(mtn_get_string(svr->host, kd));
+  return(mtndata_get_string(svr->host, kd));
 }
 
-static int mtn_get_int16(uint16_t *val, MTNDATA *kd)
+static int mtndata_get_int16(uint16_t *val, MTNDATA *kd)
 {
   uint16_t len  = sizeof(uint16_t);
   uint16_t size = kd->head.size;
@@ -836,7 +761,7 @@ static int mtn_get_int16(uint16_t *val, MTNDATA *kd)
   return(0);
 }
 
-static int mtn_get_int32(uint32_t *val, MTNDATA *kd)
+static int mtndata_get_int32(uint32_t *val, MTNDATA *kd)
 {
   uint16_t len  = sizeof(uint32_t);
   uint16_t size = kd->head.size;
@@ -854,7 +779,7 @@ static int mtn_get_int32(uint32_t *val, MTNDATA *kd)
   return(0);
 }
 
-static int mtn_get_int64(uint64_t *val, MTNDATA *kd)
+static int mtndata_get_int64(uint64_t *val, MTNDATA *kd)
 {
   uint16_t  len = sizeof(uint64_t);
   uint16_t size = kd->head.size;
@@ -875,20 +800,39 @@ static int mtn_get_int64(uint64_t *val, MTNDATA *kd)
   return(0);
 }
 
-int mtn_get_int(void *val, MTNDATA *kd, int size)
+int mtndata_get_int(void *val, MTNDATA *kd, int size)
 {
   switch(size){
     case 2:
-      return mtn_get_int16(val, kd);
+      return mtndata_get_int16(val, kd);
     case 4:
-      return mtn_get_int32(val, kd);
+      return mtndata_get_int32(val, kd);
     case 8:
-      return mtn_get_int64(val, kd);
+      return mtndata_get_int64(val, kd);
   }
   return(-1);
 }
 
-int mtn_set_string(char *str, MTNDATA *kd)
+int mtndata_get_data(void *buf, MTNDATA *kd, int size)
+{
+  if(!buf || !kd){
+    return(-1);
+  }
+  if(kd->head.size > MTN_MAX_DATASIZE){
+    return(-1);
+  }
+  if(kd->head.size < size){
+    return(-1);
+  }
+  memcpy(buf, kd->data.data, size);
+  kd->head.size -= size;
+  if(kd->head.size){
+    memmove(kd->data.data, kd->data.data + size, kd->head.size);
+  }
+  return(0);
+}
+
+int mtndata_set_string(char *str, MTNDATA *kd)
 {
   uint16_t len;
   if(str == NULL){
@@ -907,7 +851,7 @@ int mtn_set_string(char *str, MTNDATA *kd)
   return(len);
 }
 
-static int mtn_set_int16(uint16_t *val, MTNDATA *kd)
+static int mtndata_set_int16(uint16_t *val, MTNDATA *kd)
 {
   uint16_t len = sizeof(uint16_t);
   if(kd){
@@ -920,7 +864,7 @@ static int mtn_set_int16(uint16_t *val, MTNDATA *kd)
   return(len);
 }
 
-static int mtn_set_int32(uint32_t *val, MTNDATA *kd)
+static int mtndata_set_int32(uint32_t *val, MTNDATA *kd)
 {
   uint16_t len = sizeof(uint32_t);
   if(kd){
@@ -933,7 +877,7 @@ static int mtn_set_int32(uint32_t *val, MTNDATA *kd)
   return(len);
 }
 
-static int mtn_set_int64(uint64_t *val, MTNDATA *kd)
+static int mtndata_set_int64(uint64_t *val, MTNDATA *kd)
 {
   uint16_t  len = sizeof(uint64_t);
   uint32_t hval = (*val) >> 32;
@@ -951,20 +895,20 @@ static int mtn_set_int64(uint64_t *val, MTNDATA *kd)
   return(len);
 }
 
-int mtn_set_int(void *val, MTNDATA *kd, int size)
+int mtndata_set_int(void *val, MTNDATA *kd, int size)
 {
   switch(size){
     case 2:
-      return mtn_set_int16(val, kd);
+      return mtndata_set_int16(val, kd);
     case 4:
-      return mtn_set_int32(val, kd);
+      return mtndata_set_int32(val, kd);
     case 8:
-      return mtn_set_int64(val, kd);
+      return mtndata_set_int64(val, kd);
   }
   return(-1);
 }
 
-int mtn_set_data(void *buff, MTNDATA *kd, size_t size)
+int mtndata_set_data(void *buff, MTNDATA *kd, size_t size)
 {
   size_t max = MTN_MAX_DATASIZE - kd->head.size;
   if(MTN_MAX_DATASIZE <= kd->head.size){
@@ -978,57 +922,57 @@ int mtn_set_data(void *buff, MTNDATA *kd, size_t size)
   return(size);
 }
 
-int mtn_set_stat(struct stat *st, MTNDATA *kd)
+int mtndata_set_stat(struct stat *st, MTNDATA *kd)
 {
   int r = 0;
   int l = 0;
   if(st){
-    r = mtn_set_int(&(st->st_mode),  kd, sizeof(st->st_mode));
+    r = mtndata_set_int(&(st->st_mode),  kd, sizeof(st->st_mode));
     if(r == -1){return(-1);}else{l+=r;}
 
-    r = mtn_set_int(&(st->st_size),  kd, sizeof(st->st_size));
+    r = mtndata_set_int(&(st->st_size),  kd, sizeof(st->st_size));
     if(r == -1){return(-1);}else{l+=r;}
 
-    r = mtn_set_int(&(st->st_uid),   kd, sizeof(st->st_uid));
+    r = mtndata_set_int(&(st->st_uid),   kd, sizeof(st->st_uid));
     if(r == -1){return(-1);}else{l+=r;}
 
-    r = mtn_set_int(&(st->st_gid),   kd, sizeof(st->st_gid));
+    r = mtndata_set_int(&(st->st_gid),   kd, sizeof(st->st_gid));
     if(r == -1){return(-1);}else{l+=r;}
 
-    r = mtn_set_int(&(st->st_blocks),kd, sizeof(st->st_blocks));
+    r = mtndata_set_int(&(st->st_blocks),kd, sizeof(st->st_blocks));
     if(r == -1){return(-1);}else{l+=r;}
 
-    r = mtn_set_int(&(st->st_atime), kd, sizeof(st->st_atime));
+    r = mtndata_set_int(&(st->st_atime), kd, sizeof(st->st_atime));
     if(r == -1){return(-1);}else{l+=r;}
 
-    r = mtn_set_int(&(st->st_mtime), kd, sizeof(st->st_mtime));
+    r = mtndata_set_int(&(st->st_mtime), kd, sizeof(st->st_mtime));
     if(r == -1){return(-1);}else{l+=r;}
   }
   return(l);
 }
 
-int mtn_get_stat(struct stat *st, MTNDATA *kd)
+int mtndata_get_stat(struct stat *st, MTNDATA *kd)
 {
   if(st && kd){
-    if(mtn_get_int(&(st->st_mode),  kd, sizeof(st->st_mode)) == -1){
+    if(mtndata_get_int(&(st->st_mode),  kd, sizeof(st->st_mode)) == -1){
       return(-1);
     }
-    if(mtn_get_int(&(st->st_size),  kd, sizeof(st->st_size)) == -1){
+    if(mtndata_get_int(&(st->st_size),  kd, sizeof(st->st_size)) == -1){
       return(-1);
     }
-    if(mtn_get_int(&(st->st_uid),   kd, sizeof(st->st_uid)) == -1){
+    if(mtndata_get_int(&(st->st_uid),   kd, sizeof(st->st_uid)) == -1){
       return(-1);
     }
-    if(mtn_get_int(&(st->st_gid),   kd, sizeof(st->st_gid)) == -1){
+    if(mtndata_get_int(&(st->st_gid),   kd, sizeof(st->st_gid)) == -1){
       return(-1);
     }
-    if(mtn_get_int(&(st->st_blocks),kd, sizeof(st->st_blocks)) == -1){
+    if(mtndata_get_int(&(st->st_blocks),kd, sizeof(st->st_blocks)) == -1){
       return(-1);
     }
-    if(mtn_get_int(&(st->st_atime), kd, sizeof(st->st_atime)) == -1){
+    if(mtndata_get_int(&(st->st_atime), kd, sizeof(st->st_atime)) == -1){
       return(-1);
     }
-    if(mtn_get_int(&(st->st_mtime), kd, sizeof(st->st_mtime)) == -1){
+    if(mtndata_get_int(&(st->st_mtime), kd, sizeof(st->st_mtime)) == -1){
       return(-1);
     }
     st->st_nlink = S_ISDIR(st->st_mode) ? 2 : 1;
@@ -1156,7 +1100,7 @@ MTNSTAT *clrstat(MTNSTAT *mst)
 MTNSTAT *mkstat(MTNSVR *svr, MTNADDR *addr, MTNDATA *data)
 {
   MTNSTAT *kst = NULL;
-  int len = mtn_get_string(NULL, data);
+  int len = mtndata_get_string(NULL, data);
   if(len == -1){
     return(NULL);
   }
@@ -1165,8 +1109,8 @@ MTNSTAT *mkstat(MTNSVR *svr, MTNADDR *addr, MTNDATA *data)
   }
   kst = newstat(NULL);
   kst->name = xrealloc(kst->name, len);
-  mtn_get_string(kst->name,  data);
-  mtn_get_stat(&(kst->stat), data);
+  mtndata_get_string(kst->name,  data);
+  mtndata_get_stat(&(kst->stat), data);
   kst->svr = cpsvr(svr);
   if((kst->next = mkstat(svr, addr, data))){
     kst->next->prev = kst;
@@ -1314,30 +1258,22 @@ MTNSVR *cpsvr(MTNSVR *svr)
   }
   nsv = addsvr(NULL, &(svr->addr), svr->host);
   nsv->mark      = svr->mark;
+  nsv->order     = svr->order;
   nsv->bsize     = svr->bsize;
   nsv->fsize     = svr->fsize;
   nsv->dsize     = svr->dsize;
   nsv->dfree     = svr->dfree;
   nsv->vsz       = svr->vsz;
   nsv->res       = svr->res;
-  nsv->cpu_num   = svr->cpu_num;
+  nsv->cnt.cpu   = svr->cnt.cpu;
   nsv->loadavg   = svr->loadavg;
-  nsv->pscount   = svr->pscount;
   nsv->memsize   = svr->memsize;
   nsv->memfree   = svr->memfree;
-  nsv->membercnt = svr->membercnt;
-  nsv->malloccnt = svr->malloccnt;
-  nsv->taskcnt   = svr->taskcnt;
-  nsv->svrcnt    = svr->svrcnt;
-  nsv->dircnt    = svr->dircnt;
-  nsv->statcnt   = svr->statcnt;
-  nsv->strcnt    = svr->strcnt;
-  nsv->argcnt    = svr->argcnt;
-  nsv->cldcnt    = svr->cldcnt;
   nsv->flags     = svr->flags;
   nsv->groupstr  = svr->groupstr;
   nsv->grouparg  = splitstr(svr->groupstr, ",");
-  memcpy(&(nsv->tv), &(svr->tv), sizeof(struct timeval));
+  memcpy(&(nsv->cnt), &(svr->cnt), sizeof(nsv->cnt));
+  memcpy(&(nsv->tv),  &(svr->tv),  sizeof(struct timeval));
   return(nsv);
 }
 
@@ -1421,8 +1357,7 @@ MTNSVR *get_members(MTN *mtn){
   pthread_mutex_lock(&(mtn->mutex.member));
   gettimeofday(&tv, NULL);
   if((tv.tv_sec - mtn->members.tv.tv_sec) > 30){
-    clrsvr(mtn->members.svr);
-    mtn->members.svr = NULL;
+    mtn_info_clrcache(mtn);
   }
   if(mtn->members.svr == NULL){
     if((tv.tv_sec - mtn->members.tv.tv_sec) > 20){
@@ -1432,7 +1367,7 @@ MTNSVR *get_members(MTN *mtn){
   }
   members = NULL;
   for(mb=mtn->members.svr;mb;mb=mb->next){
-    members = addsvr(members, &(mb->addr), mb->host);
+    members = pushsvr(members, mb);
   }
   pthread_mutex_unlock(&(mtn->mutex.member));
   return(members);
@@ -1579,7 +1514,7 @@ void mtn_startup(MTN *mtn, int f)
   data.head.size = 0;
   data.head.flag = f;
   data.option = NULL;
-  mtn_set_string(mtn->host, &data);
+  mtndata_set_string(mtn->host, &data);
   mtn_process(mtn, NULL, &data, NULL);
   mtnlogger(mtn, 9,"[debug] %s: OUT\n", __func__);
 }
@@ -1592,22 +1527,29 @@ void mtn_shutdown(MTN *mtn)
   data.head.size = 0;
   data.head.flag = 1;
   data.option = NULL;
-  mtn_set_string(mtn->host, &data);
+  mtndata_set_string(mtn->host, &data);
   mtn_process(mtn, NULL, &data, NULL);
   mtnlogger(mtn, 9,"[debug] %s: OUT\n", __func__);
 }
 
 void mtn_hello_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
 {
+  uint16_t order;
   uint32_t mcount;
   char host[1024];
   MTNSVR *members = (MTNSVR *)(sdata->option);
-  if(mtn_get_string(host, rdata) == -1){
-    mtnlogger(mtn, 0, "%s: mtn get error\n", __func__);
+  if(mtndata_get_string(host, rdata) == -1){
+    mtnlogger(mtn, 0, "%s: mtn protocol error: hostname\n", __func__);
     return;
   }
-  mtn_get_int(&mcount, rdata, sizeof(mcount));
-  members = addsvr(members, addr, host);
+  if(mtndata_get_int(&mcount, rdata, sizeof(mcount)) == -1){
+    mtnlogger(mtn, 0, "%s: mtn protocol error: mcount\n", __func__);
+    return;
+  }
+  order = members ? members->order + 1 : 0;
+  if((members = addsvr(members, addr, host))){
+    members->order = order;
+  }
   sdata->option = members;
   if(sdata->opt32 < mcount){
     sdata->opt32 = mcount;
@@ -1632,53 +1574,20 @@ void mtn_info_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, 
 {
   char buff[512];
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
-  if(mtn_get_int(&(member->bsize), rdata, sizeof(member->bsize))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->fsize), rdata, sizeof(member->fsize))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->dsize), rdata, sizeof(member->dsize))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->dfree), rdata, sizeof(member->dfree))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->limit), rdata, sizeof(member->limit))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->membercnt), rdata, sizeof(member->membercnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->vsz), rdata, sizeof(member->vsz))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->res), rdata, sizeof(member->res))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->cpu_num), rdata, sizeof(member->cpu_num))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->loadavg), rdata, sizeof(member->loadavg))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->pscount), rdata, sizeof(member->pscount))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->memsize), rdata, sizeof(member->memsize))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->memfree), rdata, sizeof(member->memfree))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->flags), rdata, sizeof(member->flags))){
-    mtnlogger(mtn, 0, "[error] %s: flags: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->malloccnt), rdata, sizeof(member->malloccnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->taskcnt), rdata, sizeof(member->taskcnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->svrcnt), rdata, sizeof(member->svrcnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->dircnt), rdata, sizeof(member->dircnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->statcnt), rdata, sizeof(member->statcnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->strcnt), rdata, sizeof(member->strcnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->argcnt), rdata, sizeof(member->argcnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_int(&(member->cldcnt), rdata, sizeof(member->cldcnt))){
-    mtnlogger(mtn, 0, "[error] %s: protocol error\n", __func__);
-  }else if(mtn_get_string(buff, rdata) == -1){
-    mtnlogger(mtn, 0, "[error] %s: group: protocol error\n", __func__);
-  }else{
+  mtndata_get_int(&(member->bsize),     rdata, sizeof(member->bsize));
+  mtndata_get_int(&(member->fsize),     rdata, sizeof(member->fsize));
+  mtndata_get_int(&(member->dsize),     rdata, sizeof(member->dsize));
+  mtndata_get_int(&(member->dfree),     rdata, sizeof(member->dfree));
+  mtndata_get_int(&(member->limit),     rdata, sizeof(member->limit));
+  mtndata_get_int(&(member->vsz),       rdata, sizeof(member->vsz));
+  mtndata_get_int(&(member->res),       rdata, sizeof(member->res));
+  mtndata_get_int(&(member->cnt.cpu),   rdata, sizeof(member->cnt.cpu));
+  mtndata_get_int(&(member->loadavg),   rdata, sizeof(member->loadavg));
+  mtndata_get_int(&(member->memsize),   rdata, sizeof(member->memsize));
+  mtndata_get_int(&(member->memfree),   rdata, sizeof(member->memfree));
+  mtndata_get_int(&(member->flags),     rdata, sizeof(member->flags));
+  mtndata_get_data(&(member->cnt),      rdata, sizeof(member->cnt));
+  if(mtndata_get_string(buff, rdata) != -1){
     if(strlen(buff)){
       member->groupstr = newstr(buff);
       member->grouparg = splitstr(buff, ",");
@@ -1688,6 +1597,12 @@ void mtn_info_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, 
     }
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
+}
+
+void mtn_info_clrcache(MTN *mtn){
+  clrsvr(mtn->members.svr);
+  mtn->members.svr = NULL;
+  memset(&(mtn->members.tv), 0, sizeof(struct timeval));
 }
 
 MTNSVR *mtn_info(MTN *mtn)
@@ -1729,7 +1644,7 @@ MTNSTAT *mtn_list(MTN *mtn, const char *path)
   data.head.size   = 0;
   data.head.flag   = 0;
   data.option      = NULL;
-  mtn_set_string((char *)path, &data);
+  mtndata_set_string((char *)path, &data);
   mtn_process(mtn, members, &data, (MTNPROCFUNC)mtn_list_process);
   clrsvr(members);
   return(data.option);
@@ -1754,7 +1669,7 @@ MTNSTAT *mtn_stat(MTN *mtn, const char *path)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.option    = NULL;
-  mtn_set_string((char *)path, &sd);
+  mtndata_set_string((char *)path, &sd);
   mtn_process(mtn, members, &sd, (MTNPROCFUNC)mtn_stat_process);
   clrsvr(members);
   return(sd.option);
@@ -1763,12 +1678,12 @@ MTNSTAT *mtn_stat(MTN *mtn, const char *path)
 void mtn_choose_info(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
 {
   MTNSVR *choose = sdata->option;
-  mtn_get_int(&(member->bsize), rdata, sizeof(member->bsize));
-  mtn_get_int(&(member->fsize), rdata, sizeof(member->fsize));
-  mtn_get_int(&(member->dsize), rdata, sizeof(member->dsize));
-  mtn_get_int(&(member->dfree), rdata, sizeof(member->dfree));
-  mtn_get_int(&(member->vsz),   rdata, sizeof(member->vsz));
-  mtn_get_int(&(member->res),   rdata, sizeof(member->res));
+  mtndata_get_int(&(member->bsize), rdata, sizeof(member->bsize));
+  mtndata_get_int(&(member->fsize), rdata, sizeof(member->fsize));
+  mtndata_get_int(&(member->dsize), rdata, sizeof(member->dsize));
+  mtndata_get_int(&(member->dfree), rdata, sizeof(member->dfree));
+  mtndata_get_int(&(member->vsz),   rdata, sizeof(member->vsz));
+  mtndata_get_int(&(member->res),   rdata, sizeof(member->res));
   if(choose == NULL){
     sdata->option = member;
   }else{
@@ -1818,7 +1733,7 @@ MTNSTAT *mtn_find(MTN *mtn, const char *path, int create_flag)
   data.head.type   = MTNCMD_LIST;
   data.head.size   = 0;
   data.head.flag   = 0;
-  mtn_set_string((char *)path, &data);
+  mtndata_set_string((char *)path, &data);
   mtn_process(mtn, members, &data, (MTNPROCFUNC)mtn_find_process);
   kst = data.option;
   if(kst == NULL){
@@ -1836,7 +1751,7 @@ MTNSTAT *mtn_find(MTN *mtn, const char *path, int create_flag)
 void mtn_mkdir_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
 {
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
 	}
 }
@@ -1851,9 +1766,9 @@ int mtn_mkdir(MTN *mtn, const char *path, uid_t uid, gid_t gid)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.option    = NULL;
-  mtn_set_string((char *)path, &sd);
-  mtn_set_int(&uid, &sd, sizeof(uid));
-  mtn_set_int(&gid, &sd, sizeof(gid));
+  mtndata_set_string((char *)path, &sd);
+  mtndata_set_int(&uid, &sd, sizeof(uid));
+  mtndata_set_int(&gid, &sd, sizeof(gid));
   mtn_process(mtn, members, &sd, (MTNPROCFUNC)mtn_mkdir_process);
   clrsvr(members);
   return(0);
@@ -1862,7 +1777,7 @@ int mtn_mkdir(MTN *mtn, const char *path, uid_t uid, gid_t gid)
 void mtn_rm_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
 {
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
 	}
 }
@@ -1877,7 +1792,7 @@ int mtn_rm(MTN *mtn, const char *path)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.option    = NULL;
-  mtn_set_string((char *)path, &sd);
+  mtndata_set_string((char *)path, &sd);
   mtn_process(mtn, members, &sd, (MTNPROCFUNC)mtn_rm_process);
   clrsvr(members);
   return(0);
@@ -1886,7 +1801,7 @@ int mtn_rm(MTN *mtn, const char *path)
 void mtn_rename_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
 {
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
 	}
 }
@@ -1901,8 +1816,8 @@ int mtn_rename(MTN *mtn, const char *opath, const char *npath)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.option    = NULL;
-  mtn_set_string((char *)opath, &sd);
-  mtn_set_string((char *)npath, &sd);
+  mtndata_set_string((char *)opath, &sd);
+  mtndata_set_string((char *)npath, &sd);
   mtn_process(mtn, members, &sd, (MTNPROCFUNC)mtn_rename_process);
   clrsvr(members);
   return(0);
@@ -1911,7 +1826,7 @@ int mtn_rename(MTN *mtn, const char *opath, const char *npath)
 void mtn_symlink_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
 {
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
 	}
 }
@@ -1926,8 +1841,8 @@ int mtn_symlink(MTN *mtn, const char *oldpath, const char *newpath)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.option    = NULL;
-  mtn_set_string((char *)oldpath, &sd);
-  mtn_set_string((char *)newpath, &sd);
+  mtndata_set_string((char *)oldpath, &sd);
+  mtndata_set_string((char *)newpath, &sd);
   mtn_process(mtn, members, &sd, (MTNPROCFUNC)mtn_symlink_process);
   clrsvr(members);
   return(0);
@@ -1937,13 +1852,13 @@ void mtn_readlink_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MT
 {
   size_t size;
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
 	}else{
     if(sd->option == NULL){
-      size = mtn_get_string(NULL, rd);
+      size = mtndata_get_string(NULL, rd);
       sd->option = xmalloc(size);
-      mtn_get_string(sd->option, rd);
+      mtndata_get_string(sd->option, rd);
     }
   }
 }
@@ -1958,7 +1873,7 @@ int mtn_readlink(MTN *mtn, const char *path, char *buff, size_t size)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.option    = NULL;
-  mtn_set_string((char *)path, &sd);
+  mtndata_set_string((char *)path, &sd);
   mtn_process(mtn, members, &sd, (MTNPROCFUNC)mtn_readlink_process);
   clrsvr(members);
   snprintf(buff, size, "%s", (char *)sd.option);
@@ -1969,7 +1884,7 @@ int mtn_readlink(MTN *mtn, const char *path, char *buff, size_t size)
 void mtn_chmod_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
 {
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
   }
 }
@@ -1984,8 +1899,8 @@ int mtn_chmod(MTN *mtn, const char *path, mode_t mode)
   sd.head.type = MTNCMD_CHMOD;
   sd.head.size = 0;
   sd.head.flag = 0;
-  mtn_set_string((char *)path, &sd);
-  mtn_set_int(&mode, &sd, sizeof(mode));
+  mtndata_set_string((char *)path, &sd);
+  mtndata_set_int(&mode, &sd, sizeof(mode));
   mtn_process(mtn, m, &sd, (MTNPROCFUNC)mtn_chmod_process);
   clrsvr(m);
   return(0);
@@ -1994,7 +1909,7 @@ int mtn_chmod(MTN *mtn, const char *path, mode_t mode)
 void mtn_chown_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
 {
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
   }
 }
@@ -2009,9 +1924,9 @@ int mtn_chown(MTN *mtn, const char *path, uid_t uid, gid_t gid)
   sd.head.type = MTNCMD_CHOWN;
   sd.head.size = 0;
   sd.head.flag = 0;
-  mtn_set_string((char *)path, &sd);
-  mtn_set_int(&uid, &sd, sizeof(uid));
-  mtn_set_int(&gid, &sd, sizeof(gid));
+  mtndata_set_string((char *)path, &sd);
+  mtndata_set_int(&uid, &sd, sizeof(uid));
+  mtndata_set_int(&gid, &sd, sizeof(gid));
   mtn_process(mtn, m, &sd, (MTNPROCFUNC)mtn_chown_process);
   clrsvr(m);
   return(0);
@@ -2020,7 +1935,7 @@ int mtn_chown(MTN *mtn, const char *path, uid_t uid, gid_t gid)
 void mtn_utime_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
 {
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
   }
 }
@@ -2035,9 +1950,9 @@ int mtn_utime(MTN *mtn, const char *path, time_t act, time_t mod)
   sd.head.type = MTNCMD_UTIME;
   sd.head.size = 0;
   sd.head.flag = 0;
-  mtn_set_string((char *)path, &sd);
-  mtn_set_int(&act, &sd, sizeof(act));
-  mtn_set_int(&mod, &sd, sizeof(mod));
+  mtndata_set_string((char *)path, &sd);
+  mtndata_set_int(&act, &sd, sizeof(act));
+  mtndata_set_int(&mod, &sd, sizeof(mod));
   mtn_process(mtn, m, &sd, (MTNPROCFUNC)mtn_utime_process);
   clrsvr(m);
   return(0);
@@ -2046,7 +1961,7 @@ int mtn_utime(MTN *mtn, const char *path, time_t act, time_t mod)
 void mtn_truncate_process(MTN *mtn, MTNSVR *member, MTNDATA *sd, MTNDATA *rd, MTNADDR *addr)
 {
 	if(rd->head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, rd, sizeof(errno));
+    mtndata_get_int(&errno, rd, sizeof(errno));
 	  mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, member->host, strerror(errno));
   }
 }
@@ -2061,8 +1976,8 @@ int mtn_truncate(MTN *mtn, const char *path, off_t offset)
   sd.head.type = MTNCMD_TRUNCATE;
   sd.head.size = 0;
   sd.head.flag = 0;
-  mtn_set_string((char *)path, &sd);
-  mtn_set_int(&offset, &sd, sizeof(offset));
+  mtndata_set_string((char *)path, &sd);
+  mtndata_set_int(&offset, &sd, sizeof(offset));
   mtn_process(mtn, m, &sd, (MTNPROCFUNC)mtn_truncate_process);
   clrsvr(m);
   return(0);
@@ -2091,15 +2006,15 @@ static int mtn_connect(MTN *mtn, MTNSVR *svr, MTNINIT *mi)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_INIT;
-  mtn_set_int(&(mi->uid),  &sd, sizeof(mi->uid));
-  mtn_set_int(&(mi->gid),  &sd, sizeof(mi->gid));
-  mtn_set_int(&(mi->mode), &sd, sizeof(mi->mode));
+  mtndata_set_int(&(mi->uid),  &sd, sizeof(mi->uid));
+  mtndata_set_int(&(mi->gid),  &sd, sizeof(mi->gid));
+  mtndata_set_int(&(mi->mode), &sd, sizeof(mi->mode));
   if(send_recv_stream(mtn, s, &sd, &rd) == -1){
     close(s);
     return(-1);
   }
   if(rd.head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, &rd, sizeof(errno));
+    mtndata_get_int(&errno, &rd, sizeof(errno));
     close(s);
     return(-1);
   }
@@ -2150,9 +2065,19 @@ int mtn_exec_get(MTN *mtn, MTNJOB *job)
     return(0);
   }
   for(i=0;job->getarg[i];i++){
-    mtn_open_file(mtn, job->con, job->getarg[i], O_RDONLY, &st);
-    mtn_fgetattr(mtn, job->con, &(st.stat));
+    if(mtn_open_file(mtn, job->con, job->getarg[i], O_RDONLY, &st)){
+      mtnlogger(mtn, 0, "[error] %s: open %s %s\n", __func__, strerror(errno), job->getarg[i]);
+      continue;
+    }
+    if(mtn_fgetattr(mtn, job->con, &(st.stat))){
+      mtnlogger(mtn, 0, "[error] %s: fgetattr %s %s\n", __func__, strerror(errno), job->getarg[i]);
+      continue;
+    }
     f = creat(job->getarg[i], st.stat.st_mode);
+    if(f == -1){
+      mtnlogger(mtn, 0, "[error] %s: creat %s %s\n", __func__, strerror(errno), job->getarg[i]);
+      continue;
+    }
     mtn_get_data(mtn, job->con, f);
     close(f);
   }
@@ -2213,7 +2138,7 @@ int mtn_exec_wait(MTN *mtn, MTNJOB *job)
         sd.head.type = MTNCMD_STDIN;
         rsize = read(0, buff, sizeof(buff));
         if(rsize > 0){
-          mtn_set_data(buff, &sd, rsize);
+          mtndata_set_data(buff, &sd, rsize);
         }else if(rsize == -1){
           sprintf(buff, "[error] %s: %s %s\n", __func__, strerror(errno), job->std[0]);
           write(2, buff, strlen(buff));
@@ -2266,17 +2191,17 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_EXEC;
-  mtn_set_string(job->cmd, &sd);
-  mtn_set_int(&(job->lim), &sd, sizeof(job->lim));
-
+  mtndata_set_string(job->cmd, &sd);
+  mtndata_set_int(&(job->lim), &sd, sizeof(job->lim));
   if(send_recv_stream(mtn, job->con, &sd, &rd) == -1){
     return(-1);
   }
   if(rd.head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, &rd, sizeof(errno));
+    mtndata_get_int(&errno, &rd, sizeof(errno));
     return(-1);
   }
-  return(mtn_exec_wait(mtn, job));
+  mtn_exec_wait(mtn, job);
+  _exit(0);
 }
 
 int mtn_open_file(MTN *mtn, int s, const char *path, int flags, MTNSTAT *st)
@@ -2287,14 +2212,14 @@ int mtn_open_file(MTN *mtn, int s, const char *path, int flags, MTNSTAT *st)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_OPEN;
-  mtn_set_string((char *)path, &sd);
-  mtn_set_int(&flags, &sd, sizeof(flags));
-  mtn_set_int(&(st->stat.st_mode), &sd, sizeof(st->stat.st_mode));
+  mtndata_set_string((char *)path, &sd);
+  mtndata_set_int(&flags, &sd, sizeof(flags));
+  mtndata_set_int(&(st->stat.st_mode), &sd, sizeof(st->stat.st_mode));
   if(send_recv_stream(mtn, s, &sd, &rd) == -1){
     return(-1);
   }
   if(rd.head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, &rd, sizeof(errno));
+    mtndata_get_int(&errno, &rd, sizeof(errno));
     return(-1);
   }
   return(0);
@@ -2343,11 +2268,11 @@ int mtn_read(MTN *mtn, int s, char *buf, size_t size, off_t offset)
     sd.head.size = 0;
     sd.head.flag = 0;
     sd.head.type = MTNCMD_READ;
-    if(mtn_set_int(&size,   &sd, sizeof(size)) == -1){
+    if(mtndata_set_int(&size,   &sd, sizeof(size)) == -1){
       r = -EIO;
       break;
     }
-    if(mtn_set_int(&offset, &sd, sizeof(offset)) == -1){
+    if(mtndata_set_int(&offset, &sd, sizeof(offset)) == -1){
       r = -EIO;
       break;
     }
@@ -2388,7 +2313,7 @@ int mtn_flush(MTN *mtn, int s)
     mtnlogger(mtn, 0, "[error] %s: send_recv_stream %s\n", __func__, strerror(errno));
     return(-1);
   }else if(rd.head.type == MTNCMD_ERROR){
-    mtn_get_int(&errno, &rd, sizeof(errno));
+    mtndata_get_int(&errno, &rd, sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
@@ -2415,8 +2340,8 @@ int mtn_write(MTN *mtn, int s, const char *buf, size_t size, off_t offset)
 
   while(sz){
     sd.head.size = 0;
-    mtn_set_int(&offset, &sd, sizeof(offset));
-    r = mtn_set_data((void *)buf, &sd, sz);
+    mtndata_set_int(&offset, &sd, sizeof(offset));
+    r = mtndata_set_data((void *)buf, &sd, sz);
     sz     -= r;
     buf    += r;
     offset += r;
@@ -2454,7 +2379,7 @@ int mtn_close_file(MTN *mtn, int s)
   if(send_recv_stream(mtn, s, &sd, &rd) == -1){
     r = -errno;
   }else if(rd.head.type == MTNCMD_ERROR){
-    mtn_set_int(&errno, &rd, sizeof(errno));
+    mtndata_set_int(&errno, &rd, sizeof(errno));
     r = -errno;
   }
   return(r);
@@ -2477,7 +2402,7 @@ int mtn_close(MTN *mtn, int s)
   if(send_recv_stream(mtn, s, &sd, &rd) == -1){
     r = -errno;
   }else if(rd.head.type == MTNCMD_ERROR){
-    mtn_set_int(&errno, &rd, sizeof(errno));
+    mtndata_set_int(&errno, &rd, sizeof(errno));
     r = -errno;
   }
   if(close(s) == -1){
@@ -2493,7 +2418,7 @@ int mtn_callcmd(MTN *mtn, MTNTASK *kt)
   kt->res = send_recv_stream(mtn, kt->con, &(kt->send), &(kt->recv));
   if((kt->res == 0) && (kt->recv.head.type == MTNCMD_ERROR)){
     kt->res = -1;
-    mtn_get_int(&errno, &(kt->recv), sizeof(errno));
+    mtndata_get_int(&errno, &(kt->recv), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
   }
   return(kt->res);
@@ -2511,8 +2436,8 @@ int mtn_fgetattr(MTN *mtn, int s, struct stat *st)
   kt.con  = s;
   if(mtn_callcmd(mtn, &kt) == -1){
   }
-  if(mtn_get_stat(st, &(kt.recv)) == -1){
-    mtnlogger(mtn, 0, "[error] %s: mtn_get_stat %s\n", __func__, strerror(errno));
+  if(mtndata_get_stat(st, &(kt.recv)) == -1){
+    mtnlogger(mtn, 0, "[error] %s: mtndata_get_stat %s\n", __func__, strerror(errno));
     return(-EACCES);
   }
   return(0);
@@ -2528,8 +2453,8 @@ int mtn_fchown(MTN *mtn, int s, uid_t uid, gid_t gid)
   }
   kt.type = MTNCMD_CHOWN;
   kt.con  = s;
-  mtn_set_int(&uid, &(kt.send), sizeof(uid));
-  mtn_set_int(&gid, &(kt.send), sizeof(gid));
+  mtndata_set_int(&uid, &(kt.send), sizeof(uid));
+  mtndata_set_int(&gid, &(kt.send), sizeof(gid));
   return((mtn_callcmd(mtn, &kt) == -1) ? -errno : 0);
 }
 
@@ -2544,7 +2469,8 @@ int mtn_get_data(MTN *mtn, int s, int f)
   sd.head.size = 0;
   sd.head.flag = 0;
   sd.head.type = MTNCMD_GET;
-  send_data_stream(mtn, s,  &sd);
+  send_data_stream(mtn, s, &sd);
+
   sd.head.size = 0;
   sd.head.type = MTNCMD_SUCCESS;
   while(is_loop){
@@ -2556,7 +2482,6 @@ int mtn_get_data(MTN *mtn, int s, int f)
     }
     write(f, rd.data.data, rd.head.size);
   }
-  send_data_stream(mtn, s, &sd);
   return(0);
 }
 
@@ -2592,7 +2517,7 @@ int mtn_put_data(MTN *mtn, int s, int f)
       return(-1);
     }
     if(rd.head.type == MTNCMD_ERROR){
-      mtn_get_int(&errno, &rd, sizeof(errno));
+      mtndata_get_int(&errno, &rd, sizeof(errno));
       return(-1);
     }
   }
@@ -2694,17 +2619,17 @@ size_t set_mtnstatus_members(MTN *mtn)
     exsprintf(buff, size, "%s %s %d %2d%% %llu %llu %llu %llu %d %d %d.%02d %d\n", 
       mb->host,
       ipstr, 
-      mb->membercnt,
+      mb->cnt.mbr,
       pfree, 
       dfree, 
       dsize, 
       vsz, 
       res, 
-      mb->malloccnt,
-      mb->cpu_num,
+      mb->cnt.mem,
+      mb->cnt.cpu,
       mb->loadavg / 100,
       mb->loadavg % 100,
-      mb->pscount); 
+      mb->cnt.prc); 
   }
   clrsvr(members);
   result = (*buff == NULL) ? 0 : strlen(*buff);
@@ -2909,7 +2834,7 @@ int getmeminfo(uint64_t *size, uint64_t *free)
       }
       *free += data;
     }
-    if(strcmp("Cached", key) == 0){
+    if(strcmp("Cached:", key) == 0){
       data = atoi(val);
       if(strcmp("kB", unit) == 0){
         data *= 1024;
@@ -3291,6 +3216,20 @@ STR convarg(STR arg, ARG argl)
   }
   clrstr(p);
   return(arg);
+}
+
+ARG cpconvarg(ARG arg, ARG argl)
+{
+  int i;
+  ARG r = newarg(0);
+  if(!arg){
+    return(r);
+  }
+  for(i=0;arg[i];i++){
+    r = addarg(r, arg[i]);
+    r[i] = convarg(r[i], argl);
+  }
+  return(r);
 }
 
 static int job_flush(MTNJOB *job)

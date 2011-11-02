@@ -52,8 +52,7 @@
 #define MTNCOUNT_STR    4
 #define MTNCOUNT_ARG    5
 #define MTNCOUNT_MALLOC 6
-#define MTNCOUNT_CLD    7
-#define MTNCOUNT_MAX    8
+#define MTNCOUNT_MAX    7
 
 #define MTNMODE_EXPORT  1
 #define MTNMODE_EXECUTE 2
@@ -134,14 +133,14 @@ MTNTASK *deltask(MTNTASK *t);
 int create_lsocket(MTN *mtn);
 int create_msocket(MTN *mtn);
 int cmpaddr(MTNADDR *a1, MTNADDR *a2);
-int mtn_get_svrhost(MTNSVR *svr, MTNDATA *kd);
-int mtn_get_string(char *str, MTNDATA *kd);
-int mtn_get_int(void *val, MTNDATA *kd, int size);
-int mtn_get_stat(struct stat *st, MTNDATA *kd);
-int mtn_set_string(char *str, MTNDATA *kd);
-int mtn_set_int(void *val, MTNDATA *kd, int size);
-int mtn_set_stat(struct stat *st, MTNDATA *kd);
-int mtn_set_data(void *buff, MTNDATA *kd, size_t size);
+int mtndata_get_svrhost(MTNSVR *svr, MTNDATA *kd);
+int mtndata_get_string(char *str, MTNDATA *kd);
+int mtndata_get_int(void *val, MTNDATA *kd, int size);
+int mtndata_get_stat(struct stat *st, MTNDATA *kd);
+int mtndata_set_string(char *str, MTNDATA *kd);
+int mtndata_set_int(void *val, MTNDATA *kd, int size);
+int mtndata_set_stat(struct stat *st, MTNDATA *kd);
+int mtndata_set_data(void *buff, MTNDATA *kd, size_t size);
 uint32_t get_members_count(MTNSVR *mb);
 int getstatm(statm *m);
 int getmeminfo(uint64_t *size, uint64_t *free);

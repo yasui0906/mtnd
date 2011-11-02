@@ -61,7 +61,7 @@ void usage()
   printf("\n");
 }
 
-int get_diskfree(uint32_t *bsize, uint32_t *fsize, uint64_t *dsize, uint64_t *dfree)
+int getstatf(uint32_t *bsize, uint32_t *fsize, uint64_t *dsize, uint64_t *dfree)
 {
   struct statvfs vf;
   if(statvfs(".", &vf) == -1){
@@ -81,7 +81,7 @@ int is_freelimit()
   uint32_t fsize;
   uint64_t dsize;
   uint64_t dfree;
-  get_diskfree(&bsize, &fsize, &dsize, &dfree);
+  getstatf(&bsize, &fsize, &dsize, &dfree);
   dfree *= bsize;
   return(ctx->free_limit > dfree);
 }
@@ -197,13 +197,13 @@ static void mtnd_startup_process(MTNTASK *kt)
   kt->addr.addr.in.sin_port = htons(mtn->mcast_port);
   ctx->members = addsvr(ctx->members, &(kt->addr), NULL);
   mb = getsvr(ctx->members, &(kt->addr));
-  mtn_get_svrhost(mb, &(kt->recv));
+  mtndata_get_svrhost(mb, &(kt->recv));
   gettimeofday(&(mb->tv),NULL);
   kt->fin = 1;
   kt->send.head.type = MTNCMD_STARTUP;
   kt->send.head.size = 0;
   kt->send.head.flag = 1;
-  mtn_set_string(ctx->host, &(kt->send));
+  mtndata_set_string(ctx->host, &(kt->send));
 }
 
 static void mtnd_shutdown_process(MTNTASK *kt)
@@ -237,8 +237,8 @@ static void mtnd_hello_process(MTNTASK *kt)
       kt->fin = 2;
     }else{
       mcount = get_members_count(ctx->members);
-      mtn_set_string(ctx->host, &(kt->send));
-      mtn_set_int(&mcount, &(kt->send), sizeof(mcount));
+      mtndata_set_string(ctx->host, &(kt->send));
+      mtndata_set_int(&mcount, &(kt->send), sizeof(mcount));
     }
   }
 }
@@ -252,47 +252,38 @@ static void mtnd_info_process(MTNTASK *kt)
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   memset(&mb, 0, sizeof(mb));
   getstatm(&sm);
+  getstatf(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
   getmeminfo(&(mb.memsize), &(mb.memfree));
-  mb.limit = ctx->free_limit;
-  mb.membercnt = get_members_count(ctx->members);
-  mb.malloccnt = getcount(MTNCOUNT_MALLOC);
-  mb.taskcnt   = getcount(MTNCOUNT_TASK);
-  mb.svrcnt    = getcount(MTNCOUNT_SVR);
-  mb.dircnt    = getcount(MTNCOUNT_DIR);
-  mb.statcnt   = getcount(MTNCOUNT_STAT);
-  mb.strcnt    = getcount(MTNCOUNT_STR);
-  mb.argcnt    = getcount(MTNCOUNT_ARG);
-  mb.cldcnt    = ctx->cldcount;
-  get_diskfree(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
-  mb.cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
+  mb.limit   = ctx->free_limit;
+  mb.cnt.prc = getpscount();
+  mb.cnt.cld = ctx->cldcount;
+  mb.cnt.mbr = get_members_count(ctx->members);
+  mb.cnt.mem = getcount(MTNCOUNT_MALLOC);
+  mb.cnt.tsk = getcount(MTNCOUNT_TASK);
+  mb.cnt.svr = getcount(MTNCOUNT_SVR);
+  mb.cnt.dir = getcount(MTNCOUNT_DIR);
+  mb.cnt.sta = getcount(MTNCOUNT_STAT);
+  mb.cnt.str = getcount(MTNCOUNT_STR);
+  mb.cnt.arg = getcount(MTNCOUNT_ARG);
+  mb.cnt.cpu = sysconf(_SC_NPROCESSORS_ONLN);
   getloadavg(&loadavg, 1);
   mb.loadavg = (uint32_t)(loadavg * 100);
-  mb.pscount = getpscount();
   mb.flags  |= ctx->export  ? MTNMODE_EXPORT  : 0;
   mb.flags  |= ctx->execute ? MTNMODE_EXECUTE : 0;
-  mtn_set_int(&(mb.bsize),     &(kt->send), sizeof(mb.bsize));
-  mtn_set_int(&(mb.fsize),     &(kt->send), sizeof(mb.fsize));
-  mtn_set_int(&(mb.dsize),     &(kt->send), sizeof(mb.dsize));
-  mtn_set_int(&(mb.dfree),     &(kt->send), sizeof(mb.dfree));
-  mtn_set_int(&(mb.limit),     &(kt->send), sizeof(mb.limit));
-  mtn_set_int(&(mb.membercnt), &(kt->send), sizeof(mb.membercnt));
-  mtn_set_int(&(sm.vsz),       &(kt->send), sizeof(sm.vsz));
-  mtn_set_int(&(sm.res),       &(kt->send), sizeof(sm.res));
-  mtn_set_int(&(mb.cpu_num),   &(kt->send), sizeof(mb.cpu_num));
-  mtn_set_int(&(mb.loadavg),   &(kt->send), sizeof(mb.loadavg));
-  mtn_set_int(&(mb.pscount),   &(kt->send), sizeof(mb.pscount));
-  mtn_set_int(&(mb.memsize),   &(kt->send), sizeof(mb.memsize));
-  mtn_set_int(&(mb.memfree),   &(kt->send), sizeof(mb.memfree));
-  mtn_set_int(&(mb.flags),     &(kt->send), sizeof(mb.flags));
-  mtn_set_int(&(mb.malloccnt), &(kt->send), sizeof(mb.malloccnt));
-  mtn_set_int(&(mb.taskcnt),   &(kt->send), sizeof(mb.taskcnt));
-  mtn_set_int(&(mb.svrcnt),    &(kt->send), sizeof(mb.svrcnt));
-  mtn_set_int(&(mb.dircnt),    &(kt->send), sizeof(mb.dircnt));
-  mtn_set_int(&(mb.statcnt),   &(kt->send), sizeof(mb.statcnt));
-  mtn_set_int(&(mb.strcnt),    &(kt->send), sizeof(mb.strcnt));
-  mtn_set_int(&(mb.argcnt),    &(kt->send), sizeof(mb.argcnt));
-  mtn_set_int(&(mb.cldcnt),    &(kt->send), sizeof(mb.cldcnt));
-  mtn_set_string(mtn->groupstr, &(kt->send));
+  mtndata_set_int(&(mb.bsize),      &(kt->send), sizeof(mb.bsize));
+  mtndata_set_int(&(mb.fsize),      &(kt->send), sizeof(mb.fsize));
+  mtndata_set_int(&(mb.dsize),      &(kt->send), sizeof(mb.dsize));
+  mtndata_set_int(&(mb.dfree),      &(kt->send), sizeof(mb.dfree));
+  mtndata_set_int(&(mb.limit),      &(kt->send), sizeof(mb.limit));
+  mtndata_set_int(&(sm.vsz),        &(kt->send), sizeof(sm.vsz));
+  mtndata_set_int(&(sm.res),        &(kt->send), sizeof(sm.res));
+  mtndata_set_int(&(mb.cnt.cpu),    &(kt->send), sizeof(mb.cnt.cpu));
+  mtndata_set_int(&(mb.loadavg),    &(kt->send), sizeof(mb.loadavg));
+  mtndata_set_int(&(mb.memsize),    &(kt->send), sizeof(mb.memsize));
+  mtndata_set_int(&(mb.memfree),    &(kt->send), sizeof(mb.memfree));
+  mtndata_set_int(&(mb.flags),      &(kt->send), sizeof(mb.flags));
+  mtndata_set_data(&(mb.cnt),       &(kt->send), sizeof(mb.cnt));
+  mtndata_set_string(mtn->groupstr, &(kt->send));
   kt->send.head.fin = 1;
   kt->fin = 1;
   mtnlogger(mtn, 8, "[debug] %s: SIZE=%d\n", __func__, kt->send.head.size);
@@ -310,16 +301,16 @@ int mtnd_list_dir(MTNTASK *kt)
     }
     sprintf(full, "%s/%s", kt->path, ent->d_name);
     if(!lstat(full, &(kt->stat))){
-      len  = mtn_set_string(ent->d_name, NULL);
-      len += mtn_set_stat(&(kt->stat),   NULL);
+      len  = mtndata_set_string(ent->d_name, NULL);
+      len += mtndata_set_stat(&(kt->stat),   NULL);
       if(kt->send.head.size + len <= mtn->max_packet_size){
-        mtn_set_string(ent->d_name, &(kt->send));
-        mtn_set_stat(&(kt->stat),   &(kt->send));
+        mtndata_set_string(ent->d_name, &(kt->send));
+        mtndata_set_stat(&(kt->stat),   &(kt->send));
       }else{
         send_dgram(mtn, kt->con, &(kt->send), &(kt->addr));
         memset(&(kt->send), 0, sizeof(kt->send));
-        mtn_set_string(ent->d_name, &(kt->send));
-        mtn_set_stat(&(kt->stat),   &(kt->send));
+        mtndata_set_string(ent->d_name, &(kt->send));
+        mtndata_set_stat(&(kt->stat),   &(kt->send));
         return(0);
       }
     } 
@@ -351,7 +342,7 @@ static void mtnd_list_process(MTNTASK *kt)
   }else{
     kt->fin = 1;
     kt->send.head.size = 0;
-    mtn_get_string(buff, &(kt->recv));
+    mtndata_get_string(buff, &(kt->recv));
     mtnd_fix_path(buff);
     sprintf(kt->path, "./%s", buff);
     if(lstat(kt->path, &(kt->stat)) == -1){
@@ -361,8 +352,8 @@ static void mtnd_list_process(MTNTASK *kt)
       kt->send.head.fin = 1;
     }
     if(S_ISREG(kt->stat.st_mode)){
-      mtn_set_string(basename(kt->path), &(kt->send));
-      mtn_set_stat(&(kt->stat), &(kt->send));
+      mtndata_set_string(basename(kt->path), &(kt->send));
+      mtndata_set_stat(&(kt->stat), &(kt->send));
       kt->send.head.fin = 1;
     }
     if(S_ISDIR(kt->stat.st_mode)){
@@ -370,7 +361,7 @@ static void mtnd_list_process(MTNTASK *kt)
         kt->fin = 0;
       }else{
         mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
-        mtn_set_int(&errno, &(kt->send), sizeof(errno));
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       }
     }
   }
@@ -392,7 +383,7 @@ static void mtnd_stat_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(buff, &(kt->recv));
+  mtndata_get_string(buff, &(kt->recv));
   mtnd_fix_path(buff);
   sprintf(kt->path, "./%s", buff);
   if(lstat(kt->path, &(kt->stat)) == -1){
@@ -403,8 +394,8 @@ static void mtnd_stat_process(MTNTASK *kt)
   }else{
     kt->send.head.type = MTNCMD_SUCCESS;
     dirbase(kt->path, NULL, file);
-    mtn_set_string(file, &(kt->send));
-    mtn_set_stat(&(kt->stat), &(kt->send));
+    mtndata_set_string(file, &(kt->send));
+    mtndata_set_stat(&(kt->stat), &(kt->send));
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
@@ -425,14 +416,14 @@ static void mtnd_truncate_process(MTNTASK *kt)
   kt->send.head.type = MTNCMD_SUCCESS;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(path, &(kt->recv));
-  mtn_get_int(&offset, &(kt->recv), sizeof(offset));
+  mtndata_get_string(path, &(kt->recv));
+  mtndata_get_int(&offset, &(kt->recv), sizeof(offset));
   mtnd_fix_path(path);
   sprintf(kt->path, "./%s", path);
   if(truncate(kt->path, offset) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s path=%s offset=%llu\n", __func__, strerror(errno), kt->path, offset);
     }
   }
@@ -455,16 +446,16 @@ static void mtnd_mkdir_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(buff, &(kt->recv));
-  mtn_get_int(&uid, &(kt->recv), sizeof(uid));
-  mtn_get_int(&gid, &(kt->recv), sizeof(gid));
+  mtndata_get_string(buff, &(kt->recv));
+  mtndata_get_int(&uid, &(kt->recv), sizeof(uid));
+  mtndata_get_int(&gid, &(kt->recv), sizeof(gid));
   mtnd_fix_path(buff);
   sprintf(kt->path, "./%s", buff);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(mkdir_ex(kt->path) == -1){
     mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }
   chown(kt->path, uid, gid);
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
@@ -484,7 +475,7 @@ static void mtnd_rm_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(buff, &(kt->recv));
+  mtndata_get_string(buff, &(kt->recv));
   mtnd_fix_path(buff);
   sprintf(kt->path, "./%s", buff);
   kt->send.head.type = MTNCMD_SUCCESS;
@@ -493,13 +484,13 @@ static void mtnd_rm_process(MTNTASK *kt)
       if(rmdir(kt->path) == -1){
         mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
         kt->send.head.type = MTNCMD_ERROR;
-        mtn_set_int(&errno, &(kt->send), sizeof(errno));
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       }
     }else{
       if(unlink(kt->path) == -1){
         mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
         kt->send.head.type = MTNCMD_ERROR;
-        mtn_set_int(&errno, &(kt->send), sizeof(errno));
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       }
     }
   }
@@ -521,8 +512,8 @@ static void mtnd_rename_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(obuff, &(kt->recv));
-  mtn_get_string(nbuff, &(kt->recv));
+  mtndata_get_string(obuff, &(kt->recv));
+  mtndata_get_string(nbuff, &(kt->recv));
   mtnd_fix_path(obuff);
   mtnd_fix_path(nbuff);
   sprintf(kt->path, "./%s", obuff);
@@ -531,7 +522,7 @@ static void mtnd_rename_process(MTNTASK *kt)
     if(errno != ENOENT){
       mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
@@ -552,14 +543,14 @@ static void mtnd_symlink_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(oldpath, &(kt->recv));
-  mtn_get_string(newpath, &(kt->recv));
+  mtndata_get_string(oldpath, &(kt->recv));
+  mtndata_get_string(newpath, &(kt->recv));
   mtnd_fix_path(newpath);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(symlink(oldpath, newpath) == -1){
     mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
@@ -580,17 +571,17 @@ static void mtnd_readlink_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(newpath, &(kt->recv));
+  mtndata_get_string(newpath, &(kt->recv));
   mtnd_fix_path(newpath);
   kt->send.head.type = MTNCMD_SUCCESS;
   size = readlink(newpath, oldpath, PATH_MAX);
   if(size == -1){
     mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }else{
     oldpath[size] = 0;
-    mtn_set_string(oldpath, &(kt->send));
+    mtndata_set_string(oldpath, &(kt->send));
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
@@ -610,15 +601,15 @@ static void mtnd_chmod_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(path, &(kt->recv));
-  mtn_get_int(&mode, &(kt->recv), sizeof(mode));
+  mtndata_get_string(path, &(kt->recv));
+  mtndata_get_int(&mode, &(kt->recv), sizeof(mode));
   mtnd_fix_path(path);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(chmod(path, mode) == -1){
     if(errno != ENOENT){
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
@@ -640,16 +631,16 @@ static void mtnd_chown_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(path, &(kt->recv));
-  mtn_get_int(&uid, &(kt->recv), sizeof(uid));
-  mtn_get_int(&gid, &(kt->recv), sizeof(gid));
+  mtndata_get_string(path, &(kt->recv));
+  mtndata_get_int(&uid, &(kt->recv), sizeof(uid));
+  mtndata_get_int(&gid, &(kt->recv), sizeof(gid));
   mtnd_fix_path(path);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(chown(path, uid, gid) == -1){
     if(errno != ENOENT){
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
@@ -670,16 +661,16 @@ static void mtnd_utime_process(MTNTASK *kt)
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
-  mtn_get_string(path, &(kt->recv));
-  mtn_get_int(&(ut.actime),  &(kt->recv), sizeof(ut.actime));
-  mtn_get_int(&(ut.modtime), &(kt->recv), sizeof(ut.modtime));
+  mtndata_get_string(path, &(kt->recv));
+  mtndata_get_int(&(ut.actime),  &(kt->recv), sizeof(ut.actime));
+  mtndata_get_int(&(ut.modtime), &(kt->recv), sizeof(ut.modtime));
   mtnd_fix_path(path);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(utime(path, &ut) == -1){
     if(errno != ENOENT){
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
@@ -715,7 +706,7 @@ void mtnd_task_process(int s)
       t->send.head.size = 0;
       t->send.head.type = MTNCMD_ERROR;
       errno = EPERM;
-      mtn_set_int(&errno, &(t->send), sizeof(errno));
+      mtndata_set_int(&errno, &(t->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: Function Not Found type=%d\n", __func__, t->type);
     }
     if(t->fin){
@@ -750,7 +741,7 @@ void mtnd_child_get(MTNTASK *kt)
     errno = EBADF;
     mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     return;
   }
   while(is_loop){
@@ -758,7 +749,7 @@ void mtnd_child_get(MTNTASK *kt)
     if(kt->send.head.size == 0){ // EOF
       close(kt->fd);
       kt->send.head.fin = 1;
-      kt->fd  = 0;
+      kt->fd = 0;
       break;
     }
     if(kt->send.head.size == -1){
@@ -766,7 +757,7 @@ void mtnd_child_get(MTNTASK *kt)
       kt->send.head.type = MTNCMD_ERROR;
       kt->send.head.size = 0;
       kt->send.head.fin  = 1;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       break;
     }
     if(send_data_stream(mtn, kt->con, &(kt->send)) == -1){
@@ -774,7 +765,7 @@ void mtnd_child_get(MTNTASK *kt)
       kt->send.head.type = MTNCMD_ERROR;
       kt->send.head.size = 0;
       kt->send.head.fin  = 1;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       break;
     }
   }
@@ -807,13 +798,13 @@ void mtnd_child_put(MTNTASK *kt)
         kt->fin = 1;
         kt->send.head.fin = 1;
         kt->send.head.type = MTNCMD_ERROR;
-        mtn_set_int(&errno, &(kt->send), sizeof(errno));
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       }
     }
   }else{
     //----- open/create -----
-    mtn_get_string(kt->path,  &(kt->recv));
-    mtn_get_stat(&(kt->stat), &(kt->recv));
+    mtndata_get_string(kt->path,  &(kt->recv));
+    mtndata_get_stat(&(kt->stat), &(kt->recv));
     mtnlogger(mtn, 0,"[info]  %s: creat %s\n", __func__, kt->path);
     dirbase(kt->path, d, f);
     if(mkdir_ex(d) == -1){
@@ -821,7 +812,7 @@ void mtnd_child_put(MTNTASK *kt)
       kt->fin = 1;
       kt->send.head.fin = 1;
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }else{
       kt->fd = creat(kt->path, kt->stat.st_mode);
       if(kt->fd == -1){
@@ -830,7 +821,7 @@ void mtnd_child_put(MTNTASK *kt)
         kt->fin = 1;
         kt->send.head.fin = 1;
         kt->send.head.type = MTNCMD_ERROR;
-        mtn_set_int(&errno, &(kt->send), sizeof(errno));
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       }
     }
   }
@@ -846,9 +837,9 @@ void mtnd_child_open(MTNTASK *kt)
   mode_t mode;
   char d[PATH_MAX];
   char f[PATH_MAX];
-  mtn_get_string(kt->path, &(kt->recv));
-  mtn_get_int(&flags, &(kt->recv), sizeof(flags));
-  mtn_get_int(&mode,  &(kt->recv), sizeof(mode));
+  mtndata_get_string(kt->path, &(kt->recv));
+  mtndata_get_int(&flags, &(kt->recv), sizeof(flags));
+  mtndata_get_int(&mode,  &(kt->recv), sizeof(mode));
   mtnd_fix_path(kt->path);
   dirbase(kt->path, d, f);
   mkdir_ex(d);
@@ -856,7 +847,7 @@ void mtnd_child_open(MTNTASK *kt)
   if(kt->fd == -1){
     kt->fd = 0;
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s, path=%s create=%d mode=%o\n", __func__, strerror(errno), kt->path, ((flags & O_CREAT) != 0), mode);
   }else{
     fstat(kt->fd, &(kt->stat));
@@ -869,8 +860,8 @@ void mtnd_child_read(MTNTASK *kt)
   int r;
   size_t  size;
   off_t offset;
-  mtn_get_int(&size,   &(kt->recv), sizeof(size));
-  mtn_get_int(&offset, &(kt->recv), sizeof(offset));
+  mtndata_get_int(&size,   &(kt->recv), sizeof(size));
+  mtndata_get_int(&offset, &(kt->recv), sizeof(offset));
 
   size = (size > MTN_MAX_DATASIZE) ? MTN_MAX_DATASIZE : size;
   r = pread(kt->fd, kt->send.data.data, size, offset);
@@ -885,10 +876,10 @@ void mtnd_child_write(MTNTASK *kt)
   off_t offset;
   static size_t total = 0;
 
-  if(mtn_get_int(&offset, &(kt->recv), sizeof(offset)) == -1){
+  if(mtndata_get_int(&offset, &(kt->recv), sizeof(offset)) == -1){
     errno = EIO;
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     return;
   }
   size = kt->recv.head.size;
@@ -898,7 +889,7 @@ void mtnd_child_write(MTNTASK *kt)
     if(is_freelimit()){
       errno = ENOSPC;
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       return;
     }
     total = 0;
@@ -907,7 +898,7 @@ void mtnd_child_write(MTNTASK *kt)
     kt->res = pwrite(kt->fd, buff, size, offset);
     if(kt->res == -1){
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       break;
     }
     total  += kt->res;
@@ -923,7 +914,7 @@ void mtnd_child_close(MTNTASK *kt)
     fstat(kt->fd, &(kt->stat));
     if(close(kt->fd) == -1){
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
     kt->fd = 0;
   }
@@ -932,13 +923,13 @@ void mtnd_child_close(MTNTASK *kt)
 void mtnd_child_truncate(MTNTASK *kt)
 {
   off_t offset;
-  mtn_get_string(kt->path, &(kt->recv));
-  mtn_get_int(&offset, &(kt->recv), sizeof(offset));
+  mtndata_get_string(kt->path, &(kt->recv));
+  mtndata_get_int(&offset, &(kt->recv), sizeof(offset));
   mtnd_fix_path(kt->path);
   stat(kt->path, &(kt->stat));
   if(truncate(kt->path, offset) == -1){
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s path=%s offset=%llu\n", __func__, strerror(errno), kt->path, offset);
   }else{
     mtnlogger(mtn, 2, "[debug] %s: path=%s offset=%llu\n", __func__, kt->path, offset);
@@ -948,11 +939,11 @@ void mtnd_child_truncate(MTNTASK *kt)
 void mtnd_child_mkdir(MTNTASK *kt)
 {
   mtnlogger(mtn, 9, "[debug] %s: START\n", __func__);
-  mtn_get_string(kt->path, &(kt->recv));
+  mtndata_get_string(kt->path, &(kt->recv));
   mtnd_fix_path(kt->path);
   if(mkdir(kt->path, 0777) == -1){
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }
   mtnlogger(mtn, 8, "[debug] %s: PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
   mtnlogger(mtn, 9, "[debug] %s: END\n", __func__);
@@ -961,12 +952,12 @@ void mtnd_child_mkdir(MTNTASK *kt)
 void mtnd_child_rmdir(MTNTASK *kt)
 {
   mtnlogger(mtn, 9, "[debug] %s: START\n", __func__);
-  mtn_get_string(kt->path, &(kt->recv));
+  mtndata_get_string(kt->path, &(kt->recv));
   mtnd_fix_path(kt->path);
   if(rmdir(kt->path) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
   mtnlogger(mtn, 8, "[debug] %s: PATH=%s RES=%d\n", __func__, kt->path, kt->send.head.type);
@@ -976,17 +967,17 @@ void mtnd_child_rmdir(MTNTASK *kt)
 void mtnd_child_unlink(MTNTASK *kt)
 {
   mtnlogger(mtn, 9, "[debug] %s: START\n", __func__);
-  mtn_get_string(kt->path, &(kt->recv));
+  mtndata_get_string(kt->path, &(kt->recv));
   mtnd_fix_path(kt->path);
   if(lstat(kt->path, &(kt->stat)) == -1){
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0,"[debug] %s: stat error: %s %s\n", __func__, strerror(errno), kt->path);
     return;
   }
   if(unlink(kt->path) == -1){
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0,"[debug] %s: unlink error: %s %s\n", __func__, strerror(errno), kt->path);
     return;
   }
@@ -1002,20 +993,20 @@ void mtnd_child_getattr(MTNTASK *kt)
     if(fstat(kt->fd, &st) == -1){
       mtnlogger(mtn, 0, "[error] %s: 1\n", __func__);
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }else{
-      mtn_set_stat(&st, &(kt->send));
+      mtndata_set_stat(&st, &(kt->send));
       mtnlogger(mtn, 1, "[debug] %s: 2 size=%d\n", __func__, kt->send.head.size);
     }
   }else{
-    mtn_get_string(kt->path, &(kt->recv));
+    mtndata_get_string(kt->path, &(kt->recv));
     if(lstat(kt->path, &st) == -1){
       mtnlogger(mtn, 0, "[error] %s: 3\n", __func__);
       kt->send.head.type = MTNCMD_ERROR;
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }else{
       mtnlogger(mtn, 1, "[debug] %s: 4\n", __func__);
-      mtn_set_stat(&st, &(kt->send));
+      mtndata_set_stat(&st, &(kt->send));
     }
   }
   mtnlogger(mtn, 1, "[debug] %s: END\n", __func__);
@@ -1025,15 +1016,15 @@ void mtnd_child_chmod(MTNTASK *kt)
 {
   uint32_t mode;
   mtnlogger(mtn, 0,"[debug] %s: START\n", __func__);
-  mtn_get_string(kt->path, &(kt->recv));
-  mtn_get_int(&mode, &(kt->recv), sizeof(mode));
+  mtndata_get_string(kt->path, &(kt->recv));
+  mtndata_get_int(&mode, &(kt->recv), sizeof(mode));
   if(chmod(kt->path, mode) == -1){
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }else{    
     if(stat(kt->path, &(kt->stat)) == -1){
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }else{
-      mtn_set_stat(&(kt->stat), &(kt->send));
+      mtndata_set_stat(&(kt->stat), &(kt->send));
     }
   }
   mtnlogger(mtn, 0,"[debug] %s: END\n", __func__);
@@ -1044,16 +1035,16 @@ void mtnd_child_chown(MTNTASK *kt)
   uid_t uid;
   uid_t gid;
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
-  mtn_get_string(kt->path, &(kt->recv));
-  mtn_get_int(&uid, &(kt->recv), sizeof(uid));
-  mtn_get_int(&gid, &(kt->recv), sizeof(uid));
+  mtndata_get_string(kt->path, &(kt->recv));
+  mtndata_get_int(&uid, &(kt->recv), sizeof(uid));
+  mtndata_get_int(&gid, &(kt->recv), sizeof(uid));
   if(chown(kt->path, uid, gid) == -1){
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }else{    
     if(stat(kt->path, &(kt->stat)) == -1){
-      mtn_set_int(&errno, &(kt->send), sizeof(errno));
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }else{
-      mtn_set_stat(&(kt->stat), &(kt->send));
+      mtndata_set_stat(&(kt->stat), &(kt->send));
     }
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
@@ -1062,7 +1053,7 @@ void mtnd_child_chown(MTNTASK *kt)
 void mtnd_child_setattr(MTNTASK *kt)
 {
   mtnlogger(mtn, 0,"[debug] %s: START\n", __func__);
-  mtn_get_string(kt->path, &(kt->recv));
+  mtndata_get_string(kt->path, &(kt->recv));
   mtnlogger(mtn, 0,"[debug] %s: END\n", __func__);
 }
 
@@ -1103,7 +1094,7 @@ void mtnd_child_init_exec(MTNTASK *kt)
   }
   if(kt->fin){
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }
 }
 
@@ -1115,13 +1106,13 @@ void mtnd_child_init(MTNTASK *kt)
 
   uid = getuid();
   gid = getgid();
-  r += mtn_get_int(&(kt->init.uid),  &(kt->recv), sizeof(kt->init.uid));
-  r += mtn_get_int(&(kt->init.gid),  &(kt->recv), sizeof(kt->init.gid));
-  r += mtn_get_int(&(kt->init.mode), &(kt->recv), sizeof(kt->init.mode)); 
+  r += mtndata_get_int(&(kt->init.uid),  &(kt->recv), sizeof(kt->init.uid));
+  r += mtndata_get_int(&(kt->init.gid),  &(kt->recv), sizeof(kt->init.gid));
+  r += mtndata_get_int(&(kt->init.mode), &(kt->recv), sizeof(kt->init.mode)); 
   if(r){
     mtnlogger(mtn, 0, "[error] %s: mtn protocol error\n", __func__);
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     kt->fin = 1;
     return;
   }
@@ -1157,7 +1148,7 @@ void mtnd_child_init(MTNTASK *kt)
 
   if(kt->fin){
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     return;
   }
 
@@ -1184,7 +1175,7 @@ void mtnd_child_fork(MTNTASK *kt, MTNJOB *job)
     close(pp[2][0]);
     close(pp[2][1]);
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     return;
   }
   if(job->pid > 0){
@@ -1218,24 +1209,29 @@ void mtnd_child_fork(MTNTASK *kt, MTNJOB *job)
   _exit(127);
 }
 
-void mtnd_child_exec_poll(MTNTASK *kt, MTNJOB *job)
+int mtnd_child_exec_sche(MTNTASK *kt, MTNJOB *job)
+{
+  scanprocess(job, 1);
+  getjobusage(job);
+  if(job->cpu > job->lim){
+    if(job->pstat[0].state != 'T'){
+      kill(-(getpgid(job->pid)), SIGSTOP);
+    }
+  }else{
+    if(job->pstat[0].state == 'T'){
+      kill(-(getpgid(job->pid)), SIGCONT);
+    }
+  }
+  return(getwaittime(job, 1));
+}
+
+void mtnd_child_exec_poll(MTNTASK *kt, MTNJOB *job, int wtime)
 {
   int r;
   static int size  = 0;
-  static int wtime = 200;
-  struct epoll_event  ev;
-  struct timeval  polltv;
-  struct timeval keikatv;
+  struct epoll_event ev;
   char buff[MTN_MAX_DATASIZE];
 
-  gettimeofday(&polltv, NULL);
-  timersub(&polltv, &(job->start), &keikatv);
-  if(wtime < (keikatv.tv_sec * 1000 + keikatv.tv_usec / 1000)){
-    memcpy(&(job->start), &polltv, sizeof(struct timeval));
-    scanprocess(job, 1);
-    getjobusage(job);
-    wtime = getwaittime(job, 1);
-  }
   r = epoll_wait(job->efd, &ev, 1, wtime);
   if(r != 1){
     return;
@@ -1280,7 +1276,7 @@ void mtnd_child_exec_poll(MTNTASK *kt, MTNJOB *job)
     if(r > 0){
       kt->send.head.type = MTNCMD_STDOUT;
       kt->send.head.size = 0;
-      mtn_set_data(buff, &(kt->send), r);
+      mtndata_set_data(buff, &(kt->send), r);
       send_data_stream(mtn, kt->con, &(kt->send));
     }
     if(r == 0){
@@ -1295,7 +1291,7 @@ void mtnd_child_exec_poll(MTNTASK *kt, MTNJOB *job)
     if(r > 0){
       kt->send.head.type = MTNCMD_STDERR;
       kt->send.head.size = 0;
-      mtn_set_data(buff, &(kt->send), r);
+      mtndata_set_data(buff, &(kt->send), r);
       send_data_stream(mtn, kt->con, &(kt->send));
     }
     if(r == 0){
@@ -1308,59 +1304,76 @@ void mtnd_child_exec_poll(MTNTASK *kt, MTNJOB *job)
 
 void mtnd_child_exec(MTNTASK *kt)
 {
+  int  rtime;
+  int  wtime;
   int status;
   MTNJOB job;
+  struct timeval savetv;
+  struct timeval polltv;
+  struct timeval keiktv;
   struct epoll_event ev;
   char buff[MTN_MAX_DATASIZE];
 
-  memset(&job, 0, sizeof(job));
-  mtn_get_string(buff, &(kt->recv));
-  mtn_get_int(&(job.lim), &(kt->recv), sizeof(job.lim));
-  job.cmd = newstr(buff);
-  gettimeofday(&(job.start), NULL);
-  mtnlogger(mtn, 0, "[debug] %s: %s\n", __func__, job.cmd);
   if(!kt->init.init){
-    mtnlogger(mtn, 0, "[error] %s: \n", __func__);
+    mtnlogger(mtn, 0, "[error] %s: session init error\n", __func__);
     errno = EACCES;
     kt->send.head.size = 0;
     kt->send.head.ver  = PROTOCOL_VERSION;
     kt->send.head.type = MTNCMD_ERROR;
-    mtn_set_int(&errno, &(kt->send), sizeof(errno));
-  }else{
-    mtnd_child_fork(kt, &job);
-    job.efd = epoll_create(1);
-    ev.events  = EPOLLOUT;
-    ev.data.fd = kt->std[0];
-    epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
-    ev.events  = EPOLLIN;
-    ev.data.fd = kt->std[1];
-    epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
-    ev.data.fd = kt->std[2];
-    epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
-    ev.data.fd = kt->con;
-    epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
-    fcntl(kt->std[0], F_SETFL , O_NONBLOCK);
-    fcntl(kt->std[1], F_SETFL , O_NONBLOCK);
-    fcntl(kt->std[2], F_SETFL , O_NONBLOCK);
-
-    kt->recv.head.size = 0;
-    kt->send.head.size = 0;
-    kt->send.head.ver  = PROTOCOL_VERSION;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    send_data_stream(mtn, kt->con, &(kt->send));
-    while(is_loop && (kt->std[1] || kt->std[2])){
-      mtnd_child_exec_poll(kt, &job);
-    }
-    kill(-(getpgid(job.pid)), SIGCONT);
-    while(waitpid(job.pid, &status, 0) != job.pid);
-    job_close(&job);
-    if(kt->std[0]){
-      close(kt->std[0]);
-      kt->std[0] = 0;
-    }
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+    return;
   }
+  memset(&job, 0, sizeof(job));
+  mtndata_get_string(buff, &(kt->recv));
+  mtndata_get_int(&(job.lim), &(kt->recv), sizeof(job.lim));
+  job.cmd = newstr(buff);
+  gettimeofday(&(job.start), NULL);
+  mtnlogger(mtn, 0, "[debug] %s: %s\n", __func__, job.cmd);
+
+  mtnd_child_fork(kt, &job);
+  gettimeofday(&savetv, NULL);
+  job.efd = epoll_create(1);
+  ev.events  = EPOLLOUT;
+  ev.data.fd = kt->std[0];
+  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+  ev.events  = EPOLLIN;
+  ev.data.fd = kt->std[1];
+  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+  ev.data.fd = kt->std[2];
+  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+  ev.data.fd = kt->con;
+  epoll_ctl(job.efd, EPOLL_CTL_ADD, ev.data.fd, &ev);
+  fcntl(kt->std[0], F_SETFL , O_NONBLOCK);
+  fcntl(kt->std[1], F_SETFL , O_NONBLOCK);
+  fcntl(kt->std[2], F_SETFL , O_NONBLOCK);
+
+  wtime = 200;
+  kt->recv.head.size = 0;
+  kt->send.head.size = 0;
+  kt->send.head.ver  = PROTOCOL_VERSION;
+  kt->send.head.type = MTNCMD_SUCCESS;
+  send_data_stream(mtn, kt->con, &(kt->send));
+  while(is_loop && (kt->std[1] || kt->std[2])){
+    if(job.lim){
+      gettimeofday(&polltv, NULL);
+      timersub(&polltv, &savetv, &keiktv);
+      rtime = keiktv.tv_sec * 1000 + keiktv.tv_usec / 1000;
+      if(wtime < rtime){
+        memcpy(&savetv, &polltv, sizeof(struct timeval));
+        wtime = mtnd_child_exec_sche(kt, &job);
+      }
+    }
+    mtnd_child_exec_poll(kt, &job, wtime);
+  }
+  kill(-(getpgid(job.pid)), SIGCONT);
+  while(waitpid(job.pid, &status, 0) != job.pid);
+  job_close(&job);
+  if(kt->std[0]){
+    close(kt->std[0]);
+    kt->std[0] = 0;
+  }
+  kt->send.head.type = MTNCMD_SUCCESS;
+  kt->send.head.size = 0;
   mtnlogger(mtn, 0, "[debug] %s: return\n", __func__);
 }
 
@@ -1369,7 +1382,7 @@ void mtnd_child_error(MTNTASK *kt)
   errno = EACCES;
   mtnlogger(mtn, 0, "[error] %s: TYPE=%u\n", __func__, kt->recv.head.type);
   kt->send.head.type = MTNCMD_ERROR;
-  mtn_set_int(&errno, &(kt->send), sizeof(errno));
+  mtndata_set_int(&errno, &(kt->send), sizeof(errno));
 }
 
 void mtnd_child(MTNTASK *kt)
@@ -1794,7 +1807,7 @@ void mtnd_startmsg()
   uint32_t fsize;
   uint64_t dsize;
   uint64_t dfree;
-  get_diskfree(&bsize, &fsize, &dsize, &dfree);
+  getstatf(&bsize, &fsize, &dsize, &dfree);
   mtnlogger(mtn, 0, "======= %s start =======\n", MODULE_NAME);
   mtnlogger(mtn, 0, "ver  : %s\n", MTN_VERSION);
   mtnlogger(mtn, 0, "pid  : %d\n", getpid());

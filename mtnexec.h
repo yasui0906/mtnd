@@ -8,6 +8,8 @@
 #define MTNEXECMODE_ALL0   3
 #define MTNEXECMODE_ALL1   4
 
+#define TVMSEC(tv) (tv.tv_sec * 1000 + tv.tv_usec / 1000)
+
 typedef struct mtnexec_context
 {
   int efd;
@@ -42,3 +44,4 @@ typedef struct mtnexec_context
   struct timeval polltv;
 } CTX;
 extern int optind;
+

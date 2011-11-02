@@ -30,7 +30,7 @@ int mkpidfile(char *path)
       fclose(fd);
     }else{
       mtnlogger(NULL, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
-      return(1);
+      return(-1);
     }
   }
   return(0);

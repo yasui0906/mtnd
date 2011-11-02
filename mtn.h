@@ -45,6 +45,7 @@ typedef struct mtnsvr
   MTNADDR  addr;
   char    *host;
   uint8_t  mark;
+  uint16_t order; // mtn_helloで到達した順番(0が先頭)
   uint16_t flags;
   uint32_t bsize;
   uint32_t fsize;
@@ -53,23 +54,25 @@ typedef struct mtnsvr
   uint64_t limit;
   uint64_t vsz;
   uint64_t res;
-  uint32_t cpu_num;
   uint32_t loadavg;
-  uint32_t pscount;
   uint64_t memsize;
   uint64_t memfree;
-  int    membercnt;
-  int    malloccnt;
-  int      taskcnt;
-  int       svrcnt;
-  int       dircnt;
-  int      statcnt;
-  int       strcnt;
-  int       argcnt;
-  int       cldcnt;
   STR     groupstr;
   ARG     grouparg;
   struct timeval tv;
+  struct{
+    int cpu; // CPUの数
+    int prc; // 全プロセス数
+    int cld; // 子プロセス数
+    int mbr; // 認識できているmtndの数
+    int mem; // xmallocを呼び出した回数
+    int tsk; // MTNTASKの数
+    int svr; // MTNSVRの数
+    int dir; // MTNDIRの数
+    int sta; // MTNSTATUSの数
+    int str; // STRの数
+    int arg; // ARGの数
+  }cnt;
 } MTNSVR;
 
 typedef struct mtnstat
@@ -106,7 +109,7 @@ typedef struct mtnjob
   pid_t    pid;
   uid_t    uid;
   gid_t    gid;
-  int      cid; // CPU-ID
+  int      cid; // CPU-ID(-1はOSまかせ)
   int      cpu; // CPU使用率(整数で処理するために10倍)
   int      lim; // CPU使用率の上限値
   uint64_t ctm; // CPU時間
@@ -202,9 +205,8 @@ int getpscount();
 int getprocstat(MTNPROCSTAT *ps);
 int getjobusage(MTNJOB *job);
 int scanprocess(MTNJOB *job, int job_max);
-int scheprocess(MTN *mtn, MTNJOB *job, int job_max, int cpu_lim, int cpu_num);
-int job_close(MTNJOB *job);
 int getwaittime(MTNJOB *job, int job_max);
+int job_close(MTNJOB *job);
 
 /*-------------------------------------------------------------------------*/
 void     mtnlogger(MTN *mtn, int l, char *fmt, ...);
@@ -215,8 +217,9 @@ void     mtn_destroy(MTN *mtn);
 MTNSVR  *mtn_hello(MTN *mtn);
 MTNSTAT *mtn_list(MTN *mtn, const char *path);
 MTNSTAT *mtn_stat(MTN *mtn, const char *path);
-MTNSVR  *mtn_info(MTN *mtn);
 void     mtn_break(void);
+MTNSVR  *mtn_info(MTN *mtn);
+void     mtn_info_clrcache(MTN *mtn);
 
 int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st);
 int mtn_open_file(MTN *mtn, int s, const char *path, int flags, MTNSTAT *st);
@@ -272,6 +275,7 @@ ARG clrarg(ARG args);
 ARG copyarg(ARG args);
 STR poparg(ARG args);
 STR convarg(STR arg, ARG argl);
+ARG cpconvarg(ARG arg, ARG argl);
 STR joinarg(ARG args, STR delim);
 STR findarg(ARG arg, STR str);
 ARG cmdargs(MTNJOB *job);
@@ -288,4 +292,3 @@ void free_mtnstatus_loglevel(char *buff);
 
 void mtndebug(const char *func, char *fmt, ...);
 void mtndumparg(const char *func, ARG arg);
-
