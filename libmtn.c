@@ -275,9 +275,12 @@ int getwaittime(MTNJOB *job, int job_max)
 {
   int i;
   int w;
-  int wtime = 500;
+  int wtime = 200;
   for(i=0;i<job_max;i++){
     if(!job[i].pid){
+      continue;
+    }
+    if(!job[i].lim){
       continue;
     }
     if(job[i].pstat[0].state == 'T'){
@@ -3232,7 +3235,7 @@ ARG cpconvarg(ARG arg, ARG argl)
   return(r);
 }
 
-static int job_flush(MTNJOB *job)
+static int job_flush_stdout(MTNJOB *job)
 {
   int r;
   size_t size = 0;
@@ -3252,15 +3255,39 @@ static int job_flush(MTNJOB *job)
   return(0);
 }
 
+static int job_flush_stderr(MTNJOB *job)
+{
+  int r;
+  size_t size = 0;
+  while(job->stderr.datasize - size){
+    r = write(2, job->stderr.stdbuff + size, job->stderr.datasize - size);
+    if(r == -1){
+      return(-1);
+    }
+    size += r;
+  }
+  if(job->stderr.stdbuff){
+    free(job->stderr.stdbuff);
+    job->stderr.stdbuff  = NULL;
+    job->stderr.buffsize = 0;
+    job->stderr.datasize = 0;
+  }
+  return(0);
+}
+
 int job_close(MTNJOB *job)
 {
   if(job->efd > 0){
     close(job->efd);
     job->efd = 0;
   }
-  if(job->pfd){
-    close(job->pfd);
-    job->pfd = 0;
+  if(job->out){
+    close(job->out);
+    job->out = 0;
+  }
+  if(job->err){
+    close(job->err);
+    job->err = 0;
   }
   if(job->con > 0){
     close(job->con);
@@ -3271,7 +3298,8 @@ int job_close(MTNJOB *job)
     job->pstat = NULL;
     job->cct   = 0;
   }
-  job_flush(job);
+  job_flush_stdout(job);
+  job_flush_stderr(job);
   clrstr(job->cmd);
   clrarg(job->std);
   clrarg(job->putarg);

@@ -496,34 +496,106 @@ int is_running()
   return(0);
 }
 
-int mtnexec_stdbuff(MTNJOB *job)
+int mtnexec_stdread(int fd, char *buff, int size)
 {
   int r;
-  char buff[1024];
-  r = read(job->pfd, buff, sizeof(buff));
-  if(r == -1){
-    return(-1);
-  }
+  do{
+    r = read(fd, buff, size);
+    if(r != -1){
+      break;
+    }
+    if(errno == EAGAIN){
+      return(-1);
+    }
+    if(errno != EINTR){
+      mtnlogger(mtn, 0, "[error] %s: read %s FD=%d buff=%p size=%d\n", __func__, strerror(errno), fd, buff, size);
+      return(-1);
+    }
+  }while(is_loop);
   if(r == 0){
-    epoll_ctl(ctx->efd, EPOLL_CTL_DEL, job->pfd, NULL);
-    close(job->pfd);
-    job->pfd = 0;
+    epoll_ctl(ctx->efd, EPOLL_CTL_DEL, fd, NULL);
+  }
+  return(r);
+}
+
+int mtnexec_stdbuff(int size, char *buff, size_t *datasize, size_t *buffsize, char **databuff)
+{
+  if(*datasize + size > *buffsize){
+    *buffsize += 1024;
+    *databuff = realloc(*databuff, *buffsize);
+  }
+  memcpy(*databuff + *datasize, buff, size);
+  *datasize += size;
+  return(0);
+}
+
+int mtnexec_nobuff(size_t *datasize, size_t *buffsize, char **databuff)
+{
+  int i;
+  int s;
+  int r;
+  for(i=0;i < *datasize;i++){
+    if(*(*databuff + i) == '\n'){
+      i++;
+      s = 0;
+      while(i > s){
+        r = write(1, *databuff + s, i - s);
+        if(r == -1){
+          if(errno == EINTR){
+            continue;
+          }
+          mtnlogger(mtn, 0, "[error] %s: %s stdout\n", __func__, strerror(errno));
+        }else{
+          s += r;
+        }
+      }
+      *datasize -= i;
+      memmove(*databuff, *databuff + i, *datasize);
+      return(1);
+    }
+  }
+  return(0);
+}
+
+int mtnexec_stdout(MTNJOB *job)
+{
+  int size;
+  char buff[1024];
+  if(!job->out){
     return(0);
   }
-  if(job->stdout.datasize + r > job->stdout.buffsize){
-    job->stdout.stdbuff = realloc(job->stdout.stdbuff, job->stdout.buffsize + sizeof(buff));
-    job->stdout.buffsize += sizeof(buff);
+  size = mtnexec_stdread(job->out, buff, sizeof(buff));
+  if(size > 0){
+    mtnexec_stdbuff(size, buff, &(job->stdout.datasize), &(job->stdout.buffsize), &(job->stdout.stdbuff));
+    while(is_loop && ctx->nobuf && mtnexec_nobuff(&(job->stdout.datasize), &(job->stdout.buffsize), &(job->stdout.stdbuff)));
   }
-  memcpy(job->stdout.stdbuff + job->stdout.datasize, buff, r);
-  job->stdout.datasize += r;
-  return(r);
+  return(size);
+}
+
+int mtnexec_stderr(MTNJOB *job)
+{
+  int size;
+  char buff[1024];
+  if(!job->err){
+    return(0);
+  }
+  size = mtnexec_stdread(job->err, buff, sizeof(buff));
+  if(size > 0){
+    mtnexec_stdbuff(size, buff, &(job->stderr.datasize), &(job->stderr.buffsize), &(job->stderr.stdbuff));
+    while(is_loop && ctx->nobuf && mtnexec_nobuff(&(job->stderr.datasize), &(job->stderr.buffsize), &(job->stderr.stdbuff)));
+  }
+  return(size);
 }
 
 int jclose(MTNJOB *job)
 {
-  if(job->pfd){
-    epoll_ctl(ctx->efd, EPOLL_CTL_DEL, job->pfd, NULL);
-    while(mtnexec_stdbuff(job) > 0);
+  if(job->out){
+    epoll_ctl(ctx->efd, EPOLL_CTL_DEL, job->out, NULL);
+    while(mtnexec_stdout(job) > 0);
+  }
+  if(job->err){
+    epoll_ctl(ctx->efd, EPOLL_CTL_DEL, job->err, NULL);
+    while(mtnexec_stderr(job) > 0);
   }
   return(job_close(job));
 }
@@ -631,9 +703,10 @@ void mtnexec_poll()
       return;
     }
   }
+
   if((r == 1) && ev.data.ptr){
-    r = mtnexec_stdbuff(ev.data.ptr);
-    return;
+    mtnexec_stdout(ev.data.ptr);
+    mtnexec_stderr(ev.data.ptr);
   }
 
   read(ctx->fsig[0], &data, sizeof(data));
@@ -718,7 +791,7 @@ void mtnexec_dryrun(MTNJOB *job)
 int mtnexec_fork(MTNJOB *job)
 {
   int f;
-  int pp[2];
+  int pp[2][2];
   struct epoll_event ev;
 
   job = copyjob(mtnexec_wait(), job); // プロセス数の上限に達していたらここで待機する
@@ -738,34 +811,46 @@ int mtnexec_fork(MTNJOB *job)
   if(ctx->verbose){
     mtnexec_verbose(job);
   }
-  pipe(pp);
+  pipe(pp[0]);
+  pipe(pp[1]);
   gettimeofday(&(job->start), NULL);
   job->pid = fork();
   if(job->pid == -1){
     job->pid = 0;
-    close(pp[0]);
-    close(pp[1]);
+    close(pp[0][0]);
+    close(pp[0][1]);
+    close(pp[1][0]);
+    close(pp[1][1]);
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
   if(job->pid){
-    close(pp[1]);
-    fcntl(job->pfd, F_SETFD, FD_CLOEXEC);
+    close(pp[0][1]);
+    close(pp[1][1]);
+    job->out   = pp[0][0];
+    job->err   = pp[1][0];
     job->cct   = 1;
     job->pstat = calloc(1, sizeof(MTNPROCSTAT));
     job->pstat[0].pid = job->pid;
-    job->pfd = pp[0];
+    fcntl(job->out, F_SETFD, FD_CLOEXEC);
+    fcntl(job->err, F_SETFD, FD_CLOEXEC);
+    fcntl(job->out, F_SETFL, O_NONBLOCK);
+    fcntl(job->err, F_SETFL, O_NONBLOCK);
     ev.data.ptr = job;
     ev.events   = EPOLLIN;
-    if(epoll_ctl(ctx->efd, EPOLL_CTL_ADD, job->pfd, &ev) == -1){
-      mtnlogger(mtn, 0, "[error] %s: epoll_ctl %s\n", __func__, strerror(errno));
+    if(epoll_ctl(ctx->efd, EPOLL_CTL_ADD, job->out, &ev) == -1){
+      mtnlogger(mtn, 0, "[error] %s: epoll_ctl %s stdout fd=%d\n", __func__, strerror(errno), job->out);
+    }
+    if(epoll_ctl(ctx->efd, EPOLL_CTL_ADD, job->err, &ev) == -1){
+      mtnlogger(mtn, 0, "[error] %s: epoll_ctl %s stderr fd=%d\n", __func__, strerror(errno), job->err);
     }
     return(0);
   }
 
   //===== execute process =====
   setpgid(0,0);
-  close(pp[0]);
+  close(pp[0][0]);
+  close(pp[1][0]);
   if(strlen(job->std[0])){
     f = open(job->std[0], O_RDONLY);
     if(f == -1){
@@ -789,9 +874,9 @@ int mtnexec_fork(MTNJOB *job)
       _exit(1);
     }
     close(f);
-  }else if(!ctx->nobuf){
+  }else{
     close(1);
-    dup2(pp[1], 1);
+    dup2(pp[0][1], 1);
   }
 
   if(strlen(job->std[2])){
@@ -803,11 +888,12 @@ int mtnexec_fork(MTNJOB *job)
     close(2);
     dup2(f, 2);
     close(f);
-  }else if(!ctx->nobuf){
+  }else{
     close(2);
-    dup2(pp[1], 2);
+    dup2(pp[1][1], 2);
   }
-  close(pp[1]);
+  close(pp[0][1]);
+  close(pp[1][1]);
 
   if(job->svr){
     /*===== remote execute process =====*/
@@ -1058,22 +1144,26 @@ int is_localbusy()
   return(1);
 }
 
+void mtnexec_initjob(MTNJOB *job, ARG arg)
+{
+  static int id = 0;
+  memset(job, 0, sizeof(MTNJOB));
+  job->id   = id++;
+  job->uid  = getuid();
+  job->gid  = getgid();
+  job->cid  = -1;
+  job->lim  = ctx->cpu_lim;
+  job->conv = ctx->conv;
+  job->args = copyarg(ctx->cmdargs);
+  job->argl = copyarg(arg);
+  job->argc = cmdargs(job);
+  job->cmd  = joinarg(job->argc, " ");
+}
+
 void mtnexec(ARG argp)
 {
   MTNJOB job;
-  static int id = 0;
-  memset(&job, 0, sizeof(job));
-  job.id   = id++;
-  job.uid  = getuid();
-  job.gid  = getgid();
-  job.cid  = -1;
-  job.lim  = ctx->cpu_lim;
-  job.conv = ctx->conv;
-  job.args = copyarg(ctx->cmdargs);
-  job.argl = copyarg(argp);
-  job.argc = cmdargs(&job);
-  job.cmd  = joinarg(job.argc, " ");
-
+  mtnexec_initjob(&job, argp);
   if(is_empty(job.cmd)){
     jclose(&job);
     return;

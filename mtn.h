@@ -118,8 +118,9 @@ typedef struct mtnjob
   int      con; // mtndと接続するソケット
   int      efd; // epoll用のディスクリプタ
   int      fin; // コマンドが終了したら1になる
-  int      pfd; // プロセス間通信用ディスクリプタ
-  int     conv;
+  int      out; // stdoutとのパイプ
+  int      err; // stderrとのパイプ
+  int     conv; // iオプションが指定されたら1になる
   STR      cmd;
   ARG      std;
   ARG     args;
@@ -135,6 +136,11 @@ typedef struct mtnjob
     size_t datasize;
     char   *stdbuff;
   }stdout;
+  struct {
+    size_t buffsize;
+    size_t datasize;
+    char   *stdbuff;
+  }stderr;
 } MTNJOB; 
 
 struct mtnstatus
