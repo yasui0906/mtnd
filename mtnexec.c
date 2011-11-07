@@ -259,6 +259,7 @@ ARG parse(int argc, char *argv[])
 
       case 'e':
         ctx->echo = newstr(optarg);
+        setbuf(stdout, NULL);
         break;
 
       case 'I':

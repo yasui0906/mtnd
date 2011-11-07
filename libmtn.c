@@ -1731,17 +1731,26 @@ MTNSTAT *mtn_stat(MTN *mtn, const char *path)
 void mtn_choose_info(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
 {
   MTNSVR *choose = sdata->option;
-  mtndata_get_int(&(member->bsize), rdata, sizeof(member->bsize));
-  mtndata_get_int(&(member->fsize), rdata, sizeof(member->fsize));
-  mtndata_get_int(&(member->dsize), rdata, sizeof(member->dsize));
-  mtndata_get_int(&(member->dfree), rdata, sizeof(member->dfree));
-  mtndata_get_int(&(member->vsz),   rdata, sizeof(member->vsz));
-  mtndata_get_int(&(member->res),   rdata, sizeof(member->res));
-  if(choose == NULL){
-    sdata->option = member;
-  }else{
-    if((member->dfree * member->bsize) > (choose->dfree * choose->bsize)){
+  mtndata_get_int(&(member->bsize),     rdata, sizeof(member->bsize));
+  mtndata_get_int(&(member->fsize),     rdata, sizeof(member->fsize));
+  mtndata_get_int(&(member->dsize),     rdata, sizeof(member->dsize));
+  mtndata_get_int(&(member->dfree),     rdata, sizeof(member->dfree));
+  mtndata_get_int(&(member->limit),     rdata, sizeof(member->limit));
+  mtndata_get_int(&(member->vsz),       rdata, sizeof(member->vsz));
+  mtndata_get_int(&(member->res),       rdata, sizeof(member->res));
+  mtndata_get_int(&(member->cnt.cpu),   rdata, sizeof(member->cnt.cpu));
+  mtndata_get_int(&(member->loadavg),   rdata, sizeof(member->loadavg));
+  mtndata_get_int(&(member->memsize),   rdata, sizeof(member->memsize));
+  mtndata_get_int(&(member->memfree),   rdata, sizeof(member->memfree));
+  mtndata_get_int(&(member->flags),     rdata, sizeof(member->flags));
+  mtndata_get_data(&(member->cnt),      rdata, sizeof(member->cnt));
+  if(is_export(member)){
+    if(choose == NULL){
       sdata->option = member;
+    }else{
+      if((member->dfree * member->bsize) > (choose->dfree * choose->bsize)){
+        sdata->option = member;
+      }
     }
   }
 }
@@ -1752,7 +1761,7 @@ void mtn_choose_list(MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
 
 MTNSVR *mtn_choose(MTN *mtn, const char *path)
 {
-	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
+	mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   MTNDATA data;
   MTNSVR *member;
   MTNSVR *members = get_members(mtn);
@@ -1763,6 +1772,7 @@ MTNSVR *mtn_choose(MTN *mtn, const char *path)
   mtn_process(mtn, members, &data, (MTNPROCFUNC)mtn_choose_info);
   member = cpsvr(data.option);
   clrsvr(members);
+	mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
   return(member);
 }
 
@@ -2292,16 +2302,16 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
     errno = EACCES;
     return(-1);
   }
-
-  mi.mode = MTNMODE_EXPORT;
   mi.uid  = st->stat.st_uid;
   mi.gid  = st->stat.st_gid;
+  mi.mode = MTNMODE_EXPORT;
   s = mtn_connect(mtn, fs->svr, &mi);
-  clrstat(fs);
   if(s == -1){
-    mtnlogger(mtn, 0, "[error] %s: can't connect %s %s\n", __func__, strerror(errno), v4addr(&(fs->svr->addr), buff));
+    mtnlogger(mtn, 0, "[error] %s: can't connect: %s %s\n", __func__, strerror(errno), v4addr(&(fs->svr->addr), buff));
+    clrstat(fs);
     return(-1);
   }
+  clrstat(fs);
   if(mtn_open_file(mtn, s, path, flags, st) == -1){
     close(s);
     return(-1);

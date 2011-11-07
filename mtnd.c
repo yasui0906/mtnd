@@ -1379,6 +1379,7 @@ void mtnd_child_exec(MTNTASK *kt)
   kt->send.head.type = MTNCMD_SUCCESS;
   kt->send.head.size = 0;
   mtndata_set_int(&(job.exit), &(kt->send), sizeof(job.exit));
+  mtnlogger(mtn, 0, "[debug] %s: exit_code=%d\n", __func__, job.exit);
   job_close(&job);
   if(kt->std[0]){
     close(kt->std[0]);
@@ -1457,7 +1458,7 @@ void mtnd_accept_process(int l)
   kt.con = accept(l, &(kt.addr.addr.addr), &(kt.addr.len));
   if(kt.con == -1){
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
-    exit(0);
+    return;
   }
 
   kt.pid = fork();
@@ -1534,52 +1535,61 @@ void mtnd_waitpid(int mode)
   }
 }
 
+void mtnd_loop_startup(struct timeval *tv)
+{
+  static struct timeval tv_health = {0, 0};
+  if((tv->tv_sec - tv_health.tv_sec) > 60){
+    mtn_startup(mtn, 1);
+    memcpy(&tv_health, tv, sizeof(tv_health));
+  }
+}
+
+void mtnd_loop_clrtask(struct timeval *tv)
+{
+  MTNSAVETASK *st = tasksave;
+  while(st){
+    if((tv->tv_sec - st->tv.tv_sec) > 15){
+      if(st == tasksave){
+        tasksave = st = delsavetask(st);
+      }else{
+        st = delsavetask(st);
+      }
+      continue;
+    }
+    st = st->next;
+  }
+}
+
+void mtnd_loop_downsvr(struct timeval *tv)
+{
+  MTNSVR *m = ctx->members;
+  while(m){
+    if((tv->tv_sec - m->tv.tv_sec) > 300){
+      if(m == ctx->members){
+        m = ctx->members = delsvr(m);
+      }else{
+        m = delsvr(m);
+      }
+      continue;
+    }
+    m = m->next;
+  }
+}
+
 void mtnd_loop(int e, int l)
 {
-  int      r;
-  MTNSVR  *m;
-  MTNSAVETASK *st;
+  int r;
   struct timeval tv;
-  struct timeval tv_health;
   struct epoll_event ev[2];
-  gettimeofday(&tv_health, NULL);
 
   //===== Main Loop =====
   while(is_loop){
     mtnd_waitpid(0);
     r = epoll_wait(e, ev, 2, 1000);
-    gettimeofday(&tv, NULL);
-    if((tv.tv_sec - tv_health.tv_sec) > 60){
-      mtn_startup(mtn, 1);
-      memcpy(&tv_health, &tv, sizeof(tv));
-    }
-    st = tasksave;
-    while(st){
-      if((tv.tv_sec - st->tv.tv_sec) > 15){
-        if(st == tasksave){
-          tasksave = st = delsavetask(st);
-        }else{
-          st = delsavetask(st);
-        }
-        continue;
-      }
-      st = st->next;
-    }
-    m = ctx->members;
-    while(m){
-      if((tv.tv_sec - m->tv.tv_sec) > 300){
-        if(m == ctx->members){
-          m = ctx->members = delsvr(m);
-        }else{
-          m = delsvr(m);
-        }
-        continue;
-      }
-      m = m->next;
-    }
-    if(r == 0){
-      continue;
-    }
+    gettimeofday(&tv,NULL);
+    mtnd_loop_startup(&tv);
+    mtnd_loop_clrtask(&tv);
+    mtnd_loop_downsvr(&tv);
     if(r == -1){
       if(errno != EINTR){
         mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
