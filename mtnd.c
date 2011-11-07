@@ -1603,7 +1603,7 @@ void mtnd_loop(int e, int l)
   }
 }
 
-void mtnd_main()
+int mtnd_main()
 {
   int m;
   int l;
@@ -1613,39 +1613,39 @@ void mtnd_main()
   e = epoll_create(1);
   if(e == -1){
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
-    return;
+    return(-1);
   }
   fcntl(e, F_SETFD, FD_CLOEXEC);
 
   m = create_msocket(mtn);
   if(m == -1){
     mtnlogger(mtn, 0, "[error] %s: can't socket create\n", __func__);
-    return;
+    return(-1);
   }
 
   l = create_lsocket(mtn);
   if(l == -1){
     mtnlogger(mtn, 0, "[error] %s: can't socket create\n", __func__);
-    return;
+    return(-1);
   }
 
   if(listen(l, 64) == -1){
     mtnlogger(mtn, 0, "%s: listen error\n", __func__);
-    return;
+    return(-1);
   }
 
   ev.data.fd = l;
   ev.events  = EPOLLIN;
   if(epoll_ctl(e, EPOLL_CTL_ADD, l, &ev) == -1){
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
-    return;
+    return(-1);
   }
 
   ev.data.fd = m;
   ev.events  = EPOLLIN;
   if(epoll_ctl(e, EPOLL_CTL_ADD, m, &ev) == -1){
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
-    return;
+    return(-1);
   }
   mtn_startup(mtn, 0);
   mtnd_loop(e, l);
@@ -1654,86 +1654,7 @@ void mtnd_main()
   close(e);
   close(m);
   close(l);
-}
-
-void daemonize()
-{
-  int pid;
-  if(!ctx->daemonize){
-    return;
-  }
-  pid = fork();
-  if(pid == -1){
-    mtnlogger(mtn, 0, "[error] %s: can't fork()\n", __func__);
-    exit(1); 
-  }
-  if(pid){
-    _exit(0);
-  }
-  setsid();
-  pid = fork();
-  if(pid == -1){
-    mtnlogger(mtn, 0, "[error] %s: can't fork()\n", __func__);
-    exit(1); 
-  }
-  if(pid){
-    _exit(0);
-  }
-  //----- daemon process -----
-  mtn->logmode = MTNLOG_SYSLOG;
-  close(2);
-  close(1);
-  close(0);
-  open("/dev/null",O_RDWR); // new stdin
-  dup(0);                   // new stdout
-  dup(0);                   // new stderr
-}
-
-void signal_handler(int n)
-{
-  switch(n){
-    case SIGINT:
-    case SIGTERM:
-      is_loop = 0;
-      mtn_break();
-      ctx->signal = n;
-      break;
-    case SIGPIPE:
-      break;
-    case SIGUSR1:
-      mtn->loglevel++;
-      break;
-    case SIGUSR2:
-      mtn->loglevel--;
-      break;
-  }
-}
-
-void set_sig_handler()
-{
-  struct sigaction sig;
-  memset(&sig, 0, sizeof(sig));
-  sig.sa_handler = signal_handler;
-  if(sigaction(SIGINT,  &sig, NULL) == -1){
-    mtnlogger(NULL, 0, "%s: sigaction error SIGINT\n", __func__);
-    exit(1);
-  }
-  if(sigaction(SIGTERM, &sig, NULL) == -1){
-    mtnlogger(NULL, 0, "%s: sigaction error SIGTERM\n", __func__);
-    exit(1);
-  }
-  if(sigaction(SIGPIPE, &sig, NULL) == -1){
-    mtnlogger(NULL, 0, "%s: sigaction error SIGPIPE\n", __func__);
-    exit(1);
-  }
-  if(sigaction(SIGUSR1, &sig, NULL) == -1){
-    mtnlogger(NULL, 0, "%s: sigaction error SIGUSR1\n", __func__);
-    exit(1);
-  }
-  if(sigaction(SIGUSR2, &sig, NULL) == -1){
-    mtnlogger(NULL, 0, "%s: sigaction error SIGUSR2\n", __func__);
-    exit(1);
-  }
+  return(0);
 }
 
 struct option *get_optlist()
@@ -1788,6 +1709,108 @@ void init_task()
   taskfunc[1][MTNCMD_INIT]     = mtnd_child_init;
   taskfunc[1][MTNCMD_EXIT]     = mtnd_child_exit;
   taskfunc[1][MTNCMD_EXEC]     = mtnd_child_exec;
+}
+
+void mtnd_startmsg()
+{
+  uint32_t bsize;
+  uint32_t fsize;
+  uint64_t dsize;
+  uint64_t dfree;
+  getstatf(&bsize, &fsize, &dsize, &dfree);
+  mtnlogger(mtn, 0, "======= %s start =======\n", MODULE_NAME);
+  mtnlogger(mtn, 0, "ver  : %s\n", MTN_VERSION);
+  mtnlogger(mtn, 0, "pid  : %d\n", getpid());
+  mtnlogger(mtn, 0, "log  : %d\n", mtn->loglevel);
+  mtnlogger(mtn, 0, "addr : %s\n", mtn->mcast_addr);
+  mtnlogger(mtn, 0, "port : %d\n", mtn->mcast_port);
+  mtnlogger(mtn, 0, "host : %s\n", ctx->host);
+  if(mtn->groupstr){
+  mtnlogger(mtn, 0, "group: %s\n", mtn->groupstr);
+  }
+  if(ctx->execute){
+  mtnlogger(mtn, 0, "exec : %s\n", ctx->ewd);
+  }
+  if(ctx->export){
+  mtnlogger(mtn, 0, "base : %s\n", ctx->cwd);
+  mtnlogger(mtn, 0, "size : %6llu [MB]\n", fsize * dsize / 1024 / 1024);
+  mtnlogger(mtn, 0, "free : %6llu [MB]\n", bsize * dfree / 1024 / 1024);
+  mtnlogger(mtn, 0, "limit: %6llu [MB]\n", ctx->free_limit/1024 / 1024);
+  }
+}
+
+void mtnd_endmsg()
+{
+  mtnlogger(mtn, 0, "%s finished\n", MODULE_NAME);
+}
+
+int mtnd()
+{
+  int r = 0;
+  mtnd_startmsg();
+  if(mkpidfile(ctx->pid) == -1){
+    r = 1;
+  }else{
+    if(mtnd_main() == -1){
+      r = 1;
+    }
+    rmpidfile(ctx->pid);
+  }
+  mtnd_endmsg();
+  return(r);
+}
+
+void signal_handler(int n)
+{
+  switch(n){
+    case SIGINT:
+    case SIGTERM:
+      is_loop = 0;
+      mtn_break();
+      ctx->signal = n;
+      break;
+    case SIGPIPE:
+      break;
+    case SIGUSR1:
+      mtn->loglevel++;
+      break;
+    case SIGUSR2:
+      mtn->loglevel--;
+      break;
+  }
+}
+
+void daemonize()
+{
+  int pid;
+  if(!ctx->daemonize){
+    return;
+  }
+  pid = fork();
+  if(pid == -1){
+    mtnlogger(mtn, 0, "[error] %s: fork1: %s\n", __func__, strerror(errno));
+    exit(1); 
+  }
+  if(pid){
+    _exit(0);
+  }
+  setsid();
+  pid = fork();
+  if(pid == -1){
+    mtnlogger(mtn, 0, "[error] %s: fork2: %s\n", __func__, strerror(errno));
+    exit(1); 
+  }
+  if(pid){
+    _exit(0);
+  }
+  //----- daemon process -----
+  mtn->logmode = MTNLOG_SYSLOG;
+  close(2);
+  close(1);
+  close(0);
+  open("/dev/null",O_RDWR); // new stdin
+  dup(0);                   // new stdout
+  dup(0);                   // new stderr
 }
 
 void parse(int argc, char *argv[])
@@ -1865,57 +1888,53 @@ void parse(int argc, char *argv[])
   getcwd(ctx->cwd, sizeof(ctx->cwd));
 }
 
-void mtnd_startmsg()
+void set_sig_handler()
 {
-  uint32_t bsize;
-  uint32_t fsize;
-  uint64_t dsize;
-  uint64_t dfree;
-  getstatf(&bsize, &fsize, &dsize, &dfree);
-  mtnlogger(mtn, 0, "======= %s start =======\n", MODULE_NAME);
-  mtnlogger(mtn, 0, "ver  : %s\n", MTN_VERSION);
-  mtnlogger(mtn, 0, "pid  : %d\n", getpid());
-  mtnlogger(mtn, 0, "log  : %d\n", mtn->loglevel);
-  mtnlogger(mtn, 0, "addr : %s\n", mtn->mcast_addr);
-  mtnlogger(mtn, 0, "port : %d\n", mtn->mcast_port);
-  mtnlogger(mtn, 0, "host : %s\n", ctx->host);
-  if(mtn->groupstr){
-  mtnlogger(mtn, 0, "group: %s\n", mtn->groupstr);
+  struct sigaction sig;
+  memset(&sig, 0, sizeof(sig));
+  sig.sa_handler = signal_handler;
+  if(sigaction(SIGINT,  &sig, NULL) == -1){
+    mtnlogger(NULL, 0, "%s: sigaction error SIGINT\n", __func__);
+    exit(1);
   }
-  if(ctx->execute){
-  mtnlogger(mtn, 0, "exec : %s\n", ctx->ewd);
+  if(sigaction(SIGTERM, &sig, NULL) == -1){
+    mtnlogger(NULL, 0, "%s: sigaction error SIGTERM\n", __func__);
+    exit(1);
   }
-  if(ctx->export){
-  mtnlogger(mtn, 0, "base : %s\n", ctx->cwd);
-  mtnlogger(mtn, 0, "size : %6llu [MB]\n", fsize * dsize / 1024 / 1024);
-  mtnlogger(mtn, 0, "free : %6llu [MB]\n", bsize * dfree / 1024 / 1024);
-  mtnlogger(mtn, 0, "limit: %6llu [MB]\n", ctx->free_limit/1024 / 1024);
+  if(sigaction(SIGPIPE, &sig, NULL) == -1){
+    mtnlogger(NULL, 0, "%s: sigaction error SIGPIPE\n", __func__);
+    exit(1);
   }
-}
-
-void mtnd_endmsg()
-{
-  mtnlogger(mtn, 0, "%s finished\n", MODULE_NAME);
-}
-
-int mtnd()
-{
-  mtnd_startmsg();
-  mkpidfile(ctx->pid);
-  mtnd_main();
-  rmpidfile(ctx->pid);
-  mtnd_endmsg();
-  return(0);
+  if(sigaction(SIGUSR1, &sig, NULL) == -1){
+    mtnlogger(NULL, 0, "%s: sigaction error SIGUSR1\n", __func__);
+    exit(1);
+  }
+  if(sigaction(SIGUSR2, &sig, NULL) == -1){
+    mtnlogger(NULL, 0, "%s: sigaction error SIGUSR2\n", __func__);
+    exit(1);
+  }
 }
 
 void mtnd_init()
 {
-  mtn = mtn_init(MODULE_NAME);
+  if(!(mtn = mtn_init(MODULE_NAME))){
+    exit(1);
+  }
   mtn->logtype = 1;
   mtn->logmode = MTNLOG_STDERR;
   ctx = calloc(1,sizeof(MTND));
-  getcwd(ctx->cwd, sizeof(ctx->cwd));
-  gethostname(ctx->host, sizeof(ctx->host));
+  if(!ctx){
+    mtnlogger(mtn, 0, "[error] %s: calloc: %s\n", __func__, strerror(errno));
+    exit(1);
+  }
+  if(!getcwd(ctx->cwd, sizeof(ctx->cwd))){
+    mtnlogger(mtn, 0, "[error] %s: getcwd: %s\n", __func__, strerror(errno));
+    exit(1);
+  } 
+  if(gethostname(ctx->host, sizeof(ctx->host)) == -1){
+    mtnlogger(mtn, 0, "[error] %s: getcwd: %s\n", __func__, strerror(errno));
+    exit(1);
+  }
   ctx->daemonize = 1;
 }
 
