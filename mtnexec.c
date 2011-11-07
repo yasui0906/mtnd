@@ -49,6 +49,7 @@ void usage()
   printf("   -v                 # verbose\n");
   printf("   -n                 # dryrun\n");
   printf("   -b                 # \n");
+  printf("   -B                 # stdout/stderr binary mode\n");
   printf("   -g group           # \n");
   printf("   -P num             # \n");
   printf("   -N num             # \n");
@@ -105,13 +106,12 @@ MTNSVR *getinfo()
 void info()
 {
   MTNSVR *s;
-  MTNSVR *svrlist  = getinfo();
   uint32_t node    = 0;
   uint32_t cpu_num = 0;
   uint64_t memsize = 0;
   uint64_t memfree = 0;
 
-  for(s=svrlist;s;s=s->next){
+  for(s=getinfo();s;s=s->next){
     node++;
     cpu_num += s->cnt.cpu;
     memsize += s->memsize/1024/1024;
@@ -127,6 +127,7 @@ void info()
     printf("RES=%luK ",   s->res/1024);
     printf("MLC=%d ",     s->cnt.mem);
     printf("TSK=%d ",     s->cnt.tsk);
+    printf("TSV=%d ",     s->cnt.tsv);
     printf("SVR=%d ",     s->cnt.svr);
     printf("DIR=%d ",     s->cnt.dir);
     printf("STA=%d ",     s->cnt.sta);
@@ -158,6 +159,7 @@ struct option *get_optlist()
       {"stderr",  1, NULL, 'E'},
       {"put",     1, NULL, 'S'},
       {"get",     1, NULL, 'G'},
+      {"echo",    1, NULL, 'e'},
       {0, 0, 0, 0}
     };
   return(opt);
@@ -220,7 +222,7 @@ ARG parse(int argc, char *argv[])
     exit(0);
   }
   optind = 0;
-  while((r = getopt_long(argc, argv, "+hVvnbig:j:I:RALP:N:m:p:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "+hVvnBbig:j:e:I:RALP:N:m:p:", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -255,6 +257,10 @@ ARG parse(int argc, char *argv[])
         ctx->cpu_lim = atoi(optarg) * 10;
         break;
 
+      case 'e':
+        ctx->echo = newstr(optarg);
+        break;
+
       case 'I':
         ctx->stdin = newstr(optarg);
         break;
@@ -273,6 +279,10 @@ ARG parse(int argc, char *argv[])
 
       case 'G':
         ctx->getarg = splitstr(optarg, ",");
+        break;
+
+      case 'B':
+        ctx->text = 0;
         break;
 
       case 'b':
@@ -529,7 +539,7 @@ int mtnexec_stdbuff(int size, char *buff, size_t *datasize, size_t *buffsize, ch
   return(0);
 }
 
-int mtnexec_nobuff(size_t *datasize, size_t *buffsize, char **databuff)
+int mtnexec_nobuff_txt(int fd, size_t *datasize, size_t *buffsize, char **databuff)
 {
   int i;
   int s;
@@ -539,12 +549,13 @@ int mtnexec_nobuff(size_t *datasize, size_t *buffsize, char **databuff)
       i++;
       s = 0;
       while(i > s){
-        r = write(1, *databuff + s, i - s);
+        r = write(fd, *databuff + s, i - s);
         if(r == -1){
           if(errno == EINTR){
             continue;
           }
-          mtnlogger(mtn, 0, "[error] %s: %s stdout\n", __func__, strerror(errno));
+          mtnlogger(mtn, 0, "[error] %s: %s FD=%d\n", __func__, strerror(errno), fd);
+          return(-1);
         }else{
           s += r;
         }
@@ -557,6 +568,39 @@ int mtnexec_nobuff(size_t *datasize, size_t *buffsize, char **databuff)
   return(0);
 }
 
+int mtnexec_nobuff_bin(int fd, size_t *datasize, size_t *buffsize, char **databuff)
+{
+  int r;
+  while(*datasize){
+    r = write(fd, *databuff, *datasize);
+    if(r == -1){
+      if(errno == EINTR){
+        continue;
+      }
+      mtnlogger(mtn, 0, "[error] %s: %s FD=%d\n", __func__, strerror(errno), fd);
+      return(-1);
+    }
+    if(r == 0){
+      return(0);
+    }
+    if((*datasize -= r)){
+      memmove(*databuff, *databuff + r, *datasize);
+    }
+  }
+  return(0);
+}
+
+int mtnexec_nobuff(int fd, size_t *datasize, size_t *buffsize, char **databuff)
+{
+  int r;
+  if(ctx->text){
+    r = mtnexec_nobuff_txt(fd, datasize, buffsize, databuff);
+  }else{
+    r = mtnexec_nobuff_bin(fd, datasize, buffsize, databuff);
+  }
+  return(r);
+}
+
 int mtnexec_stdout(MTNJOB *job)
 {
   int size;
@@ -567,7 +611,7 @@ int mtnexec_stdout(MTNJOB *job)
   size = mtnexec_stdread(job->out, buff, sizeof(buff));
   if(size > 0){
     mtnexec_stdbuff(size, buff, &(job->stdout.datasize), &(job->stdout.buffsize), &(job->stdout.stdbuff));
-    while(is_loop && ctx->nobuf && mtnexec_nobuff(&(job->stdout.datasize), &(job->stdout.buffsize), &(job->stdout.stdbuff)));
+    while(is_loop && ctx->nobuf && (mtnexec_nobuff(1, &(job->stdout.datasize), &(job->stdout.buffsize), &(job->stdout.stdbuff)) > 0));
   }
   return(size);
 }
@@ -582,7 +626,7 @@ int mtnexec_stderr(MTNJOB *job)
   size = mtnexec_stdread(job->err, buff, sizeof(buff));
   if(size > 0){
     mtnexec_stdbuff(size, buff, &(job->stderr.datasize), &(job->stderr.buffsize), &(job->stderr.stdbuff));
-    while(is_loop && ctx->nobuf && mtnexec_nobuff(&(job->stderr.datasize), &(job->stderr.buffsize), &(job->stderr.stdbuff)));
+    while(is_loop && ctx->nobuf && (mtnexec_nobuff(2, &(job->stderr.datasize), &(job->stderr.buffsize), &(job->stderr.stdbuff)) > 0));
   }
   return(size);
 }
@@ -596,6 +640,9 @@ int jclose(MTNJOB *job)
   if(job->err){
     epoll_ctl(ctx->efd, EPOLL_CTL_DEL, job->err, NULL);
     while(mtnexec_stderr(job) > 0);
+  }
+  if(!job->exit && job->echo){
+    fprintf(stdout, "%s\n", job->echo);
   }
   return(job_close(job));
 }
@@ -713,6 +760,9 @@ void mtnexec_poll()
   while((pid = waitpid(-1, &status, WNOHANG)) > 0){
     for(i=0;i<ctx->job_max;i++){
       if(pid == ctx->job[i].pid){
+        if(WIFEXITED(status)){
+          ctx->job[i].exit = WEXITSTATUS(status);
+        }
         jclose(&(ctx->job[i]));
         break;
       }
@@ -742,6 +792,7 @@ MTNJOB *copyjob(MTNJOB *dst, MTNJOB *src)
     memcpy(dst, src, sizeof(MTNJOB));
     dst->std    = copyarg(src->std);
     dst->cmd    = newstr(src->cmd);
+    dst->echo   = newstr(src->echo);
     dst->args   = copyarg(src->args);
     dst->argl   = copyarg(src->argl);
     dst->argc   = copyarg(src->argc);
@@ -797,16 +848,6 @@ int mtnexec_fork(MTNJOB *job)
   job = copyjob(mtnexec_wait(), job); // プロセス数の上限に達していたらここで待機する
   if(!job){
     return(-1);
-  }
-  job->cid = -1;
-  job->std = stdname(job);
-  job->putarg = cpconvarg(ctx->putarg, ctx->conv ? job->argl : NULL);
-  job->getarg = cpconvarg(ctx->getarg, ctx->conv ? job->argl : NULL);
-
-  if(ctx->dryrun){
-    mtnexec_dryrun(job);
-    jclose(job);
-    return(0);
   }
   if(ctx->verbose){
     mtnexec_verbose(job);
@@ -906,13 +947,22 @@ int mtnexec_fork(MTNJOB *job)
   _exit(127);
 }
 
-void mtnexec_all(MTNJOB *job)
+int mtnexec_all(MTNJOB *job)
 {
-  MTNSVR *svr;
-  for(svr=ctx->svr;svr;svr=svr->next){
-    job->svr = cpsvr(svr);
-    mtnexec_fork(job);
+  MTNSVR *s;
+  MTNSVR *svr = getinfo(mtn);
+  if(!svr){
+    mtnlogger(mtn,0,"[mtnexec] error: node not found\n");
+    return(-1);
   }
+  for(s=svr;s;s=s->next){
+    job->svr = cpsvr(s);
+    if(mtnexec_fork(job) == -1){
+      return(-1);
+    }
+  }
+  clrsvr(svr);
+  return(0);
 }
 
 MTNSVR *filtersvr_loadavg(MTNSVR *svr)
@@ -1087,10 +1137,8 @@ MTNSVR *filtersvr_order(MTNSVR *svr)
   return(r);
 }
 
-MTNSVR *filtersvr()
+MTNSVR *filtersvr(MTNSVR *s)
 {
-  MTNSVR *s;
-  s = getinfo(mtn);
   s = filtersvr_loadavg(s); // LAが1以上のノードを除外する
   s = filtersvr_cnt_prc(s); // プロセス数が少ないノードを抽出する
   s = filtersvr_memfree(s); // 空きメモリが多いノードを抽出する
@@ -1104,7 +1152,10 @@ void mtnexec_hybrid(MTNJOB *job)
   if(ctx->mode != MTNEXECMODE_HYBRID){
     return;
   }
-  if(!job || !job->svr){
+  if(!job){
+    return;
+  }
+  if(!job->svr){
     return;
   }
   count = getjobcount(1);
@@ -1113,17 +1164,27 @@ void mtnexec_hybrid(MTNJOB *job)
   }
 }
 
-void mtnexec_remote(MTNJOB *job)
+int mtnexec_remote(MTNJOB *job)
 {
   struct timeval savetv;
   struct timeval polltv;
   struct timeval keiktv;
+
   while(is_loop){
     gettimeofday(&savetv, NULL);
-    if((job->svr = filtersvr())){
-      mtnexec_hybrid(job);
-      mtnexec_fork(job);
-      break;
+    if(!(job->svr = getinfo(mtn))){
+      if((ctx->mode != MTNEXECMODE_HYBRID) && is_loop){
+        mtnlogger(mtn, 0, "[mtnexec] error: node not found\n");
+        return(-1);
+      }
+      if(getjobcount(1) == 0){
+        return(mtnexec_fork(job));
+      }
+    }else{
+      if((job->svr = filtersvr(job->svr))){
+        mtnexec_hybrid(job);
+        return(mtnexec_fork(job));
+      }
     }
     do{
       mtnexec_poll();
@@ -1131,6 +1192,7 @@ void mtnexec_remote(MTNJOB *job)
       timersub(&polltv, &savetv, &keiktv);
     }while(TVMSEC(keiktv) < 1000);
   }
+  return(0);
 }
 
 int is_localbusy()
@@ -1158,33 +1220,47 @@ void mtnexec_initjob(MTNJOB *job, ARG arg)
   job->argl = copyarg(arg);
   job->argc = cmdargs(job);
   job->cmd  = joinarg(job->argc, " ");
+  job->exit = -1;
+  job->cid  = -1;
+  job->std  = stdname(job);
+  job->echo = (ctx->echo) ? convarg(newstr(ctx->echo), job->argl) : NULL;
+  job->putarg = cpconvarg(ctx->putarg, ctx->conv ? job->argl : NULL);
+  job->getarg = cpconvarg(ctx->getarg, ctx->conv ? job->argl : NULL);
 }
 
-void mtnexec(ARG argp)
+int mtnexec(ARG argp)
 {
+  int r = 0;
   MTNJOB job;
   mtnexec_initjob(&job, argp);
   if(is_empty(job.cmd)){
     jclose(&job);
-    return;
+    return(0);
   }    
+  if(ctx->dryrun){
+    mtnexec_dryrun(&job);
+    jclose(&job);
+    return(0);
+  }
   switch(ctx->mode){
     case MTNEXECMODE_LOCAL:
-      mtnexec_fork(&job);
+      r = mtnexec_fork(&job);
       break;
     case MTNEXECMODE_REMOTE:
     case MTNEXECMODE_HYBRID:
-      mtnexec_remote(&job);
+      r = mtnexec_remote(&job);
       break;
     case MTNEXECMODE_ALL0:
-      mtnexec_all(&job);
+      r = mtnexec_all(&job);
       break;
     case MTNEXECMODE_ALL1:
-      mtnexec_fork(&job);
-      mtnexec_all(&job);
+      if(!(r = mtnexec_all(&job))){
+        r = mtnexec_fork(&job);
+      }
       break;
   }
   jclose(&job);
+  return(r);
 }
 
 //
@@ -1224,7 +1300,10 @@ void argexec()
 {
   ARG argp;
   while(is_loop && (argp = ctx->linearg ? linearg() : readarg(0, ctx->arg_num))){
-    mtnexec(argp);
+    if(mtnexec(argp) == -1){
+      clrarg(argp);
+      break;
+    }      
     clrarg(argp);
   }
 }
@@ -1265,6 +1344,7 @@ int init(int argc, char *argv[])
   mtn->logtype = 0;
   mtn->logmode = MTNLOG_STDERR;
   ctx->nobuf   = 1;
+  ctx->text    = 1;
   ctx->cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->job_max = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->arg_num = isatty(fileno(stdin)) ? 0 : 1;
@@ -1278,17 +1358,6 @@ int init(int argc, char *argv[])
     return(-1);
   }
   ctx->job = calloc(ctx->job_max, sizeof(MTNJOB));
-  ctx->svr = (ctx->mode == MTNEXECMODE_LOCAL) ? NULL : getinfo(mtn);
-  if(!ctx->svr){
-    if(ctx->mode == MTNEXECMODE_REMOTE){
-      mtnlogger(mtn, 0, "[error] node not found\n");
-      return(-1);
-    }
-    if(ctx->mode == MTNEXECMODE_ALL0){
-      mtnlogger(mtn, 0, "[error] node not found\n");
-      return(-1);
-    }
-  }
   set_signal_handler();
   return(0);
 }

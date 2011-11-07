@@ -43,7 +43,7 @@ typedef struct mtnsvr
   struct mtnsvr *prev;
   struct mtnsvr *next;
   MTNADDR  addr;
-  char    *host;
+  STR      host;
   uint8_t  mark;
   uint16_t order; // mtn_helloで到達した順番(0が先頭)
   uint16_t flags;
@@ -67,6 +67,7 @@ typedef struct mtnsvr
     int mbr; // 認識できているmtndの数
     int mem; // xmallocを呼び出した回数
     int tsk; // MTNTASKの数
+    int tsv; // MTNSAVETASKの数
     int svr; // MTNSVRの数
     int dir; // MTNDIRの数
     int sta; // MTNSTATUSの数
@@ -120,7 +121,9 @@ typedef struct mtnjob
   int      fin; // コマンドが終了したら1になる
   int      out; // stdoutとのパイプ
   int      err; // stderrとのパイプ
+  int     exit; // 終了コード
   int     conv; // iオプションが指定されたら1になる
+  STR     echo; // コマンド終了時に出力する文字列
   STR      cmd;
   ARG      std;
   ARG     args;

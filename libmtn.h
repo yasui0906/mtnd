@@ -46,13 +46,14 @@
 #define MTNCMD_MAX      99
 
 #define MTNCOUNT_TASK   0
-#define MTNCOUNT_SVR    1
-#define MTNCOUNT_DIR    2
-#define MTNCOUNT_STAT   3
-#define MTNCOUNT_STR    4
-#define MTNCOUNT_ARG    5
-#define MTNCOUNT_MALLOC 6
-#define MTNCOUNT_MAX    7
+#define MTNCOUNT_SAVE   1
+#define MTNCOUNT_SVR    2
+#define MTNCOUNT_DIR    3
+#define MTNCOUNT_STAT   4
+#define MTNCOUNT_STR    5
+#define MTNCOUNT_ARG    6
+#define MTNCOUNT_MALLOC 7
+#define MTNCOUNT_MAX    8
 
 #define MTNMODE_EXPORT  1
 #define MTNMODE_EXECUTE 2
@@ -125,11 +126,23 @@ typedef struct mtntask
   char  work[PATH_MAX];
 }__attribute__((packed)) MTNTASK;
 
+typedef struct mtnsavetask
+{
+  uint16_t sqno;
+  MTNADDR addr;
+  struct timeval tv;
+  struct mtnsavetask *prev;
+  struct mtnsavetask *next;
+}__attribute__((packed)) MTNSAVETASK;
+
 extern char *mtncmdstr[];
 
 MTNTASK *newtask();
 MTNTASK *cuttask(MTNTASK *t);
 MTNTASK *deltask(MTNTASK *t);
+MTNSAVETASK *newsavetask(MTNTASK *t);
+MTNSAVETASK *cutsavetask(MTNSAVETASK *t);
+MTNSAVETASK *delsavetask(MTNSAVETASK *t);
 int create_lsocket(MTN *mtn);
 int create_msocket(MTN *mtn);
 int cmpaddr(MTNADDR *a1, MTNADDR *a2);

@@ -127,6 +127,9 @@ int is_grpsvr(MTNSVR *svr, ARG grp)
   if(!svr){
     return(0);
   }
+  if(!grp || !grp[0]){
+    return(1);
+  }
   if(!svr->groupstr){
     return(grp ? 0 : 1); 
   }
@@ -741,9 +744,12 @@ int mtndata_get_string(char *str, MTNDATA *kd)
 
 int mtndata_get_svrhost(MTNSVR *svr, MTNDATA *kd)
 {
-  int len = mtndata_get_string(NULL, kd);
-  svr->host = xrealloc(svr->host, len);
-  return(mtndata_get_string(svr->host, kd));
+  int  r;
+  char buff[1024];
+  if((r = mtndata_get_string(buff, kd)) > 0){
+    svr->host = modstr(svr->host, buff);
+  }
+  return(r);
 }
 
 static int mtndata_get_int16(uint16_t *val, MTNDATA *kd)
@@ -1181,11 +1187,11 @@ MTNSTAT *cpstat(MTNSTAT *mst)
 //----------------------------------------------------------------
 MTNSVR *newsvr()
 {
-  MTNSVR *km;
-  km = xmalloc(sizeof(MTNSVR));
-  memset(km,0,sizeof(MTNSVR));
+  MTNSVR *svr;
+  svr = xmalloc(sizeof(MTNSVR));
+  memset(svr, 0, sizeof(MTNSVR));
   inccount(MTNCOUNT_SVR);
-  return(km);
+  return(svr);
 }
 
 MTNSVR *delsvr(MTNSVR *svr)
@@ -1196,7 +1202,7 @@ MTNSVR *delsvr(MTNSVR *svr)
   }
   nsv = svr->next;
   if(svr->host){
-    xfree(svr->host);
+    clrstr(svr->host);
     svr->host = NULL;
   }
   if(svr->prev){
@@ -1245,9 +1251,7 @@ MTNSVR *addsvr(MTNSVR *svr, MTNADDR *addr, char *host)
     svr = sv;
   }
   if(host){
-    int len = strlen(host) + 1;
-    sv->host = xrealloc(sv->host, len);
-    memcpy(sv->host, host, len);
+    sv->host = modstr(sv->host, host);
   }
   sv->mark = 0;
   return(svr);
@@ -1268,12 +1272,11 @@ MTNSVR *cpsvr(MTNSVR *svr)
   nsv->dfree     = svr->dfree;
   nsv->vsz       = svr->vsz;
   nsv->res       = svr->res;
-  nsv->cnt.cpu   = svr->cnt.cpu;
   nsv->loadavg   = svr->loadavg;
   nsv->memsize   = svr->memsize;
   nsv->memfree   = svr->memfree;
   nsv->flags     = svr->flags;
-  nsv->groupstr  = svr->groupstr;
+  nsv->groupstr  = newstr(svr->groupstr);
   nsv->grouparg  = splitstr(svr->groupstr, ",");
   memcpy(&(nsv->cnt), &(svr->cnt), sizeof(nsv->cnt));
   memcpy(&(nsv->tv),  &(svr->tv),  sizeof(struct timeval));
@@ -1299,6 +1302,50 @@ int cmpsvr(MTNSVR *s1, MTNSVR *s2)
 //----------------------------------------------------------------
 // MTNTASK
 //----------------------------------------------------------------
+MTNSAVETASK *newsavetask(MTNTASK *t)
+{
+  MTNSAVETASK *st;
+  if((st = xcalloc(sizeof(MTNSAVETASK)))){
+    st->sqno = t->recv.head.sqno;
+    memcpy(&(st->addr), &(t->addr), sizeof(st->addr));
+    memcpy(&(st->tv),   &(t->tv),   sizeof(st->tv));
+    inccount(MTNCOUNT_SAVE);
+  }
+  return(st);
+}
+
+MTNSAVETASK *cutsavetask(MTNSAVETASK *t)
+{
+  MTNSAVETASK *p = NULL;
+  MTNSAVETASK *n = NULL;
+  if(!t){
+    return(NULL);
+  }
+  p = t->prev;
+  n = t->next;
+  if(p){
+    p->next = n;
+  }
+  if(n){
+    n->prev = p;
+  }
+  t->prev = NULL;
+  t->next = NULL;
+  return(n);
+}
+
+MTNSAVETASK *delsavetask(MTNSAVETASK *t)
+{
+  MTNSAVETASK *n;
+  if(!t){
+    return(NULL);
+  }
+  n = cutsavetask(t);
+  xfree(t);
+  deccount(MTNCOUNT_SAVE);
+  return(n);
+}
+
 MTNTASK *newtask()
 {
   MTNTASK *kt;
@@ -2132,6 +2179,7 @@ int mtn_exec_wait(MTN *mtn, MTNJOB *job)
       case MTNCMD_SUCCESS:
         job->fin = 1;
         mtn_exec_get(mtn, job);
+        mtndata_get_int(&(job->exit), &rd, sizeof(job->exit));
         break;
 
       case MTNCMD_STDIN:
@@ -2204,7 +2252,7 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
     return(-1);
   }
   mtn_exec_wait(mtn, job);
-  _exit(0);
+  _exit(job->exit);
 }
 
 int mtn_open_file(MTN *mtn, int s, const char *path, int flags, MTNSTAT *st)
@@ -2969,13 +3017,18 @@ STR newstr(char *str)
 
 STR modstr(STR str, char *n)
 {
+  STR nstr;
   if(!n){
     xfree(str);
     return(NULL);
   }
-  str = xrealloc(str, strlen(n) + 1);
-  strcpy(str, n);
-  return(str);
+  
+  nstr = xrealloc(str, strlen(n) + 1);
+  strcpy(nstr, n);
+  if(!str && nstr){ 
+    inccount(MTNCOUNT_STR);
+  }
+  return(nstr);
 }
 
 STR catstr(STR str1, STR str2)
@@ -3242,6 +3295,9 @@ static int job_flush_stdout(MTNJOB *job)
   while(job->stdout.datasize - size){
     r = write(1, job->stdout.stdbuff + size, job->stdout.datasize - size);
     if(r == -1){
+      if(errno == EINTR){
+        continue;
+      }
       return(-1);
     }
     size += r;
@@ -3262,6 +3318,9 @@ static int job_flush_stderr(MTNJOB *job)
   while(job->stderr.datasize - size){
     r = write(2, job->stderr.stdbuff + size, job->stderr.datasize - size);
     if(r == -1){
+      if(errno == EINTR){
+        continue;
+      }
       return(-1);
     }
     size += r;
@@ -3301,6 +3360,7 @@ int job_close(MTNJOB *job)
   job_flush_stdout(job);
   job_flush_stderr(job);
   clrstr(job->cmd);
+  clrstr(job->echo);
   clrarg(job->std);
   clrarg(job->putarg);
   clrarg(job->getarg);

@@ -31,7 +31,7 @@
 MTN     *mtn;
 MTND    *ctx;
 MTNTASK *tasklist = NULL;
-MTNTASK *tasksave = NULL;
+MTNSAVETASK *tasksave = NULL;
 typedef void (*MTNFSTASKFUNC)(MTNTASK *);
 MTNFSTASKFUNC taskfunc[2][MTNCMD_MAX];
 static int is_loop = 1;
@@ -86,6 +86,19 @@ int is_freelimit()
   return(ctx->free_limit > dfree);
 }
 
+int is_savetask(MTNTASK *mt)
+{
+  MTNSAVETASK *t;
+  for(t=tasksave;t;t=t->next){
+    if(!cmpaddr(&(mt->addr), &(t->addr))){
+      if(mt->recv.head.sqno == t->sqno){
+        return(1);
+      }
+    }
+  }
+  return(0);
+}
+
 uint64_t get_datasize(char *path)
 {
   char full[PATH_MAX];
@@ -132,17 +145,6 @@ char *mtnd_fix_path(char *path){
   return(path);
 }
 
-int cmp_task(MTNTASK *t1, MTNTASK *t2)
-{
-  if(cmpaddr(&(t1->addr), &(t2->addr)) != 0){
-    return(1);
-  }
-  if(t1->recv.head.sqno != t2->recv.head.sqno){
-    return(1);
-  }
-  return(0);
-}
-
 MTNTASK *mtnd_task_create(MTNDATA *data, MTNADDR *addr)
 {
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
@@ -174,6 +176,7 @@ MTNTASK *mtnd_task_create(MTNDATA *data, MTNADDR *addr)
 MTNTASK *mtnd_task_save(MTNTASK *t)
 {
   MTNTASK *n;
+  MTNSAVETASK *s;
   if(!t){
     return(NULL);
   }
@@ -181,10 +184,16 @@ MTNTASK *mtnd_task_save(MTNTASK *t)
   if(t == tasklist){
     tasklist = n;
   }
-  if((t->next = tasksave)){
-    t->next->prev = t;
+
+  if(!(s = newsavetask(t))){
+    /* mem alloc error */
+  }else{
+    if((s->next = tasksave)){
+      s->next->prev = s;
+    }
+    tasksave = s;
   }
-  tasksave = t;
+  deltask(t);
   return(n);
 }
 
@@ -222,24 +231,19 @@ static void mtnd_shutdown_process(MTNTASK *kt)
 
 static void mtnd_hello_process(MTNTASK *kt)
 {
-  MTNTASK *t;
   uint32_t mcount;
+
   kt->fin = 1;
-  for(t=tasksave;t;t=t->next){
-    if(cmp_task(t, kt) == 0){
-      break;
-    }
-  }
-  if(t){
+  if(is_savetask(kt)){
     kt->recv.head.flag = 1;
+    return;
+  }
+  if(kt->recv.head.flag == 1){
+    kt->fin = 2;
   }else{
-    if(kt->recv.head.flag == 1){
-      kt->fin = 2;
-    }else{
-      mcount = get_members_count(ctx->members);
-      mtndata_set_string(ctx->host, &(kt->send));
-      mtndata_set_int(&mcount, &(kt->send), sizeof(mcount));
-    }
+    mcount = get_members_count(ctx->members);
+    mtndata_set_string(ctx->host, &(kt->send));
+    mtndata_set_int(&mcount, &(kt->send), sizeof(mcount));
   }
 }
 
@@ -256,10 +260,11 @@ static void mtnd_info_process(MTNTASK *kt)
   getmeminfo(&(mb.memsize), &(mb.memfree));
   mb.limit   = ctx->free_limit;
   mb.cnt.prc = getpscount();
-  mb.cnt.cld = ctx->cldcount;
+  mb.cnt.cld = ctx->cld.count;
   mb.cnt.mbr = get_members_count(ctx->members);
   mb.cnt.mem = getcount(MTNCOUNT_MALLOC);
   mb.cnt.tsk = getcount(MTNCOUNT_TASK);
+  mb.cnt.tsv = getcount(MTNCOUNT_SAVE);
   mb.cnt.svr = getcount(MTNCOUNT_SVR);
   mb.cnt.dir = getcount(MTNCOUNT_DIR);
   mb.cnt.sta = getcount(MTNCOUNT_STAT);
@@ -1366,14 +1371,19 @@ void mtnd_child_exec(MTNTASK *kt)
     mtnd_child_exec_poll(kt, &job, wtime);
   }
   kill(-(getpgid(job.pid)), SIGCONT);
+  if(ctx->signal){
+    kill(-(getpgid(job.pid)), ctx->signal);
+  }
   while(waitpid(job.pid, &status, 0) != job.pid);
+  job.exit = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+  kt->send.head.type = MTNCMD_SUCCESS;
+  kt->send.head.size = 0;
+  mtndata_set_int(&(job.exit), &(kt->send), sizeof(job.exit));
   job_close(&job);
   if(kt->std[0]){
     close(kt->std[0]);
     kt->std[0] = 0;
   }
-  kt->send.head.type = MTNCMD_SUCCESS;
-  kt->send.head.size = 0;
   mtnlogger(mtn, 0, "[debug] %s: return\n", __func__);
 }
 
@@ -1457,7 +1467,9 @@ void mtnd_accept_process(int l)
     return;
   }
   if(kt.pid){
-    ctx->cldcount++;
+    ctx->cld.count++;
+    ctx->cld.pid = realloc(ctx->cld.pid, sizeof(pid_t) * ctx->cld.count);
+    ctx->cld.pid[ctx->cld.count - 1] = kt.pid;
     close(kt.con);
     return;
   }
@@ -1470,11 +1482,63 @@ void mtnd_accept_process(int l)
   _exit(0);
 }
 
+/*
+ * mode
+ *   0: チェックしてすぐ抜ける
+ *   1: 全プロセスが終了するまで待つ
+ */
+void mtnd_waitpid(int mode)
+{
+  int i;
+  int opt;
+  pid_t pid;
+
+  opt = mode ? 0 : WNOHANG;
+  if(mode && ctx->signal){
+    for(i=0;i<ctx->cld.count;i++){
+      mtnlogger(mtn, 0, "[info] %s: send signal pid=%d sig=%d\n", __func__, ctx->cld.pid[i], ctx->signal);
+      kill(ctx->cld.pid[i], ctx->signal);
+    }
+  }
+  while(ctx->cld.count){
+    pid = waitpid(-1, NULL, opt);
+    if(pid <= 0){
+      if(mode){
+        continue;
+      }else{
+        break;
+      }
+    }
+    for(i=0;i<ctx->cld.count;i++){
+      if(ctx->cld.pid[i] == pid){
+        break;
+      }
+    }
+    if(i == ctx->cld.count){
+      if(mode){
+        continue;
+      }else{
+        break;
+      }
+    }
+    ctx->cld.count--;
+    if(i < ctx->cld.count){
+      memmove(&(ctx->cld.pid[i]), &(ctx->cld.pid[i+1]), (ctx->cld.count - i) * sizeof(pid_t));
+    }
+    if(ctx->cld.count){
+      ctx->cld.pid = realloc(ctx->cld.pid, sizeof(pid_t) * ctx->cld.count);
+    }else{
+      free(ctx->cld.pid);
+      ctx->cld.pid = NULL;
+    }
+  }
+}
+
 void mtnd_loop(int e, int l)
 {
   int      r;
-  MTNTASK *t;
   MTNSVR  *m;
+  MTNSAVETASK *st;
   struct timeval tv;
   struct timeval tv_health;
   struct epoll_event ev[2];
@@ -1482,14 +1546,24 @@ void mtnd_loop(int e, int l)
 
   //===== Main Loop =====
   while(is_loop){
-    if(waitpid(-1, NULL, WNOHANG) > 0){
-      ctx->cldcount--;
-    }  
+    mtnd_waitpid(0);
     r = epoll_wait(e, ev, 2, 1000);
     gettimeofday(&tv, NULL);
     if((tv.tv_sec - tv_health.tv_sec) > 60){
       mtn_startup(mtn, 1);
       memcpy(&tv_health, &tv, sizeof(tv));
+    }
+    st = tasksave;
+    while(st){
+      if((tv.tv_sec - st->tv.tv_sec) > 15){
+        if(st == tasksave){
+          tasksave = st = delsavetask(st);
+        }else{
+          st = delsavetask(st);
+        }
+        continue;
+      }
+      st = st->next;
     }
     m = ctx->members;
     while(m){
@@ -1504,18 +1578,6 @@ void mtnd_loop(int e, int l)
       m = m->next;
     }
     if(r == 0){
-      t = tasksave;
-      while(t){
-        if((tv.tv_sec - t->tv.tv_sec) > 30){
-          if(t == tasksave){
-            tasksave = t = deltask(t);
-          }else{
-            t = deltask(t);
-          }
-          continue;
-        }
-        t = t->next;
-      }
       continue;
     }
     if(r == -1){
@@ -1588,6 +1650,7 @@ void mtnd_main()
   mtn_startup(mtn, 0);
   mtnd_loop(e, l);
   mtn_shutdown(mtn);
+  mtnd_waitpid(1);
   close(e);
   close(m);
   close(l);
@@ -1633,6 +1696,7 @@ void signal_handler(int n)
     case SIGTERM:
       is_loop = 0;
       mtn_break();
+      ctx->signal = n;
       break;
     case SIGPIPE:
       break;
