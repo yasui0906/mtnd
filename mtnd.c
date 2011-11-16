@@ -1333,7 +1333,7 @@ void mtnd_child_exec(MTNTASK *kt)
   mtndata_get_int(&(job.lim), &(kt->recv), sizeof(job.lim));
   job.cmd = newstr(buff);
   gettimeofday(&(job.start), NULL);
-  mtnlogger(mtn, 0, "[debug] %s: %s\n", __func__, job.cmd);
+  mtnlogger(mtn, 1, "[debug] %s: %s\n", __func__, job.cmd);
 
   mtnd_child_fork(kt, &job);
   gettimeofday(&savetv, NULL);
@@ -1379,13 +1379,13 @@ void mtnd_child_exec(MTNTASK *kt)
   kt->send.head.type = MTNCMD_SUCCESS;
   kt->send.head.size = 0;
   mtndata_set_int(&(job.exit), &(kt->send), sizeof(job.exit));
-  mtnlogger(mtn, 0, "[debug] %s: exit_code=%d\n", __func__, job.exit);
+  mtnlogger(mtn, 1, "[debug] %s: exit_code=%d\n", __func__, job.exit);
   job_close(&job);
   if(kt->std[0]){
     close(kt->std[0]);
     kt->std[0] = 0;
   }
-  mtnlogger(mtn, 0, "[debug] %s: return\n", __func__);
+  mtnlogger(mtn, 8, "[debug] %s: return\n", __func__);
 }
 
 void mtnd_child_error(MTNTASK *kt)

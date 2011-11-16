@@ -169,14 +169,6 @@ struct mtnmutex
   pthread_mutex_t loglevel;
 };
 
-struct mtncount
-{
-  int svr;
-  int dir;
-  int stat;
-  int malloc;
-};
-
 struct mtnmembers
 {
   MTNSVR *svr;
@@ -192,6 +184,7 @@ typedef struct mtn_context
   char     strerror[8192];
   uint16_t max_packet_size;
   uint32_t max_open;
+  uint16_t mps_max;
   uint16_t mcast_port;
   char     mcast_addr[INET_ADDRSTRLEN];
   MTNLOG   logmode;
@@ -200,7 +193,6 @@ typedef struct mtn_context
   size_t  *sendsize;
   uint8_t **sendbuff;
   struct mtnmutex   mutex;
-  struct mtncount   count;
   struct mtnstatus  status;
   struct mtnmembers members;
 } MTN;

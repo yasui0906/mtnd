@@ -53,7 +53,8 @@
 #define MTNCOUNT_STR    5
 #define MTNCOUNT_ARG    6
 #define MTNCOUNT_MALLOC 7
-#define MTNCOUNT_MAX    8
+#define MTNCOUNT_MPS    8
+#define MTNCOUNT_MAX    9
 
 #define MTNMODE_EXPORT  1
 #define MTNMODE_EXECUTE 2

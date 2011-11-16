@@ -555,7 +555,9 @@ int mtnexec_nobuff_txt(int fd, size_t *datasize, size_t *buffsize, char **databu
           if(errno == EINTR){
             continue;
           }
-          mtnlogger(mtn, 0, "[error] %s: %s FD=%d\n", __func__, strerror(errno), fd);
+          if(is_loop){
+            mtnlogger(mtn, 0, "[error] %s: %s FD=%d\n", __func__, strerror(errno), fd);
+          }
           return(-1);
         }else{
           s += r;
@@ -744,6 +746,20 @@ void mtnexec_poll()
     wtime = getwaittime(ctx->job, ctx->job_max);
   }
 
+  read(ctx->fsig[0], &data, sizeof(data));
+  while((pid = waitpid(-1, &status, WNOHANG)) > 0){
+    for(i=0;i<ctx->job_max;i++){
+      if(pid == ctx->job[i].pid){
+        if(WIFEXITED(status)){
+          ctx->job[i].exit = WEXITSTATUS(status);
+        }
+        jclose(&(ctx->job[i]));
+        wtime = 10;
+        break;
+      }
+    }
+  }
+
   r = epoll_wait(ctx->efd, &ev, 1, wtime);
   if(r == -1){
     if(errno != EINTR){
@@ -755,19 +771,6 @@ void mtnexec_poll()
   if((r == 1) && ev.data.ptr){
     mtnexec_stdout(ev.data.ptr);
     mtnexec_stderr(ev.data.ptr);
-  }
-
-  read(ctx->fsig[0], &data, sizeof(data));
-  while((pid = waitpid(-1, &status, WNOHANG)) > 0){
-    for(i=0;i<ctx->job_max;i++){
-      if(pid == ctx->job[i].pid){
-        if(WIFEXITED(status)){
-          ctx->job[i].exit = WEXITSTATUS(status);
-        }
-        jclose(&(ctx->job[i]));
-        break;
-      }
-    }
   }
 }
 
@@ -1167,12 +1170,7 @@ void mtnexec_hybrid(MTNJOB *job)
 
 int mtnexec_remote(MTNJOB *job)
 {
-  struct timeval savetv;
-  struct timeval polltv;
-  struct timeval keiktv;
-
   while(is_loop){
-    gettimeofday(&savetv, NULL);
     if(!(job->svr = getinfo(mtn))){
       if((ctx->mode != MTNEXECMODE_HYBRID) && is_loop){
         mtnlogger(mtn, 0, "[mtnexec] error: node not found\n");
@@ -1187,11 +1185,7 @@ int mtnexec_remote(MTNJOB *job)
         return(mtnexec_fork(job));
       }
     }
-    do{
-      mtnexec_poll();
-      gettimeofday(&polltv, NULL);
-      timersub(&polltv, &savetv, &keiktv);
-    }while(TVMSEC(keiktv) < 1000);
+    mtnexec_poll();
   }
   return(0);
 }
@@ -1237,7 +1231,7 @@ int mtnexec(ARG argp)
   if(is_empty(job.cmd)){
     jclose(&job);
     return(0);
-  }    
+  }
   if(ctx->dryrun){
     mtnexec_dryrun(&job);
     jclose(&job);
@@ -1273,14 +1267,15 @@ int mtnexec_exit()
   while(is_running() && is_loop){
     mtnexec_poll();
   }
-  if(ctx->signal){
-    for(i=0;i<ctx->job_max;i++){
-      if(ctx->job[i].pid){
-        kill(-(ctx->job[i].pid), ctx->signal);
-      }
+  if(!ctx->signal){
+    return(0);
+  }
+  for(i=0;i<ctx->job_max;i++){
+    if(ctx->job[i].pid){
+      kill(-(ctx->job[i].pid), ctx->signal);
     }
   }
-  return(0);
+  return(1);
 }
 
 ARG linearg()
@@ -1342,6 +1337,7 @@ int init(int argc, char *argv[])
     return(-1);
   }
 
+  mtn->mps_max = 512;
   mtn->logtype = 0;
   mtn->logmode = MTNLOG_STDERR;
   ctx->nobuf   = 1;

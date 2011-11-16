@@ -71,6 +71,13 @@ char *mtncmdstr[]={
   "STDERR",
 };
 
+static void clrcount(int id)
+{
+  pthread_mutex_lock(&(count_mutex));
+  count[id] = 0;
+  pthread_mutex_unlock(&(count_mutex));
+}
+
 static void inccount(int id)
 {
   pthread_mutex_lock(&(count_mutex));
@@ -374,11 +381,17 @@ static uint16_t sqno()
   return(r);
 }
 
-static int send_readywait(int s)
+static int send_readywait(MTN *mtn, int s)
 {
   int r;
-  int e = epoll_create(1);
+  int e;
   struct epoll_event ev;
+  struct timeval tv;
+  if(mtn->mps_max && (mtn->mps_max < getcount(MTNCOUNT_MPS))){
+    gettimeofday(&tv, NULL);
+    usleep(1000000 - tv.tv_usec);
+  }
+  e = epoll_create(1);
   ev.data.fd = s;
   ev.events  = EPOLLOUT;
   if(e == -1){
@@ -405,45 +418,54 @@ static int send_readywait(int s)
   return(0);
 }
 
-static int recv_readywait(int s)
+static int recv_readywait(MTN *mtn, int s)
 {
   int r;
-  int e = epoll_create(1);
+  int e;
   struct epoll_event ev;
   ev.data.fd = s;
   ev.events  = EPOLLIN;
-  if(e == -1){
-    return(0);
+
+  if((e = epoll_create(1)) == -1){
+    mtnlogger(mtn, 0, "[error] %s: epoll_create: %s\n", __func__, strerror(errno));
+    return(-1);
   }
   if(epoll_ctl(e, EPOLL_CTL_ADD, s, &ev) == -1){
-    return(0);
+    mtnlogger(mtn, 0, "[error] %s: epoll_ctl: %s\n", __func__, strerror(errno));
+    close(e);
+    return(-1);
   }
   while(is_loop){
-    r = epoll_wait(e, &ev, 1, 1000);
-    if(r == 1){
+    if((r = epoll_wait(e, &ev, 1, 1000)) == 1){ 
       close(e);
-      return(1);
+      return(0);
     }
     if(r == -1){
       if(errno == EINTR){
         continue;
       }
+      mtnlogger(mtn, 0, "[error] %s: epoll_wait: %s\n", __func__, strerror(errno));
       break;
     }
   }
   close(e);
-  return(0);
+  return(-1);
 }
 
 static int recv_stream(MTN *mtn, int s, void *buff, size_t size)
 {
-	mtnlogger(mtn, 9, "[debug] %s:\n", __func__);
   int r;
+	mtnlogger(mtn, 9, "[debug] %s:\n", __func__);
   while(size){
-    if(recv_readywait(s) == 0){
+    if(!is_loop){
+      return(-1);
+    }
+    if(recv_readywait(mtn, s) == -1){
+      return(-1);
+    }
+    if(!(r = read(s, buff, size))){
       return(1);
     }
-    r = read(s, buff, size);
     if(r == -1){
       if(errno == EAGAIN){
         mtnlogger(mtn, 0, "[warn] %s: %s\n", __func__, strerror(errno));
@@ -457,9 +479,6 @@ static int recv_stream(MTN *mtn, int s, void *buff, size_t size)
         return(-1);
       }
     }
-    if(r == 0){
-      return(1);
-    }
     buff += r;
     size -= r;
   }
@@ -470,7 +489,7 @@ static int send_stream(MTN *mtn, int s, uint8_t *buff, size_t size)
 {
   int r;
 	mtnlogger(mtn, 9, "[debug] %s:\n", __func__);
-  while(size && send_readywait(s)){
+  while(size && send_readywait(mtn, s)){
     r = send(s, buff, size, 0);
     if(r == -1){
       if(errno == EINTR){
@@ -506,7 +525,7 @@ int recv_data_stream(MTN *mtn, int s, MTNDATA *kd)
     return(r);
   }
   if(kd->head.size > MTN_MAX_DATASIZE){
-    mtnlogger(mtn, 0, "[debug] %s: size=%d\n", __func__, kd->head.size);
+    mtnlogger(mtn, 0, "[error] %s: data length too long size=%d\n", __func__, kd->head.size);
     return(-1);
   }
   return(recv_stream(mtn, s, &(kd->data), kd->head.size));
@@ -534,15 +553,27 @@ int send_recv_stream(MTN *mtn, int s, MTNDATA *sd, MTNDATA *rd)
 //==================================================
 int send_dgram(MTN *mtn, int s, MTNDATA *data, MTNADDR *addr)
 {
+  int r;
+  int size;
   MTNDATA sd;
-  int size = data->head.size + sizeof(MTNHEAD);
+  struct timeval ntv;
+  static struct timeval stv = {0, 0};
+  size = data->head.size + sizeof(MTNHEAD);
   memcpy(&sd, data, size);
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = htons(data->head.size);
   sd.head.sqno = htons(data->head.sqno);
-  while(send_readywait(s)){
-    int r = sendto(s, &sd, size, 0, &(addr->addr.addr), addr->len);
+  while(send_readywait(mtn, s)){
+    r = sendto(s, &sd, size, 0, &(addr->addr.addr), addr->len);
     if(r == size){
+      if(mtn->mps_max){
+        gettimeofday(&ntv, NULL);
+        if(stv.tv_sec != ntv.tv_sec){
+          stv.tv_sec = ntv.tv_sec;
+          clrcount(MTNCOUNT_MPS);
+        }
+        inccount(MTNCOUNT_MPS);
+      }
       return(0); /* success */
     }
     if(r == -1){
@@ -1409,11 +1440,11 @@ MTNSVR *get_members(MTN *mtn){
   struct timeval tv;
   pthread_mutex_lock(&(mtn->mutex.member));
   gettimeofday(&tv, NULL);
-  if((tv.tv_sec - mtn->members.tv.tv_sec) > 30){
+  if((tv.tv_sec - mtn->members.tv.tv_sec) > 15){
     mtn_info_clrcache(mtn);
   }
   if(mtn->members.svr == NULL){
-    if((tv.tv_sec - mtn->members.tv.tv_sec) > 20){
+    if((tv.tv_sec - mtn->members.tv.tv_sec) > 5){
       mtn->members.svr = mtn_hello(mtn);
       memcpy(&(mtn->members.tv), &tv, sizeof(struct timeval));
     }
@@ -2211,14 +2242,32 @@ int mtn_exec_wait(MTN *mtn, MTNJOB *job)
         break;
       case MTNCMD_STDOUT:
         ssize = 0;
-        while(ssize < rd.head.size){
-          ssize += write(1, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+        while(is_loop && (ssize < rd.head.size)){
+          r = write(1, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+          if(r == -1){
+            if((errno == EINTR) || (errno == EAGAIN)){
+              continue;
+            }
+            job->fin  = 1;
+            job->exit = 1;
+            break;
+          }
+          ssize += r;
         }
         break;
       case MTNCMD_STDERR:
         ssize = 0;
-        while(ssize < rd.head.size){
-          ssize += write(2, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+        while(is_loop && (ssize < rd.head.size)){
+          r = write(2, (void *)(rd.data.data + ssize), rd.head.size - ssize);
+          if(r == -1){
+            if((errno == EINTR) || (errno == EAGAIN)){
+              continue;
+            }
+            job->fin  = 1;
+            job->exit = 1;
+            break;
+          }
+          ssize += r;
         }
         break;
     }
@@ -2241,9 +2290,9 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
     return(-1);
   }
 
-  mi.mode = MTNMODE_EXECUTE;
-  mi.uid  = job->uid;
-  mi.gid  = job->gid;
+  mi.mode  = MTNMODE_EXECUTE;
+  mi.uid   = job->uid;
+  mi.gid   = job->gid;
   job->con = mtn_connect(mtn, sv, &mi);
   clrsvr(sv);
   if(job->con == -1){
