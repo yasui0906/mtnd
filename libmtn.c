@@ -383,13 +383,16 @@ static uint16_t sqno()
 
 static int send_readywait(MTN *mtn, int s)
 {
-  int r;
   int e;
+  int r;
   struct epoll_event ev;
   struct timeval tv;
   if(mtn->mps_max && (mtn->mps_max < getcount(MTNCOUNT_MPS))){
     gettimeofday(&tv, NULL);
-    usleep(1000000 - tv.tv_usec);
+    while(mtn->mpstv.tv_sec == tv.tv_sec){
+      usleep(1000000 - tv.tv_usec);
+      gettimeofday(&tv, NULL);
+    };
   }
   e = epoll_create(1);
   ev.data.fd = s;
@@ -556,8 +559,7 @@ int send_dgram(MTN *mtn, int s, MTNDATA *data, MTNADDR *addr)
   int r;
   int size;
   MTNDATA sd;
-  struct timeval ntv;
-  static struct timeval stv = {0, 0};
+  struct timeval tv;
   size = data->head.size + sizeof(MTNHEAD);
   memcpy(&sd, data, size);
   sd.head.ver  = PROTOCOL_VERSION;
@@ -567,9 +569,9 @@ int send_dgram(MTN *mtn, int s, MTNDATA *data, MTNADDR *addr)
     r = sendto(s, &sd, size, 0, &(addr->addr.addr), addr->len);
     if(r == size){
       if(mtn->mps_max){
-        gettimeofday(&ntv, NULL);
-        if(stv.tv_sec != ntv.tv_sec){
-          stv.tv_sec = ntv.tv_sec;
+        gettimeofday(&tv, NULL);
+        if(mtn->mpstv.tv_sec != tv.tv_sec){
+          mtn->mpstv.tv_sec = tv.tv_sec;
           clrcount(MTNCOUNT_MPS);
         }
         inccount(MTNCOUNT_MPS);

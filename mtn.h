@@ -192,6 +192,7 @@ typedef struct mtn_context
   uint16_t loglevel;
   size_t  *sendsize;
   uint8_t **sendbuff;
+  struct timeval    mpstv;
   struct mtnmutex   mutex;
   struct mtnstatus  status;
   struct mtnmembers members;

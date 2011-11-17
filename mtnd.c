@@ -1578,14 +1578,15 @@ void mtnd_loop_downsvr(struct timeval *tv)
 
 void mtnd_loop(int e, int l)
 {
-  int r;
+  int  r;
+  char d;
   struct timeval tv;
-  struct epoll_event ev[2];
+  struct epoll_event ev[3];
 
   //===== Main Loop =====
   while(is_loop){
     mtnd_waitpid(0);
-    r = epoll_wait(e, ev, 2, 1000);
+    r = epoll_wait(e, ev, 3, 1000);
     gettimeofday(&tv,NULL);
     mtnd_loop_startup(&tv);
     mtnd_loop_clrtask(&tv);
@@ -1599,16 +1600,21 @@ void mtnd_loop(int e, int l)
     while(r--){
       if(ev[r].data.fd == l){
         mtnd_accept_process(ev[r].data.fd);
-      }else{
-        if(ev[r].events & EPOLLIN){
-          mtnd_udp_process(ev[r].data.fd);
-        }
-        if(ev[r].events & EPOLLOUT){
-          mtnd_task_process(ev[r].data.fd);
-        }
-        ev[r].events = tasklist ? EPOLLIN | EPOLLOUT : EPOLLIN;
-        epoll_ctl(e, EPOLL_CTL_MOD, ev[r].data.fd, &ev[r]);
+        continue;
       }
+      if(ev[r].data.fd == ctx->fsig[0]){
+        mtnd_waitpid(0);
+        read(ctx->fsig[0], &d, 1);
+        continue;
+      }
+      if(ev[r].events & EPOLLIN){
+        mtnd_udp_process(ev[r].data.fd);
+      }
+      if(ev[r].events & EPOLLOUT){
+        mtnd_task_process(ev[r].data.fd);
+      }
+      ev[r].events = tasklist ? EPOLLIN | EPOLLOUT : EPOLLIN;
+      epoll_ctl(e, EPOLL_CTL_MOD, ev[r].data.fd, &ev[r]);
     }
   }
 }
@@ -1647,14 +1653,21 @@ int mtnd_main()
   ev.data.fd = l;
   ev.events  = EPOLLIN;
   if(epoll_ctl(e, EPOLL_CTL_ADD, l, &ev) == -1){
-    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+    mtnlogger(mtn, 0, "[error] %s: epoll_ctl1: %s\n", __func__, strerror(errno));
     return(-1);
   }
 
   ev.data.fd = m;
   ev.events  = EPOLLIN;
   if(epoll_ctl(e, EPOLL_CTL_ADD, m, &ev) == -1){
-    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+    mtnlogger(mtn, 0, "[error] %s: epoll_ctl2: %s\n", __func__, strerror(errno));
+    return(-1);
+  }
+
+  ev.data.fd = ctx->fsig[0];
+  ev.events  = EPOLLIN;
+  if(epoll_ctl(e, EPOLL_CTL_ADD, ctx->fsig[0], &ev) == -1){
+    mtnlogger(mtn, 0, "[error] %s: epoll_ctl3: %s\n", __func__, strerror(errno));
     return(-1);
   }
   mtn_startup(mtn, 0);
@@ -1770,8 +1783,9 @@ int mtnd()
   return(r);
 }
 
-void signal_handler(int n)
+void signal_handler(int n, siginfo_t *info, void *ucs)
 {
+  char data;
   switch(n){
     case SIGINT:
     case SIGTERM:
@@ -1786,6 +1800,10 @@ void signal_handler(int n)
       break;
     case SIGUSR2:
       mtn->loglevel--;
+      break;
+    case SIGCHLD:
+      data = 0;
+      write(ctx->fsig[1], &data, 1);
       break;
   }
 }
@@ -1902,7 +1920,8 @@ void set_sig_handler()
 {
   struct sigaction sig;
   memset(&sig, 0, sizeof(sig));
-  sig.sa_handler = signal_handler;
+  sig.sa_sigaction = signal_handler;
+  sig.sa_flags     = SA_SIGINFO;
   if(sigaction(SIGINT,  &sig, NULL) == -1){
     mtnlogger(NULL, 0, "%s: sigaction error SIGINT\n", __func__);
     exit(1);
@@ -1923,6 +1942,20 @@ void set_sig_handler()
     mtnlogger(NULL, 0, "%s: sigaction error SIGUSR2\n", __func__);
     exit(1);
   }
+  sig.sa_flags = SA_SIGINFO | SA_NOCLDSTOP;
+  if(sigaction(SIGCHLD, &sig, NULL) == -1){
+    mtnlogger(NULL, 0, "%s: sigaction error SIGCHLD\n", __func__);
+    exit(1);
+  }
+}
+
+int mtnd_init_pipe()
+{
+  pipe(ctx->fsig);
+  fcntl(ctx->fsig[0], F_SETFD, FD_CLOEXEC);
+  fcntl(ctx->fsig[1], F_SETFD, FD_CLOEXEC);
+  fcntl(ctx->fsig[0], F_SETFL, O_NONBLOCK);
+  return(0);
 }
 
 void mtnd_init()
@@ -1946,6 +1979,7 @@ void mtnd_init()
     exit(1);
   }
   ctx->daemonize = 1;
+  mtnd_init_pipe();
 }
 
 int main(int argc, char *argv[])

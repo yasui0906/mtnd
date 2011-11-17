@@ -5,6 +5,7 @@
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
 #include <mtn.h>
+#include <libmtn.h>
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -92,7 +93,6 @@ MTNSVR *getinfo()
   MTNSVR *s;
   MTNSVR *members = NULL;
   MTNSVR *svrlist = NULL;
-  mtn_info_clrcache(mtn); 
   svrlist = mtn_info(mtn);
   for(s=svrlist;s;s=s->next){
     if(is_execute(s)){
@@ -726,17 +726,19 @@ int scheprocess(MTN *mtn, MTNJOB *job, int job_max, int cpu_lim, int cpu_num)
   return(cpu_use);
 }
 
-void mtnexec_poll()
+int mtnexec_poll()
 {
+  int c;
   int i;
   int r;
+  int w;
   pid_t pid;
   int status;
   char data;
-  struct epoll_event ev;
-  static int wtime = 200;
+  struct epoll_event ev[64];
   struct timeval  polltv;
   struct timeval keikatv;
+  static int wtime = 200;
 
   gettimeofday(&polltv, NULL);
   timersub(&polltv, &(ctx->polltv), &keikatv);
@@ -746,32 +748,41 @@ void mtnexec_poll()
     wtime = getwaittime(ctx->job, ctx->job_max);
   }
 
-  read(ctx->fsig[0], &data, sizeof(data));
-  while((pid = waitpid(-1, &status, WNOHANG)) > 0){
-    for(i=0;i<ctx->job_max;i++){
-      if(pid == ctx->job[i].pid){
-        if(WIFEXITED(status)){
-          ctx->job[i].exit = WEXITSTATUS(status);
-        }
-        jclose(&(ctx->job[i]));
-        wtime = 10;
-        break;
-      }
-    }
+  c = 0;
+  w = wtime;
+  if(!(r = epoll_wait(ctx->efd, ev, 64, w))){
+    return(c);
   }
-
-  r = epoll_wait(ctx->efd, &ev, 1, wtime);
   if(r == -1){
     if(errno != EINTR){
       mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
-      return;
     }
+    return(c);
   }
 
-  if((r == 1) && ev.data.ptr){
-    mtnexec_stdout(ev.data.ptr);
-    mtnexec_stderr(ev.data.ptr);
+  while(r--){
+    if(ev[r].data.ptr){
+      mtnexec_stdout(ev[r].data.ptr);
+      mtnexec_stderr(ev[r].data.ptr);
+    }else{
+      read(ctx->fsig[0], &data, sizeof(data));
+      while((pid = waitpid(-1, &status, WNOHANG)) > 0){
+        for(i=0;i<ctx->job_max;i++){
+          if(pid == ctx->job[i].pid){
+            if(WIFEXITED(status)){
+              ctx->job[i].exit = WEXITSTATUS(status);
+            }
+            jclose(&(ctx->job[i]));
+            c++;
+            w = 0;
+            break;
+          }
+        }
+      }
+
+    }
   }
+  return(c);
 }
 
 MTNJOB *mtnexec_wait()
@@ -1076,18 +1087,44 @@ MTNSVR *filtersvr_cnt_prc(MTNSVR *svr)
     count++;
   }
   qsort(list, count, sizeof(int), cmp1);
-
   do{
     r = clrsvr(r);
     limit = filtersvr_list_limit(list, count, level++);
     for(s=svr;s;s=s->next){
       if(!limit || (s->cnt.prc <= limit)){
-        r = pushsvr(r, s);
+        if((s->cnt.cld + 1) * 100 / s->cnt.cpu < 100){
+          r = pushsvr(r, s);
+        }else if(!s->cnt.cld && (s->cnt.cpu == 1)){
+          r = pushsvr(r, s);
+        }
       }
     }
     r = filtersvr_cnt_job(r);
   }while(limit && !r);
   free(list);
+  clrsvr(svr);
+  return(r);
+}
+
+MTNSVR *filtersvr_cnt_cpu(MTNSVR *svr)
+{
+  int cpu = 0;
+  int min = 0;
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+  if(!svr){
+    return(NULL);
+  }
+  for(s=svr;s;s=s->next){
+    cpu = s->cnt.prc * 100 / s->cnt.cpu;
+    min = (!min || cpu < min) ? cpu : min;
+  }
+  for(s=svr;s;s=s->next){
+    cpu = s->cnt.prc * 100 / s->cnt.cpu;
+    if(cpu == min){
+      r = pushsvr(r, s);
+    } 
+  }
   clrsvr(svr);
   return(r);
 }
@@ -1145,6 +1182,7 @@ MTNSVR *filtersvr(MTNSVR *s)
 {
   s = filtersvr_loadavg(s); // LAが1以上のノードを除外する
   s = filtersvr_cnt_prc(s); // プロセス数が少ないノードを抽出する
+  s = filtersvr_cnt_cpu(s); // ジョブが少ないノードを抽出する
   s = filtersvr_memfree(s); // 空きメモリが多いノードを抽出する
   s = filtersvr_order(s);   // 応答速度が一番速かったノードを選択する
   return(s);
@@ -1185,7 +1223,7 @@ int mtnexec_remote(MTNJOB *job)
         return(mtnexec_fork(job));
       }
     }
-    mtnexec_poll();
+    while(!mtnexec_poll() && getjobcount(0));
   }
   return(0);
 }
