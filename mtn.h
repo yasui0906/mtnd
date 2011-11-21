@@ -119,6 +119,7 @@ typedef struct mtnjob
   int      con; // mtndと接続するソケット
   int      efd; // epoll用のディスクリプタ
   int      fin; // コマンドが終了したら1になる
+  int      ctl; //
   int      out; // stdoutとのパイプ
   int      err; // stderrとのパイプ
   int     exit; // 終了コード
@@ -276,8 +277,8 @@ ARG addarg(ARG arg, STR str);
 ARG clrarg(ARG args);
 ARG copyarg(ARG args);
 STR poparg(ARG args);
-STR convarg(STR arg, ARG argl);
-ARG cpconvarg(ARG arg, ARG argl);
+STR convarg(STR arg, MTNJOB *job);
+ARG cpconvarg(ARG arg, MTNJOB *job);
 STR joinarg(ARG args, STR delim);
 STR findarg(ARG arg, STR str);
 ARG cmdargs(MTNJOB *job);

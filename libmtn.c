@@ -2300,8 +2300,12 @@ int mtn_exec(MTN *mtn, MTNJOB *job)
   if(job->con == -1){
     return(-1);
   }
-  mtn_exec_put(mtn, job);
 
+  if(job->ctl){
+    close(job->ctl);
+    job->ctl = 0;
+  }
+  mtn_exec_put(mtn, job);
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.size = 0;
   sd.head.flag = 0;
@@ -3246,46 +3250,61 @@ STR findarg(ARG arg, STR str)
   return(NULL);
 }
 
-static STR convarg3(STR arg, ARG argl)
+static STR convarg3(STR arg, MTNJOB *job)
 {
-  STR a;
-  if(strcmp(arg, "") == 0){
-    a = joinarg(argl, " ");
-    arg = modstr(arg, a);
-    a = clrstr(a);
-  }else if(strcmp(arg, "/") == 0){
-    a = joinarg(argl, " ");
-    a = basestr(a);
-    arg = modstr(arg, a);
-    a = clrstr(a);
-  }else if(strcmp(arg, ".") == 0){
-    a = joinarg(argl, " ");
-    a = dotstr(a);
-    arg = modstr(arg, a);
-    a = clrstr(a);
-  }else if(strcmp(arg, "/.") == 0){
-    a = joinarg(argl, " ");
-    a = basestr(a);
-    a = dotstr(a);
-    arg = modstr(arg, a);
-    a = clrstr(a);
+  int n;
+  int m;
+  STR s;
+  if(!strcmp(arg, "")){
+    s = joinarg(job->argl, " ");
+    arg = modstr(arg, s);
+    s = clrstr(s);
+  }else if(!strcmp(arg, "/")){
+    s = joinarg(job->argl, " ");
+    s = basestr(s);
+    arg = modstr(arg, s);
+    s = clrstr(s);
+  }else if(!strcmp(arg, ".")){
+    s = joinarg(job->argl, " ");
+    s = dotstr(s);
+    arg = modstr(arg, s);
+    s = clrstr(s);
+  }else if(!strcmp(arg, "/.")){
+    s = joinarg(job->argl, " ");
+    s = basestr(s);
+    s = dotstr(s);
+    arg = modstr(arg, s);
+    s = clrstr(s);
+  }else if(!strcmp(arg, "H")){
+    if(job->svr){
+      arg = modstr(arg, job->svr->host);
+    }else{
+      arg = modstr(arg, "local");
+    }
   }else{
-    a = newstr("{");
-    a = catstr(a, arg);
-    a = catstr(a, "}");
-    arg = modstr(arg, a);
-    clrstr(a);
+    errno = 0;
+    n = strtol(arg, NULL, 10);
+    for(m=0;job->argl[m];m++);
+    if(!errno){
+      arg = modstr(arg, (n < m) ? job->argl[n] : "");
+    }else{
+      s = newstr("{");
+      s = catstr(s, arg);
+      s = catstr(s, "}");
+      arg = modstr(arg, s);
+      clrstr(s);
+    }
   }
   return(arg);
 }
 
-static STR convarg2(STR arg, ARG argl)
+static STR convarg2(STR arg, MTNJOB *job)
 {
   int i;
   STR p;
   STR q;
   STR r;
-  if(!argl || !arg){
+  if(!job->argl || !arg){
     return(arg);
   }
   i = 0;
@@ -3296,7 +3315,7 @@ static STR convarg2(STR arg, ARG argl)
       i++;
       q = newstr(p);
       r = newstr(p + i);
-      q = convarg3(q,argl);
+      q = convarg3(q, job);
       arg = modstr(arg, q);
       arg = catstr(arg, r);
       clrstr(q);
@@ -3309,12 +3328,12 @@ static STR convarg2(STR arg, ARG argl)
   return(arg);
 }
 
-STR convarg(STR arg, ARG argl)
+STR convarg(STR arg, MTNJOB *job)
 {
   int i;
   STR p;
   STR q;
-  if(!argl || !arg){
+  if(!job->argl || !arg){
     return(arg);
   }
 
@@ -3325,7 +3344,7 @@ STR convarg(STR arg, ARG argl)
       *(p + i) = 0;
       i++;
       q = newstr(p + i);
-      q = convarg2(q, argl);
+      q = convarg2(q, job);
       arg = modstr(arg, p);
       arg = catstr(arg, q);
       p = modstr(p, arg);
@@ -3338,7 +3357,7 @@ STR convarg(STR arg, ARG argl)
   return(arg);
 }
 
-ARG cpconvarg(ARG arg, ARG argl)
+ARG cpconvarg(ARG arg, MTNJOB *job)
 {
   int i;
   ARG r = newarg(0);
@@ -3347,7 +3366,7 @@ ARG cpconvarg(ARG arg, ARG argl)
   }
   for(i=0;arg[i];i++){
     r = addarg(r, arg[i]);
-    r[i] = convarg(r[i], argl);
+    r[i] = convarg(r[i], job);
   }
   return(r);
 }
@@ -3448,7 +3467,7 @@ ARG cmdargs(MTNJOB *job)
   if(job->args){
     for(i=0;job->args[i];i++){
       if(job->conv){
-        cmd = addarg(cmd, convarg(newstr(job->args[i]), job->argl));
+        cmd = addarg(cmd, convarg(newstr(job->args[i]), job));
       }else{
         cmd = addarg(cmd, newstr(job->args[i]));
       }

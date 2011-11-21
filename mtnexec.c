@@ -165,6 +165,17 @@ struct option *get_optlist()
   return(opt);
 }
 
+int is_delim(char c)
+{
+  char *s;
+  for(s=ctx->delim;*s;s++){
+    if(c == *s){
+      return(1);
+    }
+  }
+  return(0);
+}
+
 int is_empty(STR str)
 {
   if(!str){
@@ -195,17 +206,17 @@ ARG stdname(MTNJOB *job)
 {
   ARG std = newarg(3);
   if(ctx->stdin){
-    std[0] = convarg(newstr(ctx->stdin), job->argl);
+    std[0] = convarg(newstr(ctx->stdin), job);
   }else{
     std[0] = newstr("/dev/null");
   }
   if(ctx->stdout){
-    std[1] = convarg(newstr(ctx->stdout), job->argl);
+    std[1] = convarg(newstr(ctx->stdout), job);
   }else{
     std[1] = newstr("");
   }
   if(ctx->stderr){
-    std[2] = convarg(newstr(ctx->stderr), job->argl);
+    std[2] = convarg(newstr(ctx->stderr), job);
   }else{
     std[2] = newstr("");
   }
@@ -222,7 +233,7 @@ ARG parse(int argc, char *argv[])
     exit(0);
   }
   optind = 0;
-  while((r = getopt_long(argc, argv, "+hVvnBbig:j:e:I:RALP:N:m:p:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "+hVvnBbig:j:e:I:RALP:N:m:p:d:", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -316,6 +327,10 @@ ARG parse(int argc, char *argv[])
 
       case 'p':
         mtn->mcast_port = atoi(optarg);
+        break;
+
+      case 'd':
+        ctx->delim = modstr(ctx->delim, optarg);
         break;
 
       case '?':
@@ -438,50 +453,64 @@ char *readline(int f)
   return(newstr(buff));
 }
 
-STR *readarg(int f, int n)
+ARG readargline(int f, ARG arg)
 {
-  int  i;
+  char c;
   int  r;
   int  len = 0;
-  char buff[1024];
-  STR *arg = newarg(n);
-  for(i=0;i<n;i++){
-    len = 0;
-    while(is_loop){
-      r = read(f, buff + len, 1);
-      if(r == 0){
-        if(len){
-          buff[len] = 0;
-          break;
-        }
-        errno = 0;
-        for(r=0;r<n;r++){
-          free(arg[r]);
-          arg[r] = NULL;
-        }
-        free(arg);
-        return(NULL);
-      }
-      if(r == -1){
-        if(errno == EINTR){
-          errno = 0;
-          continue;
-        }
-        return(NULL);
-      }
-      if(buff[len] == '\r' || buff[len] == '\n' || buff[len] == 0){
-        buff[len] = 0;
-        if(len == 0){
-          continue;
-        }
+  char buff[ARG_MAX];
+
+  if(!arg){
+    return(NULL);
+  }
+  while(is_loop){
+    if(!(r = read(f, &c, 1))){
+      // EOF
+      if(len){
         break;
       }
-      len++; 
+      errno = 0;
+      clrarg(arg);
+      return(NULL);
     }
-    buff[len] = 0;
-    arg[i] = newstr(buff);
+    if(r == -1){
+      if(errno == EINTR){
+        errno = 0;
+        continue;
+      }
+      mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+      clrarg(arg);
+      return(NULL);
+    }
+    if(c == 0 || c == '\n'){
+      if(!len){
+        continue;
+      }
+      break;
+    }
+    if(is_delim(c)){
+      if(len){
+        buff[len] = 0;
+        arg = addarg(arg, buff);
+        len = 0;
+      }
+      continue;
+    }
+    buff[len++] = c;
   }
-  arg[i] = NULL;
+  buff[len] = 0;
+  return(is_loop ? addarg(arg, buff) : clrarg(arg));
+}
+
+ARG readarg(int f, int n)
+{
+  int i;
+  ARG arg = newarg(0);
+  for(i=0;i<n;i++){
+    if(!(arg = readargline(f, arg))){
+      break;
+    }
+  }
   return(arg);
 }
 
@@ -857,18 +886,34 @@ void mtnexec_dryrun(MTNJOB *job)
 int mtnexec_fork(MTNJOB *job)
 {
   int f;
-  int pp[2][2];
+  int pp[3][2];
   struct epoll_event ev;
 
-  job = copyjob(mtnexec_wait(), job); // プロセス数の上限に達していたらここで待機する
   if(!job){
     return(-1);
+  }
+
+  job->argc   = cmdargs(job);
+  job->cmd    = joinarg(job->argc, " ");
+  job->std    = stdname(job);
+  job->echo   = (ctx->echo) ? convarg(newstr(ctx->echo), job) : NULL;
+  job->putarg = cpconvarg(ctx->putarg, ctx->conv ? job : NULL);
+  job->getarg = cpconvarg(ctx->getarg, ctx->conv ? job : NULL);
+  if(is_empty(job->cmd)){
+    jclose(job);
+    return(-1);
+  }
+  if(ctx->dryrun){
+    mtnexec_dryrun(job);
+    jclose(job);
+    return(0);
   }
   if(ctx->verbose){
     mtnexec_verbose(job);
   }
   pipe(pp[0]);
   pipe(pp[1]);
+  pipe(pp[2]);
   gettimeofday(&(job->start), NULL);
   job->pid = fork();
   if(job->pid == -1){
@@ -877,17 +922,22 @@ int mtnexec_fork(MTNJOB *job)
     close(pp[0][1]);
     close(pp[1][0]);
     close(pp[1][1]);
+    close(pp[2][0]);
+    close(pp[2][1]);
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
   if(job->pid){
     close(pp[0][1]);
     close(pp[1][1]);
-    job->out   = pp[0][0];
-    job->err   = pp[1][0];
+    close(pp[2][1]);
+    job->ctl   = pp[0][0];
+    job->out   = pp[1][0];
+    job->err   = pp[2][0];
     job->cct   = 1;
     job->pstat = calloc(1, sizeof(MTNPROCSTAT));
     job->pstat[0].pid = job->pid;
+    fcntl(job->ctl, F_SETFD, FD_CLOEXEC);
     fcntl(job->out, F_SETFD, FD_CLOEXEC);
     fcntl(job->err, F_SETFD, FD_CLOEXEC);
     fcntl(job->out, F_SETFL, O_NONBLOCK);
@@ -900,6 +950,10 @@ int mtnexec_fork(MTNJOB *job)
     if(epoll_ctl(ctx->efd, EPOLL_CTL_ADD, job->err, &ev) == -1){
       mtnlogger(mtn, 0, "[error] %s: epoll_ctl %s stderr fd=%d\n", __func__, strerror(errno), job->err);
     }
+    char d;
+    while(read(job->ctl,&d,1));
+    close(job->ctl);
+    job->ctl = 0;
     return(0);
   }
 
@@ -907,6 +961,7 @@ int mtnexec_fork(MTNJOB *job)
   setpgid(0,0);
   close(pp[0][0]);
   close(pp[1][0]);
+  close(pp[2][0]);
   if(strlen(job->std[0])){
     f = open(job->std[0], O_RDONLY);
     if(f == -1){
@@ -932,7 +987,7 @@ int mtnexec_fork(MTNJOB *job)
     close(f);
   }else{
     close(1);
-    dup2(pp[0][1], 1);
+    dup2(pp[1][1], 1);
   }
 
   if(strlen(job->std[2])){
@@ -946,16 +1001,19 @@ int mtnexec_fork(MTNJOB *job)
     close(f);
   }else{
     close(2);
-    dup2(pp[1][1], 2);
+    dup2(pp[2][1], 2);
   }
-  close(pp[0][1]);
   close(pp[1][1]);
+  close(pp[2][1]);
+  job->ctl = pp[0][1];
 
   if(job->svr){
     /*===== remote execute process =====*/
     mtn_exec(mtn, job);
   }else{
     /*===== local exec process =====*/
+    close(job->ctl);
+    job->ctl = 0;
     execl("/bin/sh", "/bin/sh", "-c", job->cmd, NULL);
   }
   mtnlogger(mtn, 0, "[error] %s '%s'\n", strerror(errno), job->cmd);
@@ -964,6 +1022,7 @@ int mtnexec_fork(MTNJOB *job)
 
 int mtnexec_all(MTNJOB *job)
 {
+  MTNJOB *j;
   MTNSVR *s;
   MTNSVR *svr = getinfo(mtn);
   if(!svr){
@@ -971,13 +1030,17 @@ int mtnexec_all(MTNJOB *job)
     return(-1);
   }
   for(s=svr;s;s=s->next){
-    job->svr = cpsvr(s);
-    if(mtnexec_fork(job) == -1){
-      return(-1);
+    if(!(j = mtnexec_wait())){
+      break;
+    }
+    copyjob(j, job);
+    j->svr = cpsvr(s);
+    if(mtnexec_fork(j) == -1){
+      break;
     }
   }
   clrsvr(svr);
-  return(0);
+  return(s ? -1 : 0);
 }
 
 MTNSVR *filtersvr_loadavg(MTNSVR *svr)
@@ -1251,48 +1314,34 @@ void mtnexec_initjob(MTNJOB *job, ARG arg)
   job->conv = ctx->conv;
   job->args = copyarg(ctx->cmdargs);
   job->argl = copyarg(arg);
-  job->argc = cmdargs(job);
-  job->cmd  = joinarg(job->argc, " ");
   job->exit = -1;
   job->cid  = -1;
-  job->std  = stdname(job);
-  job->echo = (ctx->echo) ? convarg(newstr(ctx->echo), job->argl) : NULL;
-  job->putarg = cpconvarg(ctx->putarg, ctx->conv ? job->argl : NULL);
-  job->getarg = cpconvarg(ctx->getarg, ctx->conv ? job->argl : NULL);
 }
 
 int mtnexec(ARG argp)
 {
   int r = 0;
-  MTNJOB job;
-  mtnexec_initjob(&job, argp);
-  if(is_empty(job.cmd)){
-    jclose(&job);
-    return(0);
-  }
-  if(ctx->dryrun){
-    mtnexec_dryrun(&job);
-    jclose(&job);
-    return(0);
-  }
+  MTNJOB *j;
+ 
+  j = mtnexec_wait();       // プロセス数の上限に達していたらここで待機する
+  mtnexec_initjob(j, argp);
   switch(ctx->mode){
     case MTNEXECMODE_LOCAL:
-      r = mtnexec_fork(&job);
+      r = mtnexec_fork(j);
       break;
     case MTNEXECMODE_REMOTE:
     case MTNEXECMODE_HYBRID:
-      r = mtnexec_remote(&job);
+      r = mtnexec_remote(j);
       break;
     case MTNEXECMODE_ALL0:
-      r = mtnexec_all(&job);
+      r = mtnexec_all(j);
       break;
     case MTNEXECMODE_ALL1:
-      if(!(r = mtnexec_all(&job))){
-        r = mtnexec_fork(&job);
+      if(!(r = mtnexec_all(j))){
+        r = mtnexec_fork(j);
       }
       break;
   }
-  jclose(&job);
   return(r);
 }
 
@@ -1380,6 +1429,7 @@ int init(int argc, char *argv[])
   mtn->logmode = MTNLOG_STDERR;
   ctx->nobuf   = 1;
   ctx->text    = 1;
+  ctx->delim   = newstr(" ");
   ctx->cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->job_max = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->arg_num = isatty(fileno(stdin)) ? 0 : 1;

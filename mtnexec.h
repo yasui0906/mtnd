@@ -23,6 +23,7 @@ typedef struct mtnexec_context
   int opt_L;
   int nobuf;
   int child;
+  STR delim;
   STR echo;
   STR group;
   STR stdin;
