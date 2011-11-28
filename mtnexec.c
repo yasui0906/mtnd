@@ -58,12 +58,180 @@ void usage()
   printf("   -p port            # TCP/UDP port(default: 6000)\n");
   printf("   -h                 # help\n");
   printf("   --version          # version\n");
+  printf("   --echo=string      # \n");
   printf("   --stdin=path       # \n");
   printf("   --stdout=path      # \n");
   printf("   --stderr=path      # \n");
   printf("   --put=path,path,,, # \n");
   printf("   --get=path,path,,, # \n");
   printf("\n");
+}
+
+STR strnum(STR a, char *n)
+{
+  int i;
+  STR s;
+  for(i=0;a[i];i++){
+    if(a[i]>='0' && a[i]<='9'){
+      n[i] = a[i];
+    }else{
+      break;
+    }
+  }
+  n[i] = 0;
+  s = newstr(a + i);
+  clrstr(a);
+  return(s);
+}
+
+STR convarg4(STR a, STR s)
+{
+  int i;
+  s = newstr(s);
+  if(is_empty(a)){
+    clrstr(a);
+    return(s);
+  }
+  for(i=0;a[i];i++){
+    if(a[i] == '/'){
+      s = basestr(s);
+      continue;
+    }
+    if(a[i] == '.'){
+      s = dotstr(s);
+      continue;
+    }
+    clrstr(s);
+    s = newstr("{");
+    s = catstr(s, a);
+    s = catstr(s, "}");
+    clrstr(a);
+    return(s);
+  }
+  clrstr(a);
+  return(s);
+}
+
+STR convarg3(STR a, MTNJOB *j)
+{
+  int m;
+  int n;
+  STR s;
+  char buff[ARG_MAX];
+
+  if(!strcmp(a, "H")){
+    if(j->svr){
+      a = modstr(a, j->svr->host);
+    }else{
+      a = modstr(a, "local");
+    }
+    return(a);
+  }
+
+  a = strnum(a, buff);
+  if(!strlen(buff)){
+    s = joinarg(j->argl, ctx->delim);
+  }else{
+    n = atoi(buff);
+    m = cntarg(j->argl);
+    s = newstr((n < m) ? j->argl[n] : "");
+  }
+  a = convarg4(a, s);
+  clrstr(s);
+  return(a);
+}
+
+STR convarg2(STR a, MTNJOB *j)
+{
+  int i;
+  STR p;
+  STR q;
+  STR r;
+  i = 0;
+  p = newstr(a);
+  while(*(p + i)){
+    if(*(p + i) == '}'){
+      *(p + i) = 0;
+      i++;
+      q = newstr(p);
+      r = newstr(p + i);
+      q = convarg3(q, j);
+      a = modstr(a, q);
+      a = catstr(a, r);
+      clrstr(q);
+      clrstr(r);
+      break;
+    }
+    i++;
+  }
+  clrstr(p);
+  return(a);
+}
+
+STR convarg(STR a, MTNJOB *j)
+{
+  int i;
+  STR p;
+  STR q;
+  if(!a){
+    return(NULL);
+  }
+  if(!j){
+    return(a);
+  }
+  i = 0;
+  p = newstr(a);
+  while(*(p + i)){
+    if(*(p + i) == '{'){
+      *(p + i) = 0;
+      i++;
+      q = newstr(p + i);
+      q = convarg2(q, j);
+      a = modstr(a, p);
+      a = catstr(a, q);
+      p = modstr(p, a);
+      q = clrstr(q);
+      continue;
+    }
+    i++;
+  }
+  clrstr(p);
+  return(a);
+}
+
+ARG cpconvarg(ARG a, MTNJOB *j)
+{
+  int i;
+  ARG r = newarg(0);
+  if(!a){
+    return(r);
+  }
+  for(i=0;a[i];i++){
+    r = addarg(r, a[i]);
+    r[i] = convarg(r[i], j);
+  }
+  return(r);
+}
+
+ARG cmdargs(MTNJOB *job)
+{
+  int i;
+  ARG cmd = newarg(0);
+  if(job->args){
+    for(i=0;job->args[i];i++){
+      if(job->conv){
+        cmd = addarg(cmd, convarg(newstr(job->args[i]), job));
+      }else{
+        cmd = addarg(cmd, newstr(job->args[i]));
+      }
+    }
+  }
+  if(!job->conv && job->argl){
+    for(i=0;job->argl[i];i++){
+      cmd = addarg(cmd, job->argl[i]);
+    }
+  }
+  return(cmd);
 }
 
 int getjobcount(int mode)
@@ -172,17 +340,6 @@ int is_delim(char c)
     if(c == *s){
       return(1);
     }
-  }
-  return(0);
-}
-
-int is_empty(STR str)
-{
-  if(!str){
-    return(1);
-  }
-  if(*str == 0){
-    return(1);
   }
   return(0);
 }
@@ -830,6 +987,22 @@ MTNJOB *mtnexec_wait()
   return(NULL);
 }
 
+void mtnexec_initjob(MTNJOB *job, ARG arg)
+{
+  static int id = 0;
+  memset(job, 0, sizeof(MTNJOB));
+  job->id   = id++;
+  job->uid  = getuid();
+  job->gid  = getgid();
+  job->cid  = -1;
+  job->lim  = ctx->cpu_lim;
+  job->conv = ctx->conv;
+  job->args = copyarg(ctx->cmdargs);
+  job->argl = copyarg(arg);
+  job->exit = -1;
+  job->cid  = -1;
+}
+
 MTNJOB *copyjob(MTNJOB *dst, MTNJOB *src)
 {
   if(dst){
@@ -883,16 +1056,16 @@ void mtnexec_dryrun(MTNJOB *job)
   mtnlogger(mtn, 0, "\n");
 }
 
-int mtnexec_fork(MTNJOB *job)
+int mtnexec_fork(MTNSVR *svr, ARG arg)
 {
   int f;
   int pp[3][2];
+  MTNJOB *job;
   struct epoll_event ev;
 
-  if(!job){
-    return(-1);
-  }
-
+  job = mtnexec_wait();
+  mtnexec_initjob(job, arg);
+  job->svr    = svr;
   job->argc   = cmdargs(job);
   job->cmd    = joinarg(job->argc, " ");
   job->std    = stdname(job);
@@ -1020,9 +1193,8 @@ int mtnexec_fork(MTNJOB *job)
   _exit(127);
 }
 
-int mtnexec_all(MTNJOB *job)
+int mtnexec_all(ARG arg)
 {
-  MTNJOB *j;
   MTNSVR *s;
   MTNSVR *svr = getinfo(mtn);
   if(!svr){
@@ -1030,12 +1202,7 @@ int mtnexec_all(MTNJOB *job)
     return(-1);
   }
   for(s=svr;s;s=s->next){
-    if(!(j = mtnexec_wait())){
-      break;
-    }
-    copyjob(j, job);
-    j->svr = cpsvr(s);
-    if(mtnexec_fork(j) == -1){
+    if(mtnexec_fork(cpsvr(s), arg) == -1){
       break;
     }
   }
@@ -1155,9 +1322,7 @@ MTNSVR *filtersvr_cnt_prc(MTNSVR *svr)
     limit = filtersvr_list_limit(list, count, level++);
     for(s=svr;s;s=s->next){
       if(!limit || (s->cnt.prc <= limit)){
-        if((s->cnt.cld + 1) * 100 / s->cnt.cpu < 100){
-          r = pushsvr(r, s);
-        }else if(!s->cnt.cld && (s->cnt.cpu == 1)){
+        if(s->cnt.cld * 100 / s->cnt.cpu < 50){
           r = pushsvr(r, s);
         }
       }
@@ -1251,42 +1416,41 @@ MTNSVR *filtersvr(MTNSVR *s)
   return(s);
 }
 
-void mtnexec_hybrid(MTNJOB *job)
+MTNSVR *mtnexec_hybrid(MTNSVR *svr)
 {
   int count;
   if(ctx->mode != MTNEXECMODE_HYBRID){
-    return;
+    return(svr);
   }
-  if(!job){
-    return;
-  }
-  if(!job->svr){
-    return;
+  if(!svr){
+    return(NULL);
   }
   count = getjobcount(1);
-  if((job->svr->cnt.cld > count) && (ctx->cpu_num > count + 1)){
-    job->svr = clrsvr(job->svr);
+  if((svr->cnt.cld > count) && (ctx->cpu_num > count + 1)){
+    svr = clrsvr(svr);
   }
+  return(svr);
 }
 
-int mtnexec_remote(MTNJOB *job)
+int mtnexec_remote(ARG arg)
 {
+  MTNSVR *svr;
   while(is_loop){
-    if(!(job->svr = getinfo(mtn))){
+    if(!(svr = getinfo(mtn))){
       if((ctx->mode != MTNEXECMODE_HYBRID) && is_loop){
         mtnlogger(mtn, 0, "[mtnexec] error: node not found\n");
         return(-1);
       }
       if(getjobcount(1) == 0){
-        return(mtnexec_fork(job));
+        return(mtnexec_fork(NULL, arg));
       }
     }else{
-      if((job->svr = filtersvr(job->svr))){
-        mtnexec_hybrid(job);
-        return(mtnexec_fork(job));
+      if((svr = filtersvr(svr))){
+        svr = mtnexec_hybrid(svr);
+        return(mtnexec_fork(svr, arg));
       }
     }
-    while(!mtnexec_poll() && getjobcount(0));
+    while(is_loop && !mtnexec_poll() && getjobcount(0));
   }
   return(0);
 }
@@ -1302,43 +1466,23 @@ int is_localbusy()
   return(1);
 }
 
-void mtnexec_initjob(MTNJOB *job, ARG arg)
-{
-  static int id = 0;
-  memset(job, 0, sizeof(MTNJOB));
-  job->id   = id++;
-  job->uid  = getuid();
-  job->gid  = getgid();
-  job->cid  = -1;
-  job->lim  = ctx->cpu_lim;
-  job->conv = ctx->conv;
-  job->args = copyarg(ctx->cmdargs);
-  job->argl = copyarg(arg);
-  job->exit = -1;
-  job->cid  = -1;
-}
-
-int mtnexec(ARG argp)
+int mtnexec(ARG arg)
 {
   int r = 0;
-  MTNJOB *j;
- 
-  j = mtnexec_wait();       // プロセス数の上限に達していたらここで待機する
-  mtnexec_initjob(j, argp);
   switch(ctx->mode){
     case MTNEXECMODE_LOCAL:
-      r = mtnexec_fork(j);
+      r = mtnexec_fork(NULL, arg);
       break;
     case MTNEXECMODE_REMOTE:
     case MTNEXECMODE_HYBRID:
-      r = mtnexec_remote(j);
+      r = mtnexec_remote(arg);
       break;
     case MTNEXECMODE_ALL0:
-      r = mtnexec_all(j);
+      r = mtnexec_all(arg);
       break;
     case MTNEXECMODE_ALL1:
-      if(!(r = mtnexec_all(j))){
-        r = mtnexec_fork(j);
+      if(!(r = mtnexec_all(arg))){
+        r = mtnexec_fork(NULL, arg);
       }
       break;
   }

@@ -27,6 +27,7 @@
 #include <sys/epoll.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <sched.h>
 
 MTN     *mtn;
 MTND    *ctx;
@@ -1167,6 +1168,7 @@ void mtnd_child_exit(MTNTASK *kt)
 
 void mtnd_child_fork(MTNTASK *kt, MTNJOB *job)
 {
+  struct sched_param schparam;
   int pp[3][2];
   pipe(pp[0]);
   pipe(pp[1]);
@@ -1196,7 +1198,6 @@ void mtnd_child_fork(MTNTASK *kt, MTNJOB *job)
     return;
   }
   //===== exec process =====
-  setpgid(0,0);
   close(0);
   close(1);
   close(2);
@@ -1209,6 +1210,16 @@ void mtnd_child_fork(MTNTASK *kt, MTNJOB *job)
   close(pp[1][1]);
   close(pp[2][0]);
   close(pp[2][1]);
+
+  mtn->logtype = 0;
+  mtn->logmode = MTNLOG_STDERR;
+  if(setpgid(0, 0) == -1){
+    mtnlogger(mtn, 0, "[error] %s: setpgid %s\n", __func__, strerror(errno));
+  }
+  schparam.sched_priority = 0;
+  if(sched_setscheduler(0, SCHED_BATCH, &schparam) == -1){
+    mtnlogger(mtn, 0, "[error] %s: setscheduler %s\n", __func__, strerror(errno));
+  }
   execlp("sh", "sh", "-c", job->cmd, NULL);
   mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), job->cmd);
   _exit(127);

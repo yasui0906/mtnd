@@ -13,7 +13,6 @@
 typedef struct mtnexec_context
 {
   int efd;
-  int zero;
   int conv;
   int mode;
   int info;

@@ -101,6 +101,17 @@ int getcount(int id)
   return(r);
 }
 
+int is_empty(STR str)
+{
+  if(!str){
+    return(1);
+  }
+  if(*str == 0){
+    return(1);
+  }
+  return(0);
+}
+
 int is_numeric(STR str)
 {
   while(*str){
@@ -3102,10 +3113,12 @@ STR modstr(STR str, char *n)
 STR catstr(STR str1, STR str2)
 {
   int len = 1;
-  len += strlen(str1);
-  len += strlen(str2);
-  str1 = xrealloc(str1, len);
-  strcat(str1, str2);
+  len += str1 ? strlen(str1) : 0;
+  len += str2 ? strlen(str2) : 0;
+  str1 = str1 ? xrealloc(str1, len) : xcalloc(len);
+  if(str2){
+    strcat(str1, str2);
+  }
   return(str1);
 }
 
@@ -3137,6 +3150,9 @@ STR dotstr(STR str)
 STR basestr(STR str)
 {
   char buff[PATH_MAX];
+  if(is_empty(str)){
+    return(str);
+  }
   strcpy(buff, str);
   return(modstr(str, basename(buff)));
 }
@@ -3250,125 +3266,13 @@ STR findarg(ARG arg, STR str)
   return(NULL);
 }
 
-static STR convarg3(STR arg, MTNJOB *job)
+int cntarg(ARG arg)
 {
-  int n;
-  int m;
-  STR s;
-  if(!strcmp(arg, "")){
-    s = joinarg(job->argl, " ");
-    arg = modstr(arg, s);
-    s = clrstr(s);
-  }else if(!strcmp(arg, "/")){
-    s = joinarg(job->argl, " ");
-    s = basestr(s);
-    arg = modstr(arg, s);
-    s = clrstr(s);
-  }else if(!strcmp(arg, ".")){
-    s = joinarg(job->argl, " ");
-    s = dotstr(s);
-    arg = modstr(arg, s);
-    s = clrstr(s);
-  }else if(!strcmp(arg, "/.")){
-    s = joinarg(job->argl, " ");
-    s = basestr(s);
-    s = dotstr(s);
-    arg = modstr(arg, s);
-    s = clrstr(s);
-  }else if(!strcmp(arg, "H")){
-    if(job->svr){
-      arg = modstr(arg, job->svr->host);
-    }else{
-      arg = modstr(arg, "local");
-    }
-  }else{
-    errno = 0;
-    n = strtol(arg, NULL, 10);
-    for(m=0;job->argl[m];m++);
-    if(!errno){
-      arg = modstr(arg, (n < m) ? job->argl[n] : "");
-    }else{
-      s = newstr("{");
-      s = catstr(s, arg);
-      s = catstr(s, "}");
-      arg = modstr(arg, s);
-      clrstr(s);
-    }
+  int i = 0;
+  if(arg){
+    for(i=0;arg[i];i++);
   }
-  return(arg);
-}
-
-static STR convarg2(STR arg, MTNJOB *job)
-{
-  int i;
-  STR p;
-  STR q;
-  STR r;
-  if(!job->argl || !arg){
-    return(arg);
-  }
-  i = 0;
-  p = newstr(arg);
-  while(*(p + i)){
-    if(*(p + i) == '}'){
-      *(p + i) = 0;
-      i++;
-      q = newstr(p);
-      r = newstr(p + i);
-      q = convarg3(q, job);
-      arg = modstr(arg, q);
-      arg = catstr(arg, r);
-      clrstr(q);
-      clrstr(r);
-      break;
-    }
-    i++;
-  }
-  clrstr(p);
-  return(arg);
-}
-
-STR convarg(STR arg, MTNJOB *job)
-{
-  int i;
-  STR p;
-  STR q;
-  if(!job->argl || !arg){
-    return(arg);
-  }
-
-  i = 0;
-  p = newstr(arg);
-  while(*(p + i)){
-    if(*(p + i) == '{'){
-      *(p + i) = 0;
-      i++;
-      q = newstr(p + i);
-      q = convarg2(q, job);
-      arg = modstr(arg, p);
-      arg = catstr(arg, q);
-      p = modstr(p, arg);
-      q = clrstr(q);
-      continue;
-    }
-    i++;
-  }
-  clrstr(p);
-  return(arg);
-}
-
-ARG cpconvarg(ARG arg, MTNJOB *job)
-{
-  int i;
-  ARG r = newarg(0);
-  if(!arg){
-    return(r);
-  }
-  for(i=0;arg[i];i++){
-    r = addarg(r, arg[i]);
-    r[i] = convarg(r[i], job);
-  }
-  return(r);
+  return(i);
 }
 
 static int job_flush_stdout(MTNJOB *job)
@@ -3453,31 +3357,5 @@ int job_close(MTNJOB *job)
   clrsvr(job->svr);
   memset(job, 0, sizeof(MTNJOB));
   return(0);
-}
-
-//
-// 引数リストを展開する
-//   args: 引数リスト
-//   argl: 展開パラメータ
-//
-ARG cmdargs(MTNJOB *job)
-{
-  int i;
-  ARG cmd = newarg(0);
-  if(job->args){
-    for(i=0;job->args[i];i++){
-      if(job->conv){
-        cmd = addarg(cmd, convarg(newstr(job->args[i]), job));
-      }else{
-        cmd = addarg(cmd, newstr(job->args[i]));
-      }
-    }
-  }
-  if(!job->conv && job->argl){
-    for(i=0;job->argl[i];i++){
-      cmd = addarg(cmd, job->argl[i]);
-    }
-  }
-  return(cmd);
 }
 

@@ -200,6 +200,7 @@ typedef struct mtn_context
 } MTN;
 
 /*=========================================================================*/
+int is_empty(STR str);
 int is_numeric(STR str);
 int is_export(MTNSVR *svr);
 int is_execute(MTNSVR *svr);
@@ -271,17 +272,17 @@ STR modstr(STR str, char *n);
 STR clrstr(STR str);
 STR catstr(STR str1, STR str2);
 ARG splitstr(STR str, STR delim);
+STR dotstr(STR str);
+STR basestr(STR str);
 
 ARG newarg(int c);
 ARG addarg(ARG arg, STR str);
 ARG clrarg(ARG args);
 ARG copyarg(ARG args);
 STR poparg(ARG args);
-STR convarg(STR arg, MTNJOB *job);
-ARG cpconvarg(ARG arg, MTNJOB *job);
 STR joinarg(ARG args, STR delim);
 STR findarg(ARG arg, STR str);
-ARG cmdargs(MTNJOB *job);
+int cntarg(ARG arg);
 
 size_t set_mtnstatus_members(MTN *mtn);
 size_t set_mtnstatus_debuginfo(MTN *mtn);
