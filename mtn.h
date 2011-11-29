@@ -266,6 +266,7 @@ MTNSVR  *delsvr(MTNSVR *svr);
 MTNSVR  *clrsvr(MTNSVR *svr);
 MTNSVR  *pushsvr(MTNSVR *list, MTNSVR *svr);
 int      cmpsvr(MTNSVR *s1, MTNSVR *s2);
+MTNSVR  *filtersvr(MTNSVR *s, int mode);
 
 STR newstr(char *str);
 STR modstr(STR str, char *n);

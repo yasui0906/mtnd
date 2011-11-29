@@ -1343,6 +1343,286 @@ int cmpsvr(MTNSVR *s1, MTNSVR *s2)
   return(cmpaddr(&(s1->addr), &(s2->addr)));
 }
 
+static MTNSVR *filtersvr_loadavg(MTNSVR *svr)
+{
+  MTNSVR *s;
+  MTNSVR *r = NULL;
+  for(s=svr;s;s=s->next){
+    if(s->loadavg < 100){
+      r = pushsvr(r, s);
+    }
+  }
+  clrsvr(svr);
+  return(r);
+}
+
+static MTNSVR *filtersvr_cnt_job(MTNSVR *svr)
+{
+  int f = 1;
+  int j = 0;
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+  if(!svr){
+    return(NULL);
+  }
+  while(!r && f){
+    f = 0;
+    for(s=svr;s;s=s->next){
+      if(s->cnt.cpu > s->cnt.cld){
+        f = 1;
+        if(s->cnt.cld == j){
+          r = pushsvr(r, s);
+        }
+      }
+    }
+    j++;
+  }
+  clrsvr(svr);
+  return(r);
+}
+
+static int filtersvr_list_limit(int *list, int count, int level)
+{
+  int i;
+  int sum = 0;
+  int sub = 0;
+  int avg = 0;
+  int lim = 0;
+  if(!list || (count < 2)){
+    return(0);
+  }
+  for(i=1;i<count;i++){
+    sum += abs(list[i] - list[i-1]);
+  }
+  lim = list[0];
+  avg = sum / (count - 1);
+  for(i=1;i<count;i++){
+    sub = abs(list[i] - list[i-1]);
+    if(avg > sub){
+      lim = list[i];
+    }else{
+      if(level){
+        level--;
+        lim = list[i];
+      }else{
+        break;
+      }
+    }
+  }
+  return((i == count) ? 0 : lim);
+}
+
+static int filtersvr_qsort_cmp1(const void *p1, const void *p2)
+{
+  int v1 = *(int *)p1;
+  int v2 = *(int *)p2;
+  if(v1 == v2){
+    return(0);
+  }
+  return((v1 > v2) ? 1 : -1);
+}
+
+static int filtersvr_qsort_cmp2(const void *p1, const void *p2)
+{
+  int v1 = *(int *)p1;
+  int v2 = *(int *)p2;
+  if(v1 == v2){
+    return(0);
+  }
+  return((v1 < v2) ? 1 : -1);
+}
+
+static MTNSVR *filtersvr_cnt_prc(MTNSVR *svr)
+{
+  int level = 0;
+  int count = 0;
+  int limit = 0;
+  int *list = NULL;
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+
+  if(!svr){
+    return(NULL);
+  }
+  for(s=svr;s;s=s->next){
+    list = realloc(list, (count + 1) * sizeof(int));
+    list[count] = s->cnt.prc;
+    count++;
+  }
+  qsort(list, count, sizeof(int), filtersvr_qsort_cmp1);
+  do{
+    r = clrsvr(r);
+    limit = filtersvr_list_limit(list, count, level++);
+    for(s=svr;s;s=s->next){
+      if(!limit || (s->cnt.prc <= limit)){
+        if(s->cnt.cld * 100 / s->cnt.cpu < 50){
+          r = pushsvr(r, s);
+        }
+      }
+    }
+    r = filtersvr_cnt_job(r);
+  }while(limit && !r);
+  free(list);
+  clrsvr(svr);
+  return(r);
+}
+
+static MTNSVR *filtersvr_cnt_cpu(MTNSVR *svr)
+{
+  int cpu = 0;
+  int min = 0;
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+  if(!svr){
+    return(NULL);
+  }
+  for(s=svr;s;s=s->next){
+    cpu = s->cnt.prc * 100 / s->cnt.cpu;
+    min = (!min || cpu < min) ? cpu : min;
+  }
+  for(s=svr;s;s=s->next){
+    cpu = s->cnt.prc * 100 / s->cnt.cpu;
+    if(cpu == min){
+      r = pushsvr(r, s);
+    } 
+  }
+  clrsvr(svr);
+  return(r);
+}
+
+static MTNSVR *filtersvr_memfree(MTNSVR *svr)
+{
+  int count = 0;
+  int limit = 0;
+  int mfree = 0;
+  int *list = NULL;
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+
+  if(!svr){
+    return(NULL);
+  }
+  for(s=svr;s;s=s->next){
+    list = realloc(list, (count + 1) * sizeof(int));
+    list[count] = (int)(s->memfree / 1024 / 1024);
+    count++;
+  }
+  qsort(list, count, sizeof(int), filtersvr_qsort_cmp2);
+  limit = filtersvr_list_limit(list, count, 0);
+  for(s=svr;s;s=s->next){
+    mfree = (int)(s->memfree / 1024 / 1024);
+    if(!limit || (mfree >= limit)){
+      r = pushsvr(r, s);
+    }
+  }
+  free(list);
+  clrsvr(svr);
+  return(r);
+}
+
+static MTNSVR *filtersvr_diskfree(MTNSVR *svr)
+{
+  int count = 0;
+  int limit = 0;
+  int dfree = 0;
+  int *list = NULL;
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+
+  if(!svr){
+    return(NULL);
+  }
+  for(s=svr;s;s=s->next){
+    list = realloc(list, (count + 1) * sizeof(int));
+    list[count] = (int)((s->dfree * s->bsize - s->limit) / 1024 / 1024);
+    count++;
+  }
+  qsort(list, count, sizeof(int), filtersvr_qsort_cmp2);
+  limit = filtersvr_list_limit(list, count, 0);
+  for(s=svr;s;s=s->next){
+    dfree = (int)((s->dfree * s->bsize - s->limit) / 1024 / 1024);
+    if(!limit || (dfree >= limit)){
+      r = pushsvr(r, s);
+    }
+  }
+  free(list);
+  clrsvr(svr);
+  return(r);
+}
+
+static MTNSVR *filtersvr_order(MTNSVR *svr)
+{
+  int min;
+  MTNSVR *s;
+  MTNSVR *r;
+  if(!svr){
+    return(NULL);
+  }
+  r = svr;
+  min = svr->order;
+  for(s=svr->next;s;s=s->next){
+    if(min > s->order){
+      r = s; 
+      min = s->order;
+    }
+  }
+  r = cpsvr(r);
+  clrsvr(svr);
+  return(r);
+}
+
+static MTNSVR *filtersvr_export(MTNSVR *svr)
+{
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+  if(!svr){
+    return(NULL);
+  }
+  for(s=svr;s;s=s->next){
+    if(is_export(s)){
+      r = pushsvr(r, s);
+    }
+  }
+  clrsvr(svr);
+  return(r);
+}
+
+static MTNSVR *filtersvr_execute(MTNSVR *svr)
+{
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+  if(!svr){
+    return(NULL);
+  }
+  for(s=svr;s;s=s->next){
+    if(is_execute(s)){
+      r = pushsvr(r, s);
+    }
+  }
+  clrsvr(svr);
+  return(r);
+}
+
+
+MTNSVR *filtersvr(MTNSVR *s, int mode)
+{
+  switch(mode){
+    case 0:
+      s = filtersvr_loadavg(s); // LAが1以上のノードを除外する
+      s = filtersvr_cnt_prc(s); // プロセス数が少ないノードを抽出する
+      s = filtersvr_cnt_cpu(s); // ジョブが少ないノードを抽出する
+      s = filtersvr_memfree(s); // 空きメモリが多いノードを抽出する
+      s = filtersvr_order(s);   // 応答速度が一番速かったノードを選択する
+      break;
+    case 1:
+      s = filtersvr_diskfree(s); 
+      s = filtersvr_cnt_job(s);
+      s = filtersvr_order(s);
+      break;
+  }
+  return(s);
+}
+
 //----------------------------------------------------------------
 // MTNSAVETASK
 //----------------------------------------------------------------
@@ -1772,52 +2052,14 @@ MTNSTAT *mtn_stat(MTN *mtn, const char *path)
   return(sd.option);
 }
 
-void mtn_choose_info(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
-{
-  MTNSVR *choose = sdata->option;
-  mtndata_get_int(&(member->bsize),     rdata, sizeof(member->bsize));
-  mtndata_get_int(&(member->fsize),     rdata, sizeof(member->fsize));
-  mtndata_get_int(&(member->dsize),     rdata, sizeof(member->dsize));
-  mtndata_get_int(&(member->dfree),     rdata, sizeof(member->dfree));
-  mtndata_get_int(&(member->limit),     rdata, sizeof(member->limit));
-  mtndata_get_int(&(member->vsz),       rdata, sizeof(member->vsz));
-  mtndata_get_int(&(member->res),       rdata, sizeof(member->res));
-  mtndata_get_int(&(member->cnt.cpu),   rdata, sizeof(member->cnt.cpu));
-  mtndata_get_int(&(member->loadavg),   rdata, sizeof(member->loadavg));
-  mtndata_get_int(&(member->memsize),   rdata, sizeof(member->memsize));
-  mtndata_get_int(&(member->memfree),   rdata, sizeof(member->memfree));
-  mtndata_get_int(&(member->flags),     rdata, sizeof(member->flags));
-  mtndata_get_data(&(member->cnt),      rdata, sizeof(member->cnt));
-  if(is_export(member)){
-    if(choose == NULL){
-      sdata->option = member;
-    }else{
-      if((member->dfree * member->bsize) > (choose->dfree * choose->bsize)){
-        sdata->option = member;
-      }
-    }
-  }
-}
-
-void mtn_choose_list(MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
-{
-}
-
-MTNSVR *mtn_choose(MTN *mtn, const char *path)
+MTNSVR *mtn_choose(MTN *mtn)
 {
 	mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
-  MTNDATA data;
-  MTNSVR *member;
-  MTNSVR *members = get_members(mtn);
-  data.head.type  = MTNCMD_INFO;
-  data.head.size  = 0;
-  data.head.flag  = 0;
-  data.option     = NULL;
-  mtn_process(mtn, members, &data, (MTNPROCFUNC)mtn_choose_info);
-  member = cpsvr(data.option);
-  clrsvr(members);
+  MTNSVR *s = mtn_info(mtn);
+  s = filtersvr_export(s);
+  s = filtersvr(s, 1);
 	mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
-  return(member);
+  return(s);
 }
 
 void mtn_find_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, MTNADDR *addr)
@@ -1845,7 +2087,7 @@ MTNSTAT *mtn_find(MTN *mtn, const char *path, int create_flag)
   kst = data.option;
   if(kst == NULL){
     if(create_flag){
-      if((svr = mtn_choose(mtn, path))){
+      if((svr = mtn_choose(mtn))){
         kst = newstat(path);
         kst->svr = svr;
       }

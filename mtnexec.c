@@ -271,37 +271,45 @@ MTNSVR *getinfo()
   return(members);
 }
 
+void test()
+{
+}
+
 void info()
 {
   MTNSVR *s;
-  uint32_t node    = 0;
+  uint32_t node  = 0;
+  uint64_t msize = 0;
+  uint64_t mfree = 0;
+  uint64_t dsize = 0;
+  uint64_t dfree = 0;
   uint32_t cpu_num = 0;
-  uint64_t memsize = 0;
-  uint64_t memfree = 0;
-
   for(s=getinfo();s;s=s->next){
     node++;
     cpu_num += s->cnt.cpu;
-    memsize += s->memsize/1024/1024;
-    memfree += s->memfree/1024/1024;
-    printf("%5s: ",       s->host);
-    printf("ORD=%03d ",   s->order);
-    printf("CPU=%02d ",   s->cnt.cpu);
-    printf("LA=%d.%02d ", s->loadavg / 100, s->loadavg % 100);
-    printf("MEM=%luM ",   s->memsize/1024/1024);
-    printf("FREE=%luM ",  s->memfree/1024/1024);
-    printf("PS=%d ",      s->cnt.prc);
-    printf("VSZ=%luK ",   s->vsz/1024);
-    printf("RES=%luK ",   s->res/1024);
-    printf("MLC=%d ",     s->cnt.mem);
-    printf("TSK=%d ",     s->cnt.tsk);
-    printf("TSV=%d ",     s->cnt.tsv);
-    printf("SVR=%d ",     s->cnt.svr);
-    printf("DIR=%d ",     s->cnt.dir);
-    printf("STA=%d ",     s->cnt.sta);
-    printf("STR=%d ",     s->cnt.str);
-    printf("ARG=%d ",     s->cnt.arg);
-    printf("CLD=%d ",     s->cnt.cld);
+    msize += s->memsize/1024/1024;
+    mfree += s->memfree/1024/1024;
+    dsize = (s->dsize * s->fsize - s->limit) / 1024 / 1024;
+    dfree = (s->dfree * s->bsize - s->limit) / 1024 / 1024;
+    printf("%5s: ",        s->host);
+    printf("ORD=%03d ",    s->order);
+    printf("CPU=%02d ",    s->cnt.cpu);
+    printf("LA=%d.%02d ",  s->loadavg / 100, s->loadavg % 100);
+    printf("MS=%luM ",     s->memsize/1024/1024);
+    printf("MF=%luM ",     s->memfree/1024/1024);
+    printf("DF=%luG(%02lu%%) ", dfree / 1024, dfree * 100 / dsize);
+    printf("PS=%d ",       s->cnt.prc);
+    printf("VSZ=%luK ",    s->vsz/1024);
+    printf("RES=%luK ",    s->res/1024);
+    printf("MLC=%d ",      s->cnt.mem);
+    printf("TSK=%d ",      s->cnt.tsk);
+    printf("TSV=%d ",      s->cnt.tsv);
+    printf("SVR=%d ",      s->cnt.svr);
+    printf("DIR=%d ",      s->cnt.dir);
+    printf("STA=%d ",      s->cnt.sta);
+    printf("STR=%d ",      s->cnt.str);
+    printf("ARG=%d ",      s->cnt.arg);
+    printf("CLD=%d ",      s->cnt.cld);
     printf("\n");
   }
   if(!node){
@@ -309,8 +317,8 @@ void info()
   }else{
     printf("TOTAL: ");
     printf("%dCPU(%dnode) ", cpu_num, node);
-    if(memsize){
-      printf("MEM=%luM/%luM(%lu%%Free) ",  memfree, memsize, memfree * 100 / memsize);
+    if(msize){
+      printf("MEM=%luM/%luM(%lu%%Free) ",  mfree, msize, mfree * 100 / msize);
     }
   }
   printf("\n");
@@ -322,6 +330,7 @@ struct option *get_optlist()
       {"help",    0, NULL, 'h'},
       {"version", 0, NULL, 'V'},
       {"info",    0, NULL, 'F'},
+      {"test",    0, NULL, 'T'},
       {"stdin",   1, NULL, 'I'},
       {"stdout",  1, NULL, 'O'},
       {"stderr",  1, NULL, 'E'},
@@ -403,6 +412,10 @@ ARG parse(int argc, char *argv[])
       case 'F':
         ctx->info = 1;
         break;
+
+      case 'T':
+        test();
+        exit(0);
 
       case 'v':
         ctx->verbose = 1;
@@ -1210,212 +1223,6 @@ int mtnexec_all(ARG arg)
   return(s ? -1 : 0);
 }
 
-MTNSVR *filtersvr_loadavg(MTNSVR *svr)
-{
-  MTNSVR *s;
-  MTNSVR *r = NULL;
-  for(s=svr;s;s=s->next){
-    if(s->loadavg < 100){
-      r = pushsvr(r, s);
-    }
-  }
-  clrsvr(svr);
-  return(r);
-}
-
-MTNSVR *filtersvr_cnt_job(MTNSVR *svr)
-{
-  int f = 1;
-  int j = 0;
-  MTNSVR *s = NULL;
-  MTNSVR *r = NULL;
-  if(!svr){
-    return(NULL);
-  }
-  while(!r && f){
-    f = 0;
-    for(s=svr;s;s=s->next){
-      if(s->cnt.cpu > s->cnt.cld){
-        f = 1;
-        if(s->cnt.cld == j){
-          r = pushsvr(r, s);
-        }
-      }
-    }
-    j++;
-  }
-  clrsvr(svr);
-  return(r);
-}
-
-int filtersvr_list_limit(int *list, int count, int level)
-{
-  int i;
-  int sum = 0;
-  int sub = 0;
-  int avg = 0;
-  int lim = 0;
-  if(!list || (count < 2)){
-    return(0);
-  }
-  for(i=1;i<count;i++){
-    sum += abs(list[i] - list[i-1]);
-  }
-  lim = list[0];
-  avg = sum / (count - 1);
-  for(i=1;i<count;i++){
-    sub = abs(list[i] - list[i-1]);
-    if(avg > sub){
-      lim = list[i];
-    }else{
-      if(level){
-        level--;
-        lim = list[i];
-      }else{
-        break;
-      }
-    }
-  }
-  return((i == count) ? 0 : lim);
-}
-
-static int cmp1(const void *p1, const void *p2)
-{
-  int v1 = *(int *)p1;
-  int v2 = *(int *)p2;
-  if(v1 == v2){
-    return(0);
-  }
-  return((v1 > v2) ? 1 : -1);
-}
-
-static int cmp2(const void *p1, const void *p2)
-{
-  int v1 = *(int *)p1;
-  int v2 = *(int *)p2;
-  if(v1 == v2){
-    return(0);
-  }
-  return((v1 < v2) ? 1 : -1);
-}
-
-MTNSVR *filtersvr_cnt_prc(MTNSVR *svr)
-{
-  int level = 0;
-  int count = 0;
-  int limit = 0;
-  int *list = NULL;
-  MTNSVR *s = NULL;
-  MTNSVR *r = NULL;
-
-  if(!svr){
-    return(NULL);
-  }
-  for(s=svr;s;s=s->next){
-    list = realloc(list, (count + 1) * sizeof(int));
-    list[count] = s->cnt.prc;
-    count++;
-  }
-  qsort(list, count, sizeof(int), cmp1);
-  do{
-    r = clrsvr(r);
-    limit = filtersvr_list_limit(list, count, level++);
-    for(s=svr;s;s=s->next){
-      if(!limit || (s->cnt.prc <= limit)){
-        if(s->cnt.cld * 100 / s->cnt.cpu < 50){
-          r = pushsvr(r, s);
-        }
-      }
-    }
-    r = filtersvr_cnt_job(r);
-  }while(limit && !r);
-  free(list);
-  clrsvr(svr);
-  return(r);
-}
-
-MTNSVR *filtersvr_cnt_cpu(MTNSVR *svr)
-{
-  int cpu = 0;
-  int min = 0;
-  MTNSVR *s = NULL;
-  MTNSVR *r = NULL;
-  if(!svr){
-    return(NULL);
-  }
-  for(s=svr;s;s=s->next){
-    cpu = s->cnt.prc * 100 / s->cnt.cpu;
-    min = (!min || cpu < min) ? cpu : min;
-  }
-  for(s=svr;s;s=s->next){
-    cpu = s->cnt.prc * 100 / s->cnt.cpu;
-    if(cpu == min){
-      r = pushsvr(r, s);
-    } 
-  }
-  clrsvr(svr);
-  return(r);
-}
-
-MTNSVR *filtersvr_memfree(MTNSVR *svr)
-{
-  int count = 0;
-  int limit = 0;
-  int *list = NULL;
-  MTNSVR *s = NULL;
-  MTNSVR *r = NULL;
-
-  if(!svr){
-    return(NULL);
-  }
-  for(s=svr;s;s=s->next){
-    list = realloc(list, (count + 1) * sizeof(int));
-    list[count] = (int)(s->memfree / 1024 / 1024);
-    count++;
-  }
-  qsort(list, count, sizeof(int), cmp2);
-  limit = filtersvr_list_limit(list, count, 0);
-  for(s=svr;s;s=s->next){
-    if(!limit || (s->cnt.prc <= limit)){
-      r = pushsvr(r, s);
-    }
-  }
-  free(list);
-  clrsvr(svr);
-  return(r);
-}
-
-MTNSVR *filtersvr_order(MTNSVR *svr)
-{
-  int min;
-  MTNSVR *s;
-  MTNSVR *r;
-  if(!svr){
-    return(NULL);
-  }
-  r = svr;
-  min = svr->order;
-  for(s=svr->next;s;s=s->next){
-    if(min > s->order){
-      r = s; 
-      min = s->order;
-    }
-  }
-  r = cpsvr(r);
-  clrsvr(svr);
-  return(r);
-}
-
-MTNSVR *filtersvr(MTNSVR *s)
-{
-  s = filtersvr_loadavg(s); // LAが1以上のノードを除外する
-  s = filtersvr_cnt_prc(s); // プロセス数が少ないノードを抽出する
-  s = filtersvr_cnt_cpu(s); // ジョブが少ないノードを抽出する
-  s = filtersvr_memfree(s); // 空きメモリが多いノードを抽出する
-  s = filtersvr_order(s);   // 応答速度が一番速かったノードを選択する
-  return(s);
-}
-
 MTNSVR *mtnexec_hybrid(MTNSVR *svr)
 {
   int count;
@@ -1445,7 +1252,7 @@ int mtnexec_remote(ARG arg)
         return(mtnexec_fork(NULL, arg));
       }
     }else{
-      if((svr = filtersvr(svr))){
+      if((svr = filtersvr(svr, 0))){
         svr = mtnexec_hybrid(svr);
         return(mtnexec_fork(svr, arg));
       }
