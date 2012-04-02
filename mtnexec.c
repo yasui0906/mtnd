@@ -54,6 +54,7 @@ void usage()
   printf("   -g group           # \n");
   printf("   -P num             # \n");
   printf("   -N num             # \n");
+  printf("   -f file            # read args from file\n");
   printf("   -m addr            # mcast addr(default:)\n");
   printf("   -p port            # TCP/UDP port(default: 6000)\n");
   printf("   -h                 # help\n");
@@ -273,6 +274,46 @@ MTNSVR *getinfo()
 
 void test()
 {
+  MTNSVR  *s;
+  uint32_t node  = 0;
+  uint64_t msize = 0;
+  uint64_t mfree = 0;
+  uint64_t dsize = 0;
+  uint64_t dfree = 0;
+  uint32_t cpu_num = 0;
+
+  s = mtn_info(mtn);
+  s = filtersvr_export(s);
+  s = filtersvr_diskfree(s);
+  while(s){
+    node++;
+    cpu_num += s->cnt.cpu;
+    msize += s->memsize/1024/1024;
+    mfree += s->memfree/1024/1024;
+    dsize = (s->dsize * s->fsize - s->limit) / 1024 / 1024;
+    dfree = (s->dfree * s->bsize - s->limit) / 1024 / 1024;
+    printf("%5s: ",        s->host);
+    printf("ORD=%03d ",    s->order);
+    printf("CPU=%02d ",    s->cnt.cpu);
+    printf("LA=%d.%02d ",  s->loadavg / 100, s->loadavg % 100);
+    printf("MS=%luM ",     s->memsize/1024/1024);
+    printf("MF=%luM ",     s->memfree/1024/1024);
+    printf("DF=%luG(%02lu%%) ", dfree / 1024, dfree * 100 / dsize);
+    printf("PS=%d ",       s->cnt.prc);
+    printf("VSZ=%luK ",    s->vsz/1024);
+    printf("RES=%luK ",    s->res/1024);
+    printf("MLC=%d ",      s->cnt.mem);
+    printf("TSK=%d ",      s->cnt.tsk);
+    printf("TSV=%d ",      s->cnt.tsv);
+    printf("SVR=%d ",      s->cnt.svr);
+    printf("DIR=%d ",      s->cnt.dir);
+    printf("STA=%d ",      s->cnt.sta);
+    printf("STR=%d ",      s->cnt.str);
+    printf("ARG=%d ",      s->cnt.arg);
+    printf("CLD=%d ",      s->cnt.cld);
+    printf("\n");
+    s = s->next;
+  }
 }
 
 void info()
@@ -399,7 +440,7 @@ ARG parse(int argc, char *argv[])
     exit(0);
   }
   optind = 0;
-  while((r = getopt_long(argc, argv, "+hVvnBbig:j:e:I:RALP:N:m:p:d:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "+hVvnBbig:j:e:I:RALP:N:m:p:d:f:", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -411,6 +452,19 @@ ARG parse(int argc, char *argv[])
 
       case 'F':
         ctx->info = 1;
+        break;
+
+      case 'f':
+        ctx->arg_num = ctx->arg_num ? ctx->arg_num : 1;
+        if(!strcmp("-", optarg)){
+          ctx->afd = 0;
+        }else{
+          ctx->afd = open(optarg, O_RDONLY);
+          if(ctx->afd == -1){
+            mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, optarg, strerror(errno));
+            exit(1);
+          }
+        }
         break;
 
       case 'T':
@@ -1076,7 +1130,9 @@ int mtnexec_fork(MTNSVR *svr, ARG arg)
   MTNJOB *job;
   struct epoll_event ev;
 
-  job = mtnexec_wait();
+  if(!(job = mtnexec_wait())){
+    return(-1);
+  }
   mtnexec_initjob(job, arg);
   job->svr    = svr;
   job->argc   = cmdargs(job);
@@ -1333,7 +1389,7 @@ ARG linearg()
 void argexec()
 {
   ARG argp;
-  while(is_loop && (argp = ctx->linearg ? linearg() : readarg(0, ctx->arg_num))){
+  while(is_loop && (argp = ctx->linearg ? linearg() : readarg(ctx->afd, ctx->arg_num))){
     if(mtnexec(argp) == -1){
       clrarg(argp);
       break;
@@ -1378,12 +1434,12 @@ int init(int argc, char *argv[])
   mtn->mps_max = 512;
   mtn->logtype = 0;
   mtn->logmode = MTNLOG_STDERR;
+  ctx->afd     = -1;
   ctx->nobuf   = 1;
   ctx->text    = 1;
   ctx->delim   = newstr(" ");
   ctx->cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->job_max = sysconf(_SC_NPROCESSORS_ONLN);
-  ctx->arg_num = isatty(fileno(stdin)) ? 0 : 1;
   ctx->cmdargs = parse(argc, argv);
   gettimeofday(&(ctx->polltv), NULL);
 

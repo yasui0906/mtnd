@@ -1520,7 +1520,7 @@ static MTNSVR *filtersvr_memfree(MTNSVR *svr)
   return(r);
 }
 
-static MTNSVR *filtersvr_diskfree(MTNSVR *svr)
+MTNSVR *filtersvr_diskfree(MTNSVR *svr)
 {
   int count = 0;
   int limit = 0;
@@ -1571,7 +1571,7 @@ static MTNSVR *filtersvr_order(MTNSVR *svr)
   return(r);
 }
 
-static MTNSVR *filtersvr_export(MTNSVR *svr)
+MTNSVR *filtersvr_export(MTNSVR *svr)
 {
   MTNSVR *s = NULL;
   MTNSVR *r = NULL;
@@ -1587,7 +1587,7 @@ static MTNSVR *filtersvr_export(MTNSVR *svr)
   return(r);
 }
 
-static MTNSVR *filtersvr_execute(MTNSVR *svr)
+MTNSVR *filtersvr_execute(MTNSVR *svr)
 {
   MTNSVR *s = NULL;
   MTNSVR *r = NULL;
