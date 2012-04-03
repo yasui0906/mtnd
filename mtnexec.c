@@ -52,7 +52,7 @@ void usage()
   printf("   -b                 # \n");
   printf("   -B                 # stdout/stderr binary mode\n");
   printf("   -g group           # \n");
-  printf("   -P num             # \n");
+  printf("   -P max-procs       # \n");
   printf("   -N num             # \n");
   printf("   -f file            # read args from file\n");
   printf("   -m addr            # mcast addr(default:)\n");
@@ -1422,7 +1422,6 @@ int init(int argc, char *argv[])
 {
   mtn = mtn_init(MODULE_NAME);
   ctx = calloc(1,sizeof(CTX));
-
   if(!mtn){
     return(-1);
   }
@@ -1430,7 +1429,6 @@ int init(int argc, char *argv[])
     mtnlogger(NULL, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
-
   mtn->mps_max = 512;
   mtn->logtype = 0;
   mtn->logmode = MTNLOG_STDERR;
@@ -1442,7 +1440,6 @@ int init(int argc, char *argv[])
   ctx->job_max = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->cmdargs = parse(argc, argv);
   gettimeofday(&(ctx->polltv), NULL);
-
   if(init_pipe() == -1){
     return(-1);
   }

@@ -3,7 +3,7 @@
  * Copyright (C) 2011 KLab Inc.
  */
 #define MTN_DEBUG
-#define MTN_VERSION "0.9"
+#define MTN_VERSION "0.9.7"
 #include <unistd.h>
 #include <stdint.h>
 #include <dirent.h>

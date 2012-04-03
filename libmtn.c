@@ -1377,7 +1377,11 @@ static MTNSVR *filtersvr_cnt_job(MTNSVR *svr)
     }
     j++;
   }
-  clrsvr(svr);
+  if(r){
+    clrsvr(svr);
+  }else{
+    r = svr;
+  }
   return(r);
 }
 
@@ -1615,8 +1619,8 @@ MTNSVR *filtersvr(MTNSVR *s, int mode)
       s = filtersvr_order(s);   // 応答速度が一番速かったノードを選択する
       break;
     case 1:
-      s = filtersvr_diskfree(s); 
       s = filtersvr_cnt_job(s);
+      s = filtersvr_diskfree(s); 
       s = filtersvr_order(s);
       break;
   }
@@ -2056,8 +2060,11 @@ MTNSVR *mtn_choose(MTN *mtn)
 {
 	mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   MTNSVR *s = mtn_info(mtn);
+	mtnlogger(mtn, 9, "[debug] %s: info=%p\n", __func__, s);
   s = filtersvr_export(s);
+	mtnlogger(mtn, 9, "[debug] %s: filtersvr_export=%p\n", __func__, s);
   s = filtersvr(s, 1);
+	mtnlogger(mtn, 9, "[debug] %s: filtersvr=%p\n", __func__, s);
 	mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
   return(s);
 }
