@@ -182,8 +182,8 @@ int getprocstat(MTNPROCSTAT *ps)
   int f;
   int r;
   int t;
-  char *ptr;
-  char *save;
+  char *ptr  = NULL;
+  char *save = NULL;
   char buff[8192];
   char path[PATH_MAX];
   int ctick = sysconf(_SC_CLK_TCK);
@@ -604,7 +604,7 @@ int send_dgram(MTN *mtn, int s, MTNDATA *data, MTNADDR *addr)
 
 int recv_dgram(MTN *mtn, int s, MTNDATA *data, struct sockaddr *addr, socklen_t *alen)
 {
-  int r;
+  int r = 0;
   while(is_loop){
     r = recvfrom(s, data, sizeof(MTNDATA), 0, addr, alen);
     if(r >= 0){
