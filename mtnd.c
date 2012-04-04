@@ -39,12 +39,12 @@ static int is_loop = 1;
 
 void version()
 {
-  printf("%s version %s\n", MODULE_NAME, MTN_VERSION);
+  printf("%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
 }
 
 void usage()
 {
-  printf("%s version %s\n", MODULE_NAME, MTN_VERSION);
+  printf("%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
   printf("usage: %s [OPTION]\n", MODULE_NAME);
   printf("\n");
   printf("  OPTION\n");
@@ -1752,7 +1752,7 @@ void mtnd_startmsg()
   uint64_t dfree;
   getstatf(&bsize, &fsize, &dsize, &dfree);
   mtnlogger(mtn, 0, "======= %s start =======\n", MODULE_NAME);
-  mtnlogger(mtn, 0, "ver  : %s\n", MTN_VERSION);
+  mtnlogger(mtn, 0, "ver  : %s\n", PACKAGE_VERSION);
   mtnlogger(mtn, 0, "pid  : %d\n", getpid());
   mtnlogger(mtn, 0, "log  : %d\n", mtn->loglevel);
   mtnlogger(mtn, 0, "addr : %s\n", mtn->mcast_addr);

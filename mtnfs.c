@@ -177,7 +177,7 @@ static void *mtnfs_init(struct fuse_conn_info *conn)
     pthread_mutex_init(&(mtnfs->file_mutex[i]), NULL);
   }
   mtnlogger(mtn, 0, "========================\n");
-  mtnlogger(mtn, 0, "%s start (ver %s)\n", MODULE_NAME, MTN_VERSION);
+  mtnlogger(mtn, 0, "%s start (ver %s)\n", MODULE_NAME, PACKAGE_VERSION);
   mtnlogger(mtn, 0, "MulticastIP: %s\n", mtn->mcast_addr);
   mtnlogger(mtn, 0, "PortNumber : %d\n", mtn->mcast_port);
   mtnlogger(mtn, 0, "MaxOpen    : %d\n", mtn->max_open);
@@ -785,7 +785,7 @@ static int mtnfs_opt_parse(void *data, const char *arg, int key, struct fuse_arg
     return fuse_opt_add_arg(outargs, "-ho");
   }
   if(key == 2){
-    fprintf(stderr, "%s version: %s\n", MODULE_NAME, MTN_VERSION);
+    fprintf(stderr, "%s version: %s\n", MODULE_NAME, PACKAGE_VERSION);
   }
   if(key == 3){
     opt->dontfork = 1;

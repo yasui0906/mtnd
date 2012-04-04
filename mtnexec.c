@@ -2,6 +2,9 @@
  * mtnexec.c
  * Copyright (C) 2011 KLab Inc.
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
 #include <mtn.h>
@@ -29,12 +32,12 @@ static int is_loop = 1;
 
 void version()
 {
-  printf("%s version %s\n", MODULE_NAME, MTN_VERSION);
+  printf("%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
 }
 
 void usage()
 {
-  printf("%s version %s\n", MODULE_NAME, MTN_VERSION);
+  printf("%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
   printf("usage: %s [MODE] [OPTION] [command [initial-arguments]]\n", MODULE_NAME);
   printf("\n");
   printf("  MODE\n");
