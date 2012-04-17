@@ -199,18 +199,15 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 @ENABLE_DEBUG_TRUE@DEBUG_OPTS = -g -DMTN_DEBUG
 @ENABLE_MTNFS_TRUE@mtnfs_SOURCES = mtnfs.c common.c
-@ENABLE_MTNFS_TRUE@mtnfs_OPTS = -DMODULE_NAME=\"mtnfs\"
-@ENABLE_MTNFS_TRUE@mtnfs_CFLAGS = -Wall $(DEBUG_OPTS) $(mtnfs_OPTS) $(FUSE_CFLAGS)
+@ENABLE_MTNFS_TRUE@mtnfs_CFLAGS = -DMODULE_NAME=\"mtnfs\" -Wall $(DEBUG_OPTS) $(FUSE_CFLAGS)
 @ENABLE_MTNFS_TRUE@mtnfs_LDADD = libmtn.a -lfuse $(FUSE_LDFLAGS)
 lib_LIBRARIES = libmtn.a
 libmtn_a_SOURCES = libmtn.c
 mtnd_SOURCES = mtnd.c common.c
 mtnexec_SOURCES = mtnexec.c common.c
 libmtn_a_CFLAGS = -Wall $(DEBUG_OPTS)
-mtnd_OPTS = -DMODULE_NAME=\"mtnd\"
-mtnexec_OPTS = -DMODULE_NAME=\"mtnexec\"
-mtnd_CFLAGS = -Wall $(DEBUG_OPTS) $(mtnd_OPTS)
-mtnexec_CFLAGS = -Wall $(DEBUG_OPTS) $(mtnexec_OPTS)
+mtnd_CFLAGS = -DMODULE_NAME=\"mtnd\" -Wall $(DEBUG_OPTS)
+mtnexec_CFLAGS = -DMODULE_NAME=\"mtnexec\" -Wall $(DEBUG_OPTS)
 mtnd_LDADD = libmtn.a
 mtnexec_LDADD = libmtn.a
 all: config.h
