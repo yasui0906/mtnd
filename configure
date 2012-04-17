@@ -696,6 +696,8 @@ CPP
 GREP
 EGREP
 LIBOBJS
+ENABLE_DEBUG_TRUE
+ENABLE_DEBUG_FALSE
 ENABLE_MTNFS_TRUE
 ENABLE_MTNFS_FALSE
 FUSE_LDFLAGS
@@ -1288,6 +1290,7 @@ Optional Features:
   --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
   --disable-dependency-tracking  speeds up one-time build
   --enable-dependency-tracking   do not reject slow dependency extractors
+  --enable-debug          compile with debugging flags
   --disable-mtnfs         mtnfs disable
 
 Optional Packages:
@@ -7660,6 +7663,23 @@ fi
 done
 
 
+# Check whether --enable-debug was given.
+if test "${enable_debug+set}" = set; then
+  enableval=$enable_debug;
+else
+  enable_debug=no
+
+fi
+
+ if test x$enable_debug = xyes; then
+  ENABLE_DEBUG_TRUE=
+  ENABLE_DEBUG_FALSE='#'
+else
+  ENABLE_DEBUG_TRUE='#'
+  ENABLE_DEBUG_FALSE=
+fi
+
+
 # Check whether --enable-mtnfs was given.
 if test "${enable_mtnfs+set}" = set; then
   enableval=$enable_mtnfs;
@@ -7800,6 +7820,13 @@ if test -z "${am__fastdepCC_TRUE}" && test -z "${am__fastdepCC_FALSE}"; then
   { { echo "$as_me:$LINENO: error: conditional \"am__fastdepCC\" was never defined.
 Usually this means the macro was only invoked conditionally." >&5
 echo "$as_me: error: conditional \"am__fastdepCC\" was never defined.
+Usually this means the macro was only invoked conditionally." >&2;}
+   { (exit 1); exit 1; }; }
+fi
+if test -z "${ENABLE_DEBUG_TRUE}" && test -z "${ENABLE_DEBUG_FALSE}"; then
+  { { echo "$as_me:$LINENO: error: conditional \"ENABLE_DEBUG\" was never defined.
+Usually this means the macro was only invoked conditionally." >&5
+echo "$as_me: error: conditional \"ENABLE_DEBUG\" was never defined.
 Usually this means the macro was only invoked conditionally." >&2;}
    { (exit 1); exit 1; }; }
 fi
@@ -8422,6 +8449,8 @@ CPP!$CPP$ac_delim
 GREP!$GREP$ac_delim
 EGREP!$EGREP$ac_delim
 LIBOBJS!$LIBOBJS$ac_delim
+ENABLE_DEBUG_TRUE!$ENABLE_DEBUG_TRUE$ac_delim
+ENABLE_DEBUG_FALSE!$ENABLE_DEBUG_FALSE$ac_delim
 ENABLE_MTNFS_TRUE!$ENABLE_MTNFS_TRUE$ac_delim
 ENABLE_MTNFS_FALSE!$ENABLE_MTNFS_FALSE$ac_delim
 FUSE_LDFLAGS!$FUSE_LDFLAGS$ac_delim
@@ -8429,7 +8458,7 @@ FUSE_CFLAGS!$FUSE_CFLAGS$ac_delim
 LTLIBOBJS!$LTLIBOBJS$ac_delim
 _ACEOF
 
-  if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 85; then
+  if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 87; then
     break
   elif $ac_last_try; then
     { { echo "$as_me:$LINENO: error: could not make $CONFIG_STATUS" >&5

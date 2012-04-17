@@ -2,7 +2,6 @@
  * mtn.h
  * Copyright (C) 2011 KLab Inc.
  */
-#define MTN_DEBUG
 #include <unistd.h>
 #include <stdint.h>
 #include <dirent.h>
@@ -14,9 +13,11 @@
 #ifdef MTN_DEBUG
 #define MTNDEBUG(...) mtndebug(__func__, __VA_ARGS__)
 #define MTNDUMPARG(a) mtndumparg(__func__, a)
+#define MTNDEBUGBUILD "(debug build)"
 #else
 #define MTNDEBUG(...)
 #define MTNDUMPARG(a)
+#define MTNDEBUGBUILD ""
 #endif
 
 typedef char *STR;

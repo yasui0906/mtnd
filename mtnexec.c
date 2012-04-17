@@ -32,7 +32,7 @@ static int is_loop = 1;
 
 void version()
 {
-  printf("%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
+  printf("%s version %s %s\n", MODULE_NAME, PACKAGE_VERSION, MTNDEBUGBUILD);
 }
 
 void usage()
@@ -934,7 +934,7 @@ int scheprocess(MTN *mtn, MTNJOB *job, int job_max, int cpu_lim, int cpu_num)
     cpu_id  += 1;
     cpu_id  %= cpu_num;
     cpu_use += job[i].cpu;
-    //MTNDEBUG("CMD=%s STATE=%c CPU=%d.%d\n", job->cmd, job->pstat[0].state, job->cpu / 10, job->cpu % 10);
+    MTNDEBUG("CMD=%s STATE=%c CPU=%d.%d\n", job->cmd, job->pstat[0].state, job->cpu / 10, job->cpu % 10);
   }
   //MTNDEBUG("[CPU=%d.%d%% LIM=%d CPU=%d]\n", ctx->cpu_use / 10, ctx->cpu_use % 10, ctx->cpu_lim / 10, ctx->cnt.cpu);
 

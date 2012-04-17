@@ -49,6 +49,13 @@ AC_FUNC_STAT
 AC_FUNC_UTIME_NULL
 AC_CHECK_FUNCS([dup2 getcwd gethostname gettimeofday memmove memset mkdir rmdir socket strerror utime])
 
+AC_ARG_ENABLE(debug,
+  AS_HELP_STRING([--enable-debug],[compile with debugging flags]),
+  [],
+  [enable_debug=no]
+)
+AM_CONDITIONAL([ENABLE_DEBUG], [test x$enable_debug = xyes])
+
 AC_ARG_ENABLE(mtnfs,
   AS_HELP_STRING([--disable-mtnfs],[mtnfs disable]),
   [],
