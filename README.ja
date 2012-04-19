@@ -6,21 +6,80 @@
 /**************************************************************************/
 
 【はじめに】
-  mtndは「もったいないでー」と読みます。
-  複数台のサーバのハードディスクの空き領域をひとつのストレージとして取り扱う
-  ことができるようになります。
+  mtndは「もったいないでー」と読みます。主な機能は以下のふたつです。
+  
+  mtnfs)
+    複数台のノードのハードディスクの空き領域をひとつのストレージとして取り扱
+    うことができます。
 
-【インストール】
+  mtnexec)
+    比較的暇そうなノードを選択してシェルコマンドを実行させることができます。
+    同じコマンドを全ノードで実行することができます。
+ 
+【インストール方法】
   $ ./configure
   $ make
   $ sudo make install
 
-【ファイル構成】
-  /usr/local/sbin/mtnd     #
-  /usr/local/sbin/mtnfs    # 
-  /usr/local/bin/mtnexec   #
+  mtnfsはlibfuseを必要とします。
+  mtnfsが不要な場合は --disabel-mtnfs を指定して下さい。
 
-【使用方法】
+  $ ./configure --disabel-mtnfs
+  $ make
+  $ sudo make install
+
+【ファイル構成】
+  /usr/local/sbin/mtnd     # もったいないでー本体
+  /usr/local/sbin/mtnfs    # クライアント用デーモン
+  /usr/local/bin/mtnexec   # クライアント用コマンドラインツール
+
+
+【mtnfsの使用方法】
+  node1:# mkdir /mtnexport
+  node1:# mtnd -e /mtnexport
+
+  node2:# mkdir /mtnexport
+  node2:# mtnd -e /mtnexport
+
+  node3:# mkdir /mtnexport
+  node3:# mtnd -e /mtnexport
+
+  node0:# mkdir /mnt/mtnfs
+  node0:# mtnfs /mnt/mtnfs
+
+  +--------------+ +--------------+  +--------------+
+  | node1(mtnd)  | | node2(mtnd)  |  | node3(mtnd)  |
+  | /mtnexport/  | | /mtnexport/  |  | /mtnexport/  |
+  |        file1 | |        file3 |  |        file5 |
+  |        file2 | |        file4 |  |        file6 |
+  +--------------+ +--------------+  +--------------+ 
+         |                |                 |
+         +----------------+-----------------+
+                          |
+                  +--------------+
+                  | node0(mtnfs) |
+                  | /mtn/mtnfs/  |
+                  |        file1 |
+                  |        file2 |
+                  |        file3 |
+                  |        file4 |
+                  |        file5 |
+                  |        file6 |
+                  +--------------+
+
+
+【mtnexecの使用方法】
+  各ノードでmtndを立ち上げます
+
+  node1:# mkdir /var/tmp/mtnexec
+  node1:# mtnd -E /var/tmp/mtnexec
+
+  node2:# mkdir /var/tmp/mtnexec
+  node2:# mtnd -E /var/tmp/mtnexec
+
+
+  mtnexecとmtnfsを併用する場合は -e と -E を両方指定します
+  node1:# mtnd -e /mtnexport -E /var/tmp/mtnexec
 
 
 
