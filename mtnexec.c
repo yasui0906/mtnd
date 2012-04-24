@@ -24,6 +24,9 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <sched.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "mtnexec.h"
 
 static MTN *mtn;
@@ -934,7 +937,7 @@ int scheprocess(MTN *mtn, MTNJOB *job, int job_max, int cpu_lim, int cpu_num)
     cpu_id  += 1;
     cpu_id  %= cpu_num;
     cpu_use += job[i].cpu;
-    MTNDEBUG("CMD=%s STATE=%c CPU=%d.%d\n", job->cmd, job->pstat[0].state, job->cpu / 10, job->cpu % 10);
+    //MTNDEBUG("CMD=%s STATE=%c CPU=%d.%d\n", job->cmd, job->pstat[0].state, job->cpu / 10, job->cpu % 10);
   }
   //MTNDEBUG("[CPU=%d.%d%% LIM=%d CPU=%d]\n", ctx->cpu_use / 10, ctx->cpu_use % 10, ctx->cpu_lim / 10, ctx->cnt.cpu);
 
@@ -1255,13 +1258,14 @@ int mtnexec_fork(MTNSVR *svr, ARG arg)
   if(job->svr){
     /*===== remote execute process =====*/
     mtn_exec(mtn, job);
+    mtnlogger(mtn, 0, "[error] %s: host=%s addr=%s %s '%s'\n", __func__, job->svr->host, inet_ntoa(job->svr->addr.addr.in.sin_addr), strerror(errno), job->cmd);
   }else{
     /*===== local exec process =====*/
     close(job->ctl);
     job->ctl = 0;
     execl("/bin/sh", "/bin/sh", "-c", job->cmd, NULL);
+    mtnlogger(mtn, 0, "[error] %s: %s '%s'\n", __func__, strerror(errno), job->cmd);
   }
-  mtnlogger(mtn, 0, "[error] %s '%s'\n", strerror(errno), job->cmd);
   _exit(127);
 }
 
