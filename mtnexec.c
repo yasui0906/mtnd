@@ -48,6 +48,7 @@ void usage()
   printf("   -A                 # do all servers\n");
   printf("   -RL                # use remote and local server\n");
   printf("   -AL                # do all servers and local server\n");
+  printf("   -T host,host,...   # do target servers\n");
   printf("   --info             # show mtn infomation\n");
   printf("\n");
   printf("  OPTION\n");
@@ -66,6 +67,7 @@ void usage()
   printf("   -h                 # help\n");
   printf("   --version          # version\n");
   printf("   --echo=string      # \n");
+  printf("   --debug=level      # \n");
   printf("   --stdin=path       # \n");
   printf("   --stdout=path      # \n");
   printf("   --stderr=path      # \n");
@@ -377,13 +379,14 @@ struct option *get_optlist()
       {"help",    0, NULL, 'h'},
       {"version", 0, NULL, 'V'},
       {"info",    0, NULL, 'F'},
-      {"test",    0, NULL, 'T'},
+      {"test",    0, NULL, 't'},
       {"stdin",   1, NULL, 'I'},
       {"stdout",  1, NULL, 'O'},
       {"stderr",  1, NULL, 'E'},
       {"put",     1, NULL, 'S'},
       {"get",     1, NULL, 'G'},
       {"echo",    1, NULL, 'e'},
+      {"debug",   1, NULL, 'D'},
       {0, 0, 0, 0}
     };
   return(opt);
@@ -440,13 +443,15 @@ ARG stdname(MTNJOB *job)
 ARG parse(int argc, char *argv[])
 {
   int r;
+  char *p;
+  STR buff;
   ARG args;
   if(argc < 2){
     usage();
     exit(0);
   }
   optind = 0;
-  while((r = getopt_long(argc, argv, "+hVvnBbig:j:e:I:RALP:N:m:p:d:f:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "+hVvnBbig:j:e:I:RALT:P:N:m:p:d:f:D:", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -473,7 +478,7 @@ ARG parse(int argc, char *argv[])
         }
         break;
 
-      case 'T':
+      case 't':
         test();
         exit(0);
 
@@ -563,6 +568,19 @@ ARG parse(int argc, char *argv[])
         ctx->delim = modstr(ctx->delim, optarg);
         break;
 
+      case 'D':
+        mtn->loglevel = atoi(optarg);
+        break;
+
+      case 'T':
+        buff = newstr(optarg);
+        p = strtok(buff, ",");
+        while(p){
+          ctx->targets = addarg(ctx->targets, p);
+          p = strtok(NULL, ",");
+        }
+        break;
+
       case '?':
         usage();
         exit(1);
@@ -573,11 +591,20 @@ ARG parse(int argc, char *argv[])
     usage();
     exit(1);
   }
+  if(ctx->opt_R && ctx->targets[0]){
+    usage();
+    exit(1);
+  }
+  if(ctx->opt_A && ctx->targets[0]){
+    usage();
+    exit(1);
+  }
   if(ctx->opt_R){
     ctx->mode = ctx->opt_L ? MTNEXECMODE_HYBRID : MTNEXECMODE_REMOTE;
-  }
-  if(ctx->opt_A){
+  }else if(ctx->opt_A){
     ctx->mode = ctx->opt_L ? MTNEXECMODE_ALL1 : MTNEXECMODE_ALL0;
+  }else{
+    ctx->mode = ctx->targets[0] ? MTNEXECMODE_TARGET : MTNEXECMODE_LOCAL;
   }
   if(ctx->info){
     info();
@@ -735,7 +762,11 @@ ARG readargline(int f, ARG arg)
 ARG readarg(int f, int n)
 {
   int i;
-  ARG arg = newarg(0);
+  ARG arg;
+  if(f == -1){
+    return(NULL);
+  }
+  arg = newarg(0);
   for(i=0;i<n;i++){
     if(!(arg = readargline(f, arg))){
       break;
@@ -1286,6 +1317,40 @@ int mtnexec_all(ARG arg)
   return(s ? -1 : 0);
 }
 
+int mtnexec_target(ARG arg)
+{
+  int i;
+  MTNSVR *s;
+  MTNSVR *tgt = NULL;
+  MTNSVR *svr = getinfo(mtn);
+  if(!svr){
+    mtnlogger(mtn,0,"[mtnexec] error: node not found\n");
+    return(-1);
+  }
+  for(i=0;ctx->targets[i];i++){
+    for(s=svr;s;s=s->next){
+      if(strcmp(s->host, ctx->targets[i]) == 0){
+        tgt = pushsvr(tgt, s);
+        break;
+      }
+    }
+    if(!s){
+      mtnlogger(mtn, 0, "[mtnexec] error: %s host not found\n", ctx->targets[i]);
+      clrsvr(tgt);
+      clrsvr(svr);
+      return(-1);
+    }
+  }
+  for(s=tgt;s;s=s->next){
+    if(mtnexec_fork(cpsvr(s), arg) == -1){
+      break;
+    }
+  }
+  clrsvr(tgt);
+  clrsvr(svr);
+  return(s ? -1 : 0);
+}
+
 MTNSVR *mtnexec_hybrid(MTNSVR *svr)
 {
   int count;
@@ -1354,6 +1419,9 @@ int mtnexec(ARG arg)
       if(!(r = mtnexec_all(arg))){
         r = mtnexec_fork(NULL, arg);
       }
+      break;
+    case MTNEXECMODE_TARGET:
+      r = mtnexec_target(arg);
       break;
   }
   return(r);
@@ -1443,6 +1511,7 @@ int init(int argc, char *argv[])
   ctx->nobuf   = 1;
   ctx->text    = 1;
   ctx->delim   = newstr(" ");
+  ctx->targets = newarg(0);
   ctx->cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->job_max = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->cmdargs = parse(argc, argv);
@@ -1455,6 +1524,7 @@ int init(int argc, char *argv[])
   }
   ctx->job = calloc(ctx->job_max, sizeof(MTNJOB));
   set_signal_handler();
+  mtnlogger(mtn, 1, "LogLevel: %d\n", mtn->loglevel);
   return(0);
 }
 
@@ -1463,6 +1533,8 @@ int main(int argc, char *argv[])
   if(init(argc, argv) == -1){
     exit(1);
   }
+  mtnlogger(mtn, 2, "execmode: %d\n", ctx->mode);
+  mtnlogger(mtn, 2, "arg_num : %d\n", ctx->arg_num);
   if(ctx->arg_num){
     argexec();
   }else{

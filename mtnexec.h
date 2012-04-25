@@ -7,6 +7,7 @@
 #define MTNEXECMODE_REMOTE 2
 #define MTNEXECMODE_ALL0   3
 #define MTNEXECMODE_ALL1   4
+#define MTNEXECMODE_TARGET 5
 
 #define TVMSEC(tv) (tv.tv_sec * 1000 + tv.tv_usec / 1000)
 
@@ -41,6 +42,7 @@ typedef struct mtnexec_context
   int cpu_use;
   ARG cmdargs;
   ARG linearg;
+  ARG targets;
   int fsig[2];
   MTNJOB *job;
   struct timeval polltv;
