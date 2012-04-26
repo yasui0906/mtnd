@@ -2,6 +2,11 @@
  * mtntool.c
  * Copyright (C) 2011 KLab Inc.
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -14,6 +19,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <time.h>
+#include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
 #include <mtn.h>
@@ -23,7 +29,7 @@ MTN *mtn;
 
 void version()
 {
-  printf("%s version %s\n", MODULE_NAME, MTN_VERSION);
+  printf("%s version %s\n", MODULE_NAME, PACKAGE_VERSION);
 }
 
 void usage()
@@ -50,10 +56,10 @@ void mtntool_info()
 
 int mtntool_list(char *path)
 {
-  uint8_t m[16];
-  uint8_t field[4][32];
-  uint8_t pname[64];
-  uint8_t gname[64];
+  char m[16];
+  char field[4][32];
+  char pname[64];
+  char gname[64];
   struct tm     *tm;
   struct passwd *pw;
   struct group  *gr;
@@ -64,12 +70,12 @@ int mtntool_list(char *path)
   sprintf(field[3], "%%llu ");
   while(kst){
     tm = localtime(&(kst->stat.st_mtime));
-    if(pw = getpwuid(kst->stat.st_uid)){
+    if((pw = getpwuid(kst->stat.st_uid))){
       strcpy(pname, pw->pw_name);
     }else{
       sprintf(pname, "%d", kst->stat.st_uid);
     }
-    if(gr = getgrgid(kst->stat.st_gid)){
+    if((gr = getgrgid(kst->stat.st_gid))){
       strcpy(gname, gr->gr_name);
     }else{
       sprintf(gname, "%d", kst->stat.st_gid);
@@ -152,7 +158,9 @@ int main(int argc, char *argv[])
   char local_path[PATH_MAX] ={0};
   char remote_path[PATH_MAX]={0};
   mtn = mtn_init(MODULE_NAME);
-  while((r = getopt_long(argc, argv, "f:P:G:lhviC", opts, NULL)) != -1){
+  mtn->logtype = 0;
+  mtn->logmode = MTNLOG_STDERR;
+  while((r = getopt_long(argc, argv, "+D:f:P:G:l:hviC", opts, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -192,6 +200,10 @@ int main(int argc, char *argv[])
 
       case 'C':
         strcpy(local_path, "-");
+        break;
+
+      case 'D':
+        mtn->loglevel = atoi(optarg);
         break;
 
       case '?':
