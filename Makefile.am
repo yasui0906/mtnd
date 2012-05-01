@@ -9,13 +9,16 @@ mtnfs_LDADD   = libmtn.a -lfuse $(FUSE_LDFLAGS)
 else
 sbin_PROGRAMS = mtnd
 endif
-bin_PROGRAMS     = mtnexec
-lib_LIBRARIES    = libmtn.a
+bin_PROGRAMS     = mtnexec mtntool
+noinst_LIBRARIES = libmtn.a
 libmtn_a_SOURCES = libmtn.c
 mtnd_SOURCES     = mtnd.c common.c
 mtnexec_SOURCES  = mtnexec.c common.c
+mtntool_SOURCES  = mtntool.c common.c
 libmtn_a_CFLAGS  = -Wall $(DEBUG_OPTS)
 mtnd_CFLAGS      = -DMODULE_NAME=\"mtnd\" -Wall $(DEBUG_OPTS)
 mtnexec_CFLAGS   = -DMODULE_NAME=\"mtnexec\" -Wall $(DEBUG_OPTS)
+mtntool_CFLAGS   = -DMODULE_NAME=\"mtntool\" -Wall $(DEBUG_OPTS)
 mtnd_LDADD       = libmtn.a
 mtnexec_LDADD    = libmtn.a
+mtntool_LDADD    = libmtn.a -lreadline

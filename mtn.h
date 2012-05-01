@@ -271,6 +271,7 @@ MTNSVR *filtersvr_diskfree(MTNSVR *svr);
 MTNSVR *filtersvr_export(MTNSVR *svr);
 MTNSVR *filtersvr_execute(MTNSVR *svr);
 
+char lastchar(char *str);
 STR newstr(char *str);
 STR modstr(STR str, char *n);
 STR clrstr(STR str);

@@ -7,7 +7,7 @@
 #endif
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
-#include "mtnfs.h"
+#define FUSE_USE_VERSION 28
 #include <stdio.h>
 #include <stddef.h>
 #include <errno.h>
@@ -15,6 +15,10 @@
 #include <pthread.h>
 #include <sys/time.h>
 #include <fuse.h>
+#include "mtn.h"
+#include "common.h"
+#include "mtnfs.h"
+
 static struct cmdopt cmdopt;
 
 int is_mtnstatus(const char *path, char *buff)

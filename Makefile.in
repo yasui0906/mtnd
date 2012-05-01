@@ -33,7 +33,7 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 @ENABLE_MTNFS_FALSE@sbin_PROGRAMS = mtnd$(EXEEXT)
 @ENABLE_MTNFS_TRUE@sbin_PROGRAMS = mtnd$(EXEEXT) mtnfs$(EXEEXT)
-bin_PROGRAMS = mtnexec$(EXEEXT)
+bin_PROGRAMS = mtnexec$(EXEEXT) mtntool$(EXEEXT)
 subdir = .
 DIST_COMMON = README $(am__configure_deps) $(srcdir)/Makefile.am \
 	$(srcdir)/Makefile.in $(srcdir)/config.h.in \
@@ -48,22 +48,14 @@ am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
 mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = config.h
 CONFIG_CLEAN_FILES =
-am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
-am__vpath_adj = case $$p in \
-    $(srcdir)/*) f=`echo "$$p" | sed "s|^$$srcdirstrip/||"`;; \
-    *) f=$$p;; \
-  esac;
-am__strip_dir = `echo $$p | sed -e 's|^.*/||'`;
-am__installdirs = "$(DESTDIR)$(libdir)" "$(DESTDIR)$(bindir)" \
-	"$(DESTDIR)$(sbindir)"
-libLIBRARIES_INSTALL = $(INSTALL_DATA)
-LIBRARIES = $(lib_LIBRARIES)
+LIBRARIES = $(noinst_LIBRARIES)
 AR = ar
 ARFLAGS = cru
 libmtn_a_AR = $(AR) $(ARFLAGS)
 libmtn_a_LIBADD =
 am_libmtn_a_OBJECTS = libmtn_a-libmtn.$(OBJEXT)
 libmtn_a_OBJECTS = $(am_libmtn_a_OBJECTS)
+am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(sbindir)"
 binPROGRAMS_INSTALL = $(INSTALL_PROGRAM)
 sbinPROGRAMS_INSTALL = $(INSTALL_PROGRAM)
 PROGRAMS = $(bin_PROGRAMS) $(sbin_PROGRAMS)
@@ -86,6 +78,12 @@ am__DEPENDENCIES_1 =
 @ENABLE_MTNFS_TRUE@mtnfs_DEPENDENCIES = libmtn.a $(am__DEPENDENCIES_1)
 mtnfs_LINK = $(CCLD) $(mtnfs_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
+am_mtntool_OBJECTS = mtntool-mtntool.$(OBJEXT) \
+	mtntool-common.$(OBJEXT)
+mtntool_OBJECTS = $(am_mtntool_OBJECTS)
+mtntool_DEPENDENCIES = libmtn.a
+mtntool_LINK = $(CCLD) $(mtntool_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/depcomp
 am__depfiles_maybe = depfiles
@@ -94,9 +92,9 @@ COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 CCLD = $(CC)
 LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
 SOURCES = $(libmtn_a_SOURCES) $(mtnd_SOURCES) $(mtnexec_SOURCES) \
-	$(mtnfs_SOURCES)
+	$(mtnfs_SOURCES) $(mtntool_SOURCES)
 DIST_SOURCES = $(libmtn_a_SOURCES) $(mtnd_SOURCES) $(mtnexec_SOURCES) \
-	$(am__mtnfs_SOURCES_DIST)
+	$(am__mtnfs_SOURCES_DIST) $(mtntool_SOURCES)
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -201,15 +199,18 @@ top_srcdir = @top_srcdir@
 @ENABLE_MTNFS_TRUE@mtnfs_SOURCES = mtnfs.c common.c
 @ENABLE_MTNFS_TRUE@mtnfs_CFLAGS = -DMODULE_NAME=\"mtnfs\" -Wall $(DEBUG_OPTS) $(FUSE_CFLAGS)
 @ENABLE_MTNFS_TRUE@mtnfs_LDADD = libmtn.a -lfuse $(FUSE_LDFLAGS)
-lib_LIBRARIES = libmtn.a
+noinst_LIBRARIES = libmtn.a
 libmtn_a_SOURCES = libmtn.c
 mtnd_SOURCES = mtnd.c common.c
 mtnexec_SOURCES = mtnexec.c common.c
+mtntool_SOURCES = mtntool.c common.c
 libmtn_a_CFLAGS = -Wall $(DEBUG_OPTS)
 mtnd_CFLAGS = -DMODULE_NAME=\"mtnd\" -Wall $(DEBUG_OPTS)
 mtnexec_CFLAGS = -DMODULE_NAME=\"mtnexec\" -Wall $(DEBUG_OPTS)
+mtntool_CFLAGS = -DMODULE_NAME=\"mtntool\" -Wall $(DEBUG_OPTS)
 mtnd_LDADD = libmtn.a
 mtnexec_LDADD = libmtn.a
+mtntool_LDADD = libmtn.a -lreadline
 all: config.h
 	$(MAKE) $(AM_MAKEFLAGS) all-am
 
@@ -265,35 +266,9 @@ $(srcdir)/config.h.in:  $(am__configure_deps)
 
 distclean-hdr:
 	-rm -f config.h stamp-h1
-install-libLIBRARIES: $(lib_LIBRARIES)
-	@$(NORMAL_INSTALL)
-	test -z "$(libdir)" || $(MKDIR_P) "$(DESTDIR)$(libdir)"
-	@list='$(lib_LIBRARIES)'; for p in $$list; do \
-	  if test -f $$p; then \
-	    f=$(am__strip_dir) \
-	    echo " $(libLIBRARIES_INSTALL) '$$p' '$(DESTDIR)$(libdir)/$$f'"; \
-	    $(libLIBRARIES_INSTALL) "$$p" "$(DESTDIR)$(libdir)/$$f"; \
-	  else :; fi; \
-	done
-	@$(POST_INSTALL)
-	@list='$(lib_LIBRARIES)'; for p in $$list; do \
-	  if test -f $$p; then \
-	    p=$(am__strip_dir) \
-	    echo " $(RANLIB) '$(DESTDIR)$(libdir)/$$p'"; \
-	    $(RANLIB) "$(DESTDIR)$(libdir)/$$p"; \
-	  else :; fi; \
-	done
 
-uninstall-libLIBRARIES:
-	@$(NORMAL_UNINSTALL)
-	@list='$(lib_LIBRARIES)'; for p in $$list; do \
-	  p=$(am__strip_dir) \
-	  echo " rm -f '$(DESTDIR)$(libdir)/$$p'"; \
-	  rm -f "$(DESTDIR)$(libdir)/$$p"; \
-	done
-
-clean-libLIBRARIES:
-	-test -z "$(lib_LIBRARIES)" || rm -f $(lib_LIBRARIES)
+clean-noinstLIBRARIES:
+	-test -z "$(noinst_LIBRARIES)" || rm -f $(noinst_LIBRARIES)
 libmtn.a: $(libmtn_a_OBJECTS) $(libmtn_a_DEPENDENCIES) 
 	-rm -f libmtn.a
 	$(libmtn_a_AR) libmtn.a $(libmtn_a_OBJECTS) $(libmtn_a_LIBADD)
@@ -353,6 +328,9 @@ mtnexec$(EXEEXT): $(mtnexec_OBJECTS) $(mtnexec_DEPENDENCIES)
 mtnfs$(EXEEXT): $(mtnfs_OBJECTS) $(mtnfs_DEPENDENCIES) 
 	@rm -f mtnfs$(EXEEXT)
 	$(mtnfs_LINK) $(mtnfs_OBJECTS) $(mtnfs_LDADD) $(LIBS)
+mtntool$(EXEEXT): $(mtntool_OBJECTS) $(mtntool_DEPENDENCIES) 
+	@rm -f mtntool$(EXEEXT)
+	$(mtntool_LINK) $(mtntool_OBJECTS) $(mtntool_LDADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -367,6 +345,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnexec-mtnexec.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnfs-common.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnfs-mtnfs.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtntool-common.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtntool-mtntool.Po@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -479,6 +459,34 @@ mtnfs-common.obj: common.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	source='common.c' object='mtnfs-common.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtnfs_CFLAGS) $(CFLAGS) -c -o mtnfs-common.obj `if test -f 'common.c'; then $(CYGPATH_W) 'common.c'; else $(CYGPATH_W) '$(srcdir)/common.c'; fi`
+
+mtntool-mtntool.o: mtntool.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtntool_CFLAGS) $(CFLAGS) -MT mtntool-mtntool.o -MD -MP -MF $(DEPDIR)/mtntool-mtntool.Tpo -c -o mtntool-mtntool.o `test -f 'mtntool.c' || echo '$(srcdir)/'`mtntool.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/mtntool-mtntool.Tpo $(DEPDIR)/mtntool-mtntool.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='mtntool.c' object='mtntool-mtntool.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtntool_CFLAGS) $(CFLAGS) -c -o mtntool-mtntool.o `test -f 'mtntool.c' || echo '$(srcdir)/'`mtntool.c
+
+mtntool-mtntool.obj: mtntool.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtntool_CFLAGS) $(CFLAGS) -MT mtntool-mtntool.obj -MD -MP -MF $(DEPDIR)/mtntool-mtntool.Tpo -c -o mtntool-mtntool.obj `if test -f 'mtntool.c'; then $(CYGPATH_W) 'mtntool.c'; else $(CYGPATH_W) '$(srcdir)/mtntool.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/mtntool-mtntool.Tpo $(DEPDIR)/mtntool-mtntool.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='mtntool.c' object='mtntool-mtntool.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtntool_CFLAGS) $(CFLAGS) -c -o mtntool-mtntool.obj `if test -f 'mtntool.c'; then $(CYGPATH_W) 'mtntool.c'; else $(CYGPATH_W) '$(srcdir)/mtntool.c'; fi`
+
+mtntool-common.o: common.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtntool_CFLAGS) $(CFLAGS) -MT mtntool-common.o -MD -MP -MF $(DEPDIR)/mtntool-common.Tpo -c -o mtntool-common.o `test -f 'common.c' || echo '$(srcdir)/'`common.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/mtntool-common.Tpo $(DEPDIR)/mtntool-common.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='common.c' object='mtntool-common.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtntool_CFLAGS) $(CFLAGS) -c -o mtntool-common.o `test -f 'common.c' || echo '$(srcdir)/'`common.c
+
+mtntool-common.obj: common.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtntool_CFLAGS) $(CFLAGS) -MT mtntool-common.obj -MD -MP -MF $(DEPDIR)/mtntool-common.Tpo -c -o mtntool-common.obj `if test -f 'common.c'; then $(CYGPATH_W) 'common.c'; else $(CYGPATH_W) '$(srcdir)/common.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/mtntool-common.Tpo $(DEPDIR)/mtntool-common.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='common.c' object='mtntool-common.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtntool_CFLAGS) $(CFLAGS) -c -o mtntool-common.obj `if test -f 'common.c'; then $(CYGPATH_W) 'common.c'; else $(CYGPATH_W) '$(srcdir)/common.c'; fi`
 
 ID: $(HEADERS) $(SOURCES) $(LISP) $(TAGS_FILES)
 	list='$(SOURCES) $(HEADERS) $(LISP) $(TAGS_FILES)'; \
@@ -662,7 +670,7 @@ check-am: all-am
 check: check-am
 all-am: Makefile $(LIBRARIES) $(PROGRAMS) config.h
 installdirs:
-	for dir in "$(DESTDIR)$(libdir)" "$(DESTDIR)$(bindir)" "$(DESTDIR)$(sbindir)"; do \
+	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(sbindir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: install-am
@@ -691,7 +699,7 @@ maintainer-clean-generic:
 	@echo "it deletes files that may require special tools to rebuild."
 clean: clean-am
 
-clean-am: clean-binPROGRAMS clean-generic clean-libLIBRARIES \
+clean-am: clean-binPROGRAMS clean-generic clean-noinstLIBRARIES \
 	clean-sbinPROGRAMS mostlyclean-am
 
 distclean: distclean-am
@@ -715,8 +723,7 @@ install-data-am:
 
 install-dvi: install-dvi-am
 
-install-exec-am: install-binPROGRAMS install-libLIBRARIES \
-	install-sbinPROGRAMS
+install-exec-am: install-binPROGRAMS install-sbinPROGRAMS
 
 install-html: install-html-am
 
@@ -749,13 +756,12 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-binPROGRAMS uninstall-libLIBRARIES \
-	uninstall-sbinPROGRAMS
+uninstall-am: uninstall-binPROGRAMS uninstall-sbinPROGRAMS
 
 .MAKE: install-am install-strip
 
 .PHONY: CTAGS GTAGS all all-am am--refresh check check-am clean \
-	clean-binPROGRAMS clean-generic clean-libLIBRARIES \
+	clean-binPROGRAMS clean-generic clean-noinstLIBRARIES \
 	clean-sbinPROGRAMS ctags dist dist-all dist-bzip2 dist-gzip \
 	dist-lzma dist-shar dist-tarZ dist-zip distcheck distclean \
 	distclean-compile distclean-generic distclean-hdr \
@@ -763,14 +769,13 @@ uninstall-am: uninstall-binPROGRAMS uninstall-libLIBRARIES \
 	dvi-am html html-am info info-am install install-am \
 	install-binPROGRAMS install-data install-data-am install-dvi \
 	install-dvi-am install-exec install-exec-am install-html \
-	install-html-am install-info install-info-am \
-	install-libLIBRARIES install-man install-pdf install-pdf-am \
-	install-ps install-ps-am install-sbinPROGRAMS install-strip \
-	installcheck installcheck-am installdirs maintainer-clean \
+	install-html-am install-info install-info-am install-man \
+	install-pdf install-pdf-am install-ps install-ps-am \
+	install-sbinPROGRAMS install-strip installcheck \
+	installcheck-am installdirs maintainer-clean \
 	maintainer-clean-generic mostlyclean mostlyclean-compile \
 	mostlyclean-generic pdf pdf-am ps ps-am tags uninstall \
-	uninstall-am uninstall-binPROGRAMS uninstall-libLIBRARIES \
-	uninstall-sbinPROGRAMS
+	uninstall-am uninstall-binPROGRAMS uninstall-sbinPROGRAMS
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

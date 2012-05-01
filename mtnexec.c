@@ -7,8 +7,6 @@
 #endif
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
-#include <mtn.h>
-#include <libmtn.h>
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -27,6 +25,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include "mtn.h"
+#include "libmtn.h"
 #include "mtnexec.h"
 
 static MTN *mtn;

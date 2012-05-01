@@ -1034,8 +1034,11 @@ int mtndata_get_stat(struct stat *st, MTNDATA *kd)
   return(-1);
 }
 
-void get_mode_string(char *buff, mode_t mode)
+char *get_mode_string(mode_t mode)
 {
+  int m;
+  static char mode_string[16];
+  char *buff = mode_string;
   char *perm[] = {"---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"};
   if(S_ISREG(mode)){
     *(buff++) = '-';
@@ -1052,7 +1055,6 @@ void get_mode_string(char *buff, mode_t mode)
   }else if(S_ISSOCK(mode)){
     *(buff++) = 's';
   }
-  int m;
   m = (mode >> 6) & 7;
   strcpy(buff, perm[m]);
   buff += 3;
@@ -1063,6 +1065,7 @@ void get_mode_string(char *buff, mode_t mode)
   strcpy(buff, perm[m]);
   buff += 3;
   *buff = 0;
+  return(mode_string);
 }
 
 //----------------------------------------------------------------
@@ -2018,7 +2021,8 @@ void mtn_list_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, 
 
 MTNSTAT *mtn_list(MTN *mtn, const char *path)
 {
-	mtnlogger(mtn, 8, "[debug] %s:\n", __func__);
+	mtnlogger(mtn, 8, "[debug] %s: IN\n", __func__);
+	mtnlogger(mtn, 9, "[debug] %s: path=%s\n", __func__, path);
   MTNDATA data;
   MTNSVR *members  = get_members(mtn);
   data.head.type   = MTNCMD_LIST;
@@ -2028,6 +2032,7 @@ MTNSTAT *mtn_list(MTN *mtn, const char *path)
   mtndata_set_string((char *)path, &data);
   mtn_process(mtn, members, &data, (MTNPROCFUNC)mtn_list_process);
   clrsvr(members);
+	mtnlogger(mtn, 8, "[debug] %s: OUT\n", __func__);
   return(data.option);
 }
 
@@ -3331,6 +3336,12 @@ int cmpaddr(MTNADDR *a1, MTNADDR *a2)
   return(0);
 }
 
+char lastchar(char *str)
+{
+  int l = strlen(str);
+  return((l > 0) ? str[l - 1] : 0);
+}
+
 STR newstr(char *str)
 {
   char *nstr;
@@ -3412,12 +3423,14 @@ ARG splitstr(STR str, STR delim)
   STR ptr = NULL;
   STR buf = newstr(str);
   ARG arg = newarg(0);
-  ptr = strtok_r(buf, delim, &save);
-  while(ptr){
-    arg = addarg(arg, ptr);
-    ptr = strtok_r(NULL, delim, &save);
+  if(buf){
+    ptr = strtok_r(buf, delim, &save);
+    while(ptr){
+      arg = addarg(arg, ptr);
+      ptr = strtok_r(NULL, delim, &save);
+    }
+    clrstr(buf);
   }
-  clrstr(buf);
   return(arg);
 }
 

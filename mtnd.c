@@ -7,10 +7,6 @@
 #endif
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
-#include "mtn.h"
-#include "mtnd.h"
-#include "libmtn.h"
-#include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -28,6 +24,10 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sched.h>
+#include "mtn.h"
+#include "libmtn.h"
+#include "common.h"
+#include "mtnd.h"
 
 MTN     *mtn;
 MTND    *ctx;

@@ -2,9 +2,6 @@
  * mtnfs.h
  * Copyright (C) 2011 KLab Inc.
  */
-#include <mtn.h>
-#include "common.h"
-#define FUSE_USE_VERSION 28
 #define MTNFS_OPENLIMIT  1024
 #define MTNFS_STATUSNAME ".mtnstatus"
 #define MTNFS_STATUSPATH "/.mtnstatus"
