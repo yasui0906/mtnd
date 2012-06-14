@@ -196,8 +196,10 @@ int mtntool_console_help(STR cmd)
     printf("cat\n");
     printf("put\n");
     printf("get\n");
+    printf("del\n");
     printf("cd\n");
     printf("lcd\n");
+    printf("info\n");
     printf("help\n");
     printf("exit\n");
   }else if(!strcmp(cmd, "ls")){
@@ -205,6 +207,9 @@ int mtntool_console_help(STR cmd)
   }else if(!strcmp(cmd, "put")){
   }else if(!strcmp(cmd, "get")){
   }else if(!strcmp(cmd, "del")){
+  }else if(!strcmp(cmd, "cd")){
+  }else if(!strcmp(cmd, "lcd")){
+  }else if(!strcmp(cmd, "info")){
   }else{
     printf("%s: no such command.\n", cmd);
   }
@@ -274,6 +279,12 @@ int mtntool_console_cd(int argc, ARG args)
   rst  = clrstat(rst);
   return(r);
 }
+
+int mtntool_console_lcd()
+{
+  return(0);
+}
+
 int mtntool_console_get()
 {
   return(0);
@@ -289,6 +300,25 @@ int mtntool_console_del()
   return(0);
 }
 
+char* mtntool_console_readline_command(const char* text, int state)
+{
+  int i;
+  int l;
+  char *commands[] = {"ls", "cd", "lcd", "cat", "get", "put", "del", "help", "exit", NULL};
+  l = strlen(text);
+  for(i=state;commands[i];i++){
+    if(!strncmp(text, commands[i], l)){
+      return(strdup(commands[i]));
+    }
+  }
+  return(NULL);
+}
+
+char** mtntool_console_readline_callback(const char* text, int start, int end)
+{
+  return(rl_completion_matches(text, mtntool_console_readline_command));
+}
+
 int mtntool_console()
 {
   int   argc;
@@ -297,6 +327,7 @@ int mtntool_console()
   char *line;
   STR prompt = newstr("mtn:/> ");
   ctx->remote_path = newstr("/");
+  rl_attempted_completion_function = mtntool_console_readline_callback;
   while((line = readline(prompt))){
     if(!strlen(line)){
       free(line); 
@@ -312,6 +343,7 @@ int mtntool_console()
     }else if(!strcmp(args[0], "help")){ mtntool_console_help(args[1]);
     }else if(!strcmp(args[0], "ls"  )){ mtntool_console_ls(argc,  args);
     }else if(!strcmp(args[0], "cd"  )){ mtntool_console_cd(argc,  args);
+    }else if(!strcmp(args[0], "lcd" )){ mtntool_console_lcd(argc, args);
     }else if(!strcmp(args[0], "cat" )){ mtntool_console_cat(argc, args);
     }else if(!strcmp(args[0], "get" )){ mtntool_console_get(argc, args);
     }else if(!strcmp(args[0], "put" )){ mtntool_console_put(argc, args);
