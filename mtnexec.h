@@ -35,6 +35,7 @@ typedef struct mtnexec_context
   int dryrun;
   int signal;
   int verbose;
+  int arg_max;
   int arg_num;
   int job_max;
   int cpu_lim;

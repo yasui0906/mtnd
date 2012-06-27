@@ -126,7 +126,7 @@ STR convarg3(STR a, MTNJOB *j)
   int m;
   int n;
   STR s;
-  char buff[ARG_MAX];
+  char *b;
 
   if(!strcmp(a, "H")){
     if(j->svr){
@@ -137,14 +137,17 @@ STR convarg3(STR a, MTNJOB *j)
     return(a);
   }
 
-  a = strnum(a, buff);
-  if(!strlen(buff)){
+  b = malloc(ctx->arg_max);
+  a = strnum(a, b);
+  if(!strlen(b)){
     s = joinarg(j->argl, ctx->delim);
   }else{
-    n = atoi(buff);
+    n = atoi(b);
     m = cntarg(j->argl);
     s = newstr((n < m) ? j->argl[n] : "");
   }
+  free(b);
+  b = NULL;
   a = convarg4(a, s);
   clrstr(s);
   return(a);
@@ -408,12 +411,16 @@ char *cmdline(pid_t pid)
   int r;
   int f;
   int s = 0;
-  static char buff[ARG_MAX];
+  static char *buff = NULL;
   char path[PATH_MAX];
+
+  if(buff == NULL){
+    buff = malloc(ctx->arg_max);
+  }
   sprintf(path, "/proc/%d/cmdline", pid);
-  memset(buff, 0, sizeof(buff));
+  memset(buff, 0, ctx->arg_max);
   f = open(path, O_RDONLY);
-  while((r = read(f, buff + s, sizeof(buff) - s)) > 0);
+  while((r = read(f, buff + s, ctx->arg_max - s)) > 0);
   close(f);
   return(buff);
 }
@@ -715,10 +722,15 @@ ARG readargline(int f, ARG arg)
   char c;
   int  r;
   int  len = 0;
-  char buff[ARG_MAX];
+  static char *buff = NULL;
 
   if(!arg){
     return(NULL);
+  }
+  if(!buff){
+    buff = malloc(ctx->arg_max);
+  }else{
+    memset(buff, 0, ctx->arg_max);
   }
   while(is_loop){
     if(!(r = read(f, &c, 1))){
@@ -1512,6 +1524,7 @@ int init(int argc, char *argv[])
   ctx->text    = 1;
   ctx->delim   = newstr(" ");
   ctx->targets = newarg(0);
+  ctx->arg_max = sysconf(_SC_ARG_MAX);
   ctx->cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->job_max = sysconf(_SC_NPROCESSORS_ONLN);
   ctx->cmdargs = parse(argc, argv);
