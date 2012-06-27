@@ -40,12 +40,13 @@ void version()
 void usage()
 {
   version();
-  printf("usage: %s [OPTION] REMOTE_PATH\n", MODULE_NAME);
+  printf("usage: %s [OPTION] [HOST]:REMOTE_PATH\n", MODULE_NAME);
   printf("\n");
   printf("  OPTION\n");
   printf("   -h            (--help)    # help\n");
   printf("   -v            (--version) # show version\n");
   printf("   -i            (--info)    # show infomation\n");
+  printf("   -c            (--choose)  # choose host\n");
   printf("   -D            (--delete)  # file delete\n");
   printf("   -P LOCAL_PATH (--put)     # file upload\n");
   printf("   -G LOCAL_PATH (--get)     # file download\n");
@@ -105,6 +106,16 @@ STR mtntool_list_format_string(MTNSTAT *kst)
   }
   sprintf(buff, "%%-%ds: %%s %%-%ds %%-%ds %%-%dd ", h, u, g, s);
   return(newstr(buff));
+}
+
+int mtntool_choose()
+{
+  MTNSVR *s = mtn_choose(mtn);
+  if(s){
+    printf("%s\n", s->host);
+    return(0);
+  } 
+  return(1);
 }
 
 int mtntool_list(char *path)
@@ -385,7 +396,7 @@ int init(int argc, char *argv[])
   mtn->logtype = 0;
   mtn->logmode = MTNLOG_STDERR;
   ctx->mode    = (argc == 1) ? MTNTOOL_CONSOLE : MTNTOOL_LIST;
-  while((r = getopt_long(argc, argv, "P:G:Dhvidmp", opts, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "P:G:Dhvicdmp", opts, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -397,6 +408,10 @@ int init(int argc, char *argv[])
 
       case 'i':
         ctx->mode = MTNTOOL_INFO;
+        break;
+
+      case 'c':
+        ctx->mode = MTNTOOL_CHOOSE;
         break;
 
       case 'P':
@@ -469,6 +484,10 @@ int main(int argc, char *argv[])
 
     case MTNTOOL_INFO:
       r = mtntool_info();
+      break;
+
+    case MTNTOOL_CHOOSE:
+      r = mtntool_choose();
       break;
 
     case MTNTOOL_LIST:

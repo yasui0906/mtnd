@@ -138,6 +138,7 @@ typedef struct mtnsavetask
 
 extern char *mtncmdstr[];
 
+MTNSVR *mtn_choose(MTN *mtn);
 MTNTASK *newtask();
 MTNTASK *cuttask(MTNTASK *t);
 MTNTASK *deltask(MTNTASK *t);
