@@ -450,6 +450,7 @@ static int mtnfs_create(const char *path, mode_t mode, struct fuse_file_info *fi
   if(is_mtnstatus(path, NULL)){
     return(-EACCES);
   }
+  st.svr = NULL;
   st.stat.st_mode = mode;
   st.stat.st_uid  = FUSE_UID;
   st.stat.st_gid  = FUSE_GID;
@@ -481,6 +482,7 @@ static int mtnfs_open(const char *path, struct fuse_file_info *fi)
     }
     return(0);
   }
+  st.svr = NULL;
   st.stat.st_mode = 0777;
   st.stat.st_uid  = FUSE_UID;
   st.stat.st_gid  = FUSE_GID;

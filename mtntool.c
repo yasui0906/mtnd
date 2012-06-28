@@ -60,6 +60,16 @@ int mtntool_info()
   return(0);
 }
 
+int mtntool_choose()
+{
+  MTNSVR *s = mtn_choose(mtn);
+  if(s){
+    printf("%s\n", s->host);
+    return(0);
+  } 
+  return(1);
+}
+
 STR mtntool_list_format_string(MTNSTAT *kst)
 {
   int d = 0;
@@ -106,16 +116,6 @@ STR mtntool_list_format_string(MTNSTAT *kst)
   }
   sprintf(buff, "%%-%ds: %%s %%-%ds %%-%ds %%-%dd ", h, u, g, s);
   return(newstr(buff));
-}
-
-int mtntool_choose()
-{
-  MTNSVR *s = mtn_choose(mtn);
-  if(s){
-    printf("%s\n", s->host);
-    return(0);
-  } 
-  return(1);
 }
 
 int mtntool_list(char *path)
@@ -224,6 +224,7 @@ int mtntool_console_help(STR cmd)
   }else{
     printf("%s: no such command.\n", cmd);
   }
+  return(0);
 }
 
 STR mtntool_console_path(STR opt)
@@ -334,7 +335,6 @@ int mtntool_console()
 {
   int   argc;
   ARG   args;
-  STR   path;
   char *line;
   STR prompt = newstr("mtn:/> ");
   ctx->remote_path = newstr("/");

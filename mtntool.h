@@ -17,4 +17,5 @@ typedef struct mtntool_context
   int mode;
   STR local_path;
   STR remote_path;
+  STR remote_host;
 } CTX;

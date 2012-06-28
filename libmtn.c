@@ -2614,24 +2614,33 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
   int s;
   MTNINIT  mi;
   MTNSTAT *fs;
+  MTNSVR *svr;
   char buff[64];
+
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
-  fs = mtn_find(mtn, path, ((flags & O_CREAT) != 0));
-  if(fs == NULL){
-    mtnlogger(mtn, 0, "[error] %s: node not found\n", __func__);
-    errno = EACCES;
-    return(-1);
+  fs  = NULL;
+  svr = cpsvr(st->svr);
+  if(svr == NULL){
+    fs = mtn_find(mtn, path, ((flags & O_CREAT) != 0));
+    if(fs == NULL){
+      mtnlogger(mtn, 0, "[error] %s: node not found\n", __func__);
+      errno = EACCES;
+      return(-1);
+    }
+    svr = cpsvr(fs->svr);
   }
   mi.uid  = st->stat.st_uid;
   mi.gid  = st->stat.st_gid;
   mi.mode = MTNMODE_EXPORT;
-  s = mtn_connect(mtn, fs->svr, &mi);
+  s = mtn_connect(mtn, svr, &mi);
   if(s == -1){
-    mtnlogger(mtn, 0, "[error] %s: can't connect: %s %s\n", __func__, strerror(errno), v4addr(&(fs->svr->addr), buff));
+    mtnlogger(mtn, 0, "[error] %s: can't connect: %s %s\n", __func__, strerror(errno), v4addr(&(svr->addr), buff));
     clrstat(fs);
+    clrsvr(svr);
     return(-1);
   }
   clrstat(fs);
+  clrsvr(svr);
   if(mtn_open_file(mtn, s, path, flags, st) == -1){
     close(s);
     return(-1);
@@ -2871,11 +2880,49 @@ int mtn_get_data(MTN *mtn, int s, int f)
 
 int mtn_get(MTN *mtn, int f, char *path)
 {
+  int i;
   int s;
   MTNSTAT st;
+  MTNSVR *sv;
+  MTNSVR *sp;
+  char buff[PATH_MAX];
+  char host[PATH_MAX];
+  char file[PATH_MAX];
+
+  if(strlen(path) >= PATH_MAX){
+    mtnlogger(mtn, 0, "[error]: path too long %s\n", path);
+    return(-1);
+  }
+  strcpy(buff, path);
+  strcpy(file, path);
+  memset(host, 0, PATH_MAX);
+  for(i=0;buff[i];i++){
+    if(buff[i] == ':'){
+      buff[i] = 0;
+      strcpy(host, buff);
+      strcpy(file, buff + i + 1);
+      break;
+    }
+  }
+  st.svr = NULL;
   st.stat.st_uid = getuid();
   st.stat.st_gid = getgid();
-  s = mtn_open(mtn, path, O_RDONLY, &st);
+  if(host[0]){
+    sv = mtn_info(mtn);
+    for(sp=sv;sp;sp=sp->next){
+      if(!strcmp(sp->host, host)){
+        st.svr = cpsvr(sp);
+        break;
+      }
+    }
+    clrsvr(sv);
+    if(!st.svr){
+      mtnlogger(mtn, 0, "[error]: host not found %s\n", host);
+      return(-1);
+    }
+  }
+  s = mtn_open(mtn, file, O_RDONLY, &st);
+  st.svr = clrsvr(st.svr);
   if(s == -1){
     return(-1);
   }
@@ -2910,18 +2957,61 @@ int mtn_put_data(MTN *mtn, int s, int f)
 
 int mtn_put(MTN *mtn, int f, char *path)
 {
+  int i;
   int s;
+  mode_t u;
   MTNSTAT st;
+  MTNSVR *sv;
+  MTNSVR *sp;
+  char buff[PATH_MAX];
+  char host[PATH_MAX];
+  char file[PATH_MAX];
   struct timeval tv;
-  if(fstat(f, &(st.stat)) == -1){
+
+  if(strlen(path) >= PATH_MAX){
+    mtnlogger(mtn, 0, "[error]: path too long %s\n", path);
+    return(-1);
+  }
+  if((f == 0) || (fstat(f, &(st.stat)) == -1)){
+    u = umask(022);
+    umask(u);
     gettimeofday(&tv, NULL);
     st.stat.st_uid   = getuid();
     st.stat.st_gid   = getgid();
-    st.stat.st_mode  = 0640;
+    st.stat.st_mode  = 0666 & ~u;
     st.stat.st_atime = tv.tv_sec;
     st.stat.st_mtime = tv.tv_sec;
   }
-  s = mtn_open(mtn, path, O_WRONLY | O_CREAT , &st);
+
+  strcpy(buff, path); 
+  strcpy(file, path); 
+  memset(host, 0, PATH_MAX);
+  for(i=0;buff[i];i++){
+    if(buff[i] == ':'){
+      buff[i] = 0;
+      strcpy(host, buff);
+      strcpy(file, buff + i + 1);
+      break;
+    }
+  }
+
+  st.svr = NULL;
+  if(host[0]){
+    sv = mtn_info(mtn);
+    for(sp=sv;sp;sp=sp->next){
+      if(!strcmp(sp->host, host)){
+        st.svr = cpsvr(sp);
+        break;
+      }
+    }
+    clrsvr(sv);
+    if(!st.svr){
+      mtnlogger(mtn, 0, "[error]: host not found %s\n", host);
+      return(-1);
+    }
+  }
+  s = mtn_open(mtn, file, O_WRONLY | O_CREAT , &st);
+  st.svr = clrsvr(st.svr);
   if(s == -1){
     return(-1);
   }
