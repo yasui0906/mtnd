@@ -1615,16 +1615,16 @@ MTNSVR *filtersvr(MTNSVR *s, int mode)
 {
   switch(mode){
     case 0:
-      s = filtersvr_loadavg(s); // LAが1以上のノードを除外する
-      s = filtersvr_cnt_prc(s); // プロセス数が少ないノードを抽出する
-      s = filtersvr_cnt_cpu(s); // ジョブが少ないノードを抽出する
-      s = filtersvr_memfree(s); // 空きメモリが多いノードを抽出する
-      s = filtersvr_order(s);   // 応答速度が一番速かったノードを選択する
+      s = filtersvr_loadavg(s);  // LAが1以上のノードを除外する
+      s = filtersvr_cnt_prc(s);  // プロセス数が少ないノードを抽出する
+      s = filtersvr_cnt_cpu(s);  // ジョブが少ないノードを抽出する
+      s = filtersvr_memfree(s);  // 空きメモリが多いノードを抽出する
+      s = filtersvr_order(s);    // 応答速度が一番速いノードを選択する
       break;
     case 1:
-      s = filtersvr_cnt_job(s);
-      s = filtersvr_diskfree(s); 
-      s = filtersvr_order(s);
+      s = filtersvr_cnt_job(s);  // 忙しそうなノードを除外する
+      s = filtersvr_diskfree(s); // HDDの空き容量が多いノードを抽出する
+      s = filtersvr_order(s);    // 応答速度が一番速いノードを選択する
       break;
   }
   return(s);
