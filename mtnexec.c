@@ -646,6 +646,7 @@ void signal_handler(int n, siginfo_t *info, void *ucs)
 {
   char data;
   switch(n){
+    case SIGHUP:
     case SIGINT:
     case SIGTERM:
       ctx->signal = n;
@@ -667,6 +668,10 @@ void set_signal_handler()
   memset(&sig, 0, sizeof(sig));
   sig.sa_sigaction = signal_handler;
   sig.sa_flags     = SA_SIGINFO;
+  if(sigaction(SIGHUP,  &sig, NULL) == -1){
+    mtnlogger(NULL, 0, "%s: sigaction error SIGHUP\n", __func__);
+    exit(1);
+  }
   if(sigaction(SIGINT,  &sig, NULL) == -1){
     mtnlogger(NULL, 0, "%s: sigaction error SIGINT\n", __func__);
     exit(1);
