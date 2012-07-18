@@ -1313,8 +1313,6 @@ MTNSVR *cpsvr(MTNSVR *svr)
   nsv = addsvr(NULL, &(svr->addr), svr->host);
   nsv->mark      = svr->mark;
   nsv->order     = svr->order;
-  nsv->bsize     = svr->bsize;
-  nsv->fsize     = svr->fsize;
   nsv->dsize     = svr->dsize;
   nsv->dfree     = svr->dfree;
   nsv->vsz       = svr->vsz;
@@ -1541,13 +1539,13 @@ MTNSVR *filtersvr_diskfree(MTNSVR *svr)
   }
   for(s=svr;s;s=s->next){
     list = realloc(list, (count + 1) * sizeof(int));
-    list[count] = (int)((s->dfree * s->bsize - s->limit) / 1024 / 1024);
+    list[count] = (int)(s->dfree / 1024 / 1024);
     count++;
   }
   qsort(list, count, sizeof(int), filtersvr_qsort_cmp2);
   limit = filtersvr_list_limit(list, count, 0);
   for(s=svr;s;s=s->next){
-    dfree = (int)((s->dfree * s->bsize - s->limit) / 1024 / 1024);
+    dfree = (int)(s->dfree / 1024 / 1024);
     if(!limit || (dfree >= limit)){
       r = pushsvr(r, s);
     }
@@ -1580,7 +1578,6 @@ static MTNSVR *filtersvr_order(MTNSVR *svr)
 
 MTNSVR *filtersvr_export(MTNSVR *svr, uint64_t use)
 {
-  uint64_t df;
   MTNSVR *s = NULL;
   MTNSVR *r = NULL;
   if(!svr){
@@ -1588,8 +1585,7 @@ MTNSVR *filtersvr_export(MTNSVR *svr, uint64_t use)
   }
   for(s=svr;s;s=s->next){
     if(is_export(s)){
-      df = s->dfree * s->bsize - s->limit;
-      if(use > df){
+      if(use > s->dfree){
         continue;
       }
       r = pushsvr(r, s);
@@ -1977,11 +1973,8 @@ void mtn_info_process(MTN *mtn, MTNSVR *member, MTNDATA *sdata, MTNDATA *rdata, 
 {
   char buff[512];
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
-  mtndata_get_int(&(member->bsize),     rdata, sizeof(member->bsize));
-  mtndata_get_int(&(member->fsize),     rdata, sizeof(member->fsize));
   mtndata_get_int(&(member->dsize),     rdata, sizeof(member->dsize));
   mtndata_get_int(&(member->dfree),     rdata, sizeof(member->dfree));
-  mtndata_get_int(&(member->limit),     rdata, sizeof(member->limit));
   mtndata_get_int(&(member->vsz),       rdata, sizeof(member->vsz));
   mtndata_get_int(&(member->res),       rdata, sizeof(member->res));
   mtndata_get_int(&(member->cnt.cpu),   rdata, sizeof(member->cnt.cpu));
@@ -3105,8 +3098,8 @@ size_t set_mtnstatus_members(MTN *mtn)
     if(!is_export(mb)){
       continue;
     }
-    dsize = (mb->dsize * mb->fsize - mb->limit) / 1024 / 1024;
-    dfree = (mb->dfree * mb->bsize - mb->limit) / 1024 / 1024;
+    dsize = mb->dsize / 1024 / 1024;
+    dfree = mb->dfree / 1024 / 1024;
     pfree = dfree * 100 / dsize;
     vsz   = mb->vsz / 1024;
     res   = mb->res / 1024;

@@ -62,29 +62,34 @@ void usage()
   printf("\n");
 }
 
-int getstatf(uint32_t *bsize, uint32_t *fsize, uint64_t *dsize, uint64_t *dfree)
+int getstatd(uint64_t *dfree, uint64_t *dsize)
 {
+  uint64_t size;
   struct statvfs vf;
   if(statvfs(".", &vf) == -1){
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
     return(-1);
   }
-  *bsize = vf.f_bsize;
-  *fsize = vf.f_frsize;
-  *dsize = vf.f_blocks;
-  *dfree = vf.f_bfree;
+  if(dfree){  
+    size  = vf.f_bfree;
+    size *= vf.f_bsize;
+    *dfree = (size > ctx->free_limit) ? size - ctx->free_limit : 0;
+  }
+  if(dsize){
+    size  = vf.f_blocks;
+    size *= vf.f_frsize;
+    *dsize = (size > ctx->free_limit) ? size - ctx->free_limit : 0;
+  }
   return(0);
 }
 
 int is_freelimit()
 {
-  uint32_t bsize;
-  uint32_t fsize;
-  uint64_t dsize;
   uint64_t dfree;
-  getstatf(&bsize, &fsize, &dsize, &dfree);
-  dfree *= bsize;
-  return(ctx->free_limit > dfree);
+  if(getstatd(&dfree, NULL) == -1){
+    return(-1);
+  }
+  return(dfree == 0);
 }
 
 int is_savetask(MTNTASK *mt)
@@ -259,20 +264,19 @@ static void mtnd_info_process(MTNTASK *kt)
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   memset(&mb, 0, sizeof(mb));
   getstatm(&sm);
-  getstatf(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
+  getstatd(&(mb.dfree), &(mb.dsize));
   getmeminfo(&(mb.memsize), &(mb.memfree));
   for(t=ctx->cldtask;t;t=t->next){
     if(t->init.use){
       if(stat(t->path, &st) == -1){
-        mb.dfree -= t->init.use / mb.bsize;
+        mb.dfree -= t->init.use;
       }else{
         if(t->init.use > st.st_size){
-          mb.dfree -= (t->init.use - st.st_size) / mb.bsize;
+          mb.dfree -= (t->init.use - st.st_size);
         }
       }
     }
   }
-  mb.limit   = ctx->free_limit;
   mb.cnt.prc = getpscount();
   mb.cnt.cld = get_task_count(ctx->cldtask);
   mb.cnt.mbr = get_members_count(ctx->members);
@@ -289,11 +293,8 @@ static void mtnd_info_process(MTNTASK *kt)
   mb.loadavg = (uint32_t)(loadavg * 100);
   mb.flags  |= ctx->export  ? MTNMODE_EXPORT  : 0;
   mb.flags  |= ctx->execute ? MTNMODE_EXECUTE : 0;
-  mtndata_set_int(&(mb.bsize),      &(kt->send), sizeof(mb.bsize));
-  mtndata_set_int(&(mb.fsize),      &(kt->send), sizeof(mb.fsize));
   mtndata_set_int(&(mb.dsize),      &(kt->send), sizeof(mb.dsize));
   mtndata_set_int(&(mb.dfree),      &(kt->send), sizeof(mb.dfree));
-  mtndata_set_int(&(mb.limit),      &(kt->send), sizeof(mb.limit));
   mtndata_set_int(&(sm.vsz),        &(kt->send), sizeof(sm.vsz));
   mtndata_set_int(&(sm.res),        &(kt->send), sizeof(sm.res));
   mtndata_set_int(&(mb.cnt.cpu),    &(kt->send), sizeof(mb.cnt.cpu));
@@ -1130,9 +1131,8 @@ void mtnd_child_init_export(MTNTASK *kt)
   }
 
   memset(&mb, 0, sizeof(mb));
-  getstatf(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
-  df = mb.bsize * mb.dfree - ctx->free_limit;
-  if(kt->init.use > df){
+  getstatd(&(mb.dfree), &(mb.dsize));
+  if(kt->init.use > mb.dfree){
     kt->fin = 1;
     errno = ENOSPC;
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
@@ -1856,11 +1856,9 @@ void init_task()
 
 void mtnd_startmsg()
 {
-  uint32_t bsize;
-  uint32_t fsize;
   uint64_t dsize;
   uint64_t dfree;
-  getstatf(&bsize, &fsize, &dsize, &dfree);
+  getstatd(&dfree, &dsize);
   mtnlogger(mtn, 0, "======= %s start =======\n", MODULE_NAME);
   mtnlogger(mtn, 0, "ver  : %s\n", PACKAGE_VERSION);
   mtnlogger(mtn, 0, "pid  : %d\n", getpid());
@@ -1876,9 +1874,9 @@ void mtnd_startmsg()
   }
   if(ctx->export){
   mtnlogger(mtn, 0, "base : %s\n", ctx->cwd);
-  mtnlogger(mtn, 0, "size : %6llu [MB]\n", fsize * dsize / 1024 / 1024);
-  mtnlogger(mtn, 0, "free : %6llu [MB]\n", bsize * dfree / 1024 / 1024);
-  mtnlogger(mtn, 0, "limit: %6llu [MB]\n", ctx->free_limit/1024 / 1024);
+  mtnlogger(mtn, 0, "size : %6llu [MB]\n", (dsize + ctx->free_limit) / 1024 / 1024);
+  mtnlogger(mtn, 0, "free : %6llu [MB]\n", (dfree + ctx->free_limit) / 1024 / 1024);
+  mtnlogger(mtn, 0, "limit: %6llu [MB]\n", ctx->free_limit / 1024 / 1024);
   }
 }
 

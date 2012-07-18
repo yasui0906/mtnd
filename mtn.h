@@ -42,24 +42,21 @@ typedef struct mtnsvr
 {
   struct mtnsvr *prev;
   struct mtnsvr *next;
-  MTNADDR  addr;
-  STR      host;
-  uint8_t  mark;
-  uint16_t order; // mtn_helloで到達した順番(0が先頭)
-  uint16_t flags;
-  uint32_t bsize;
-  uint32_t fsize;
-  uint64_t dsize;
-  uint64_t dfree;
-  uint64_t limit;
-  uint64_t vsz;
-  uint64_t res;
-  uint32_t loadavg;
-  uint64_t memsize;
-  uint64_t memfree;
-  STR     groupstr;
-  ARG     grouparg;
-  struct timeval tv;
+  MTNADDR  addr;     //
+  STR      host;     //
+  uint8_t  mark;     //
+  uint16_t order;    // mtn_helloで到達した順番(0が先頭)
+  uint16_t flags;    //
+  uint64_t dsize;    // ディスクの総サイズ
+  uint64_t dfree;    // ディスクの空き容量
+  uint64_t vsz;      //
+  uint64_t res;      //
+  uint32_t loadavg;  //
+  uint64_t memsize;  //
+  uint64_t memfree;  //
+  STR     groupstr;  //
+  ARG     grouparg;  //
+  struct timeval tv; //
   struct{
     int cpu; // CPUの数
     int prc; // 全プロセス数

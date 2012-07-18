@@ -301,8 +301,8 @@ void test()
     cpu_num += s->cnt.cpu;
     msize += s->memsize/1024/1024;
     mfree += s->memfree/1024/1024;
-    dsize = (s->dsize * s->fsize - s->limit) / 1024 / 1024;
-    dfree = (s->dfree * s->bsize - s->limit) / 1024 / 1024;
+    dsize = s->dsize / 1024 / 1024;
+    dfree = s->dfree / 1024 / 1024;
     printf("%5s: ",        s->host);
     printf("ORD=%03d ",    s->order);
     printf("CPU=%02d ",    s->cnt.cpu);
@@ -341,8 +341,8 @@ void info()
     cpu_num += s->cnt.cpu;
     msize += s->memsize/1024/1024;
     mfree += s->memfree/1024/1024;
-    dsize = (s->dsize * s->fsize - s->limit) / 1024 / 1024;
-    dfree = (s->dfree * s->bsize - s->limit) / 1024 / 1024;
+    dsize = s->dsize / 1024 / 1024;
+    dfree = s->dfree / 1024 / 1024;
     printf("%5s: ",        s->host);
     printf("ORD=%03d ",    s->order);
     printf("CPU=%02d ",    s->cnt.cpu);

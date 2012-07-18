@@ -592,10 +592,10 @@ static int mtnfs_statfs(const char *path, struct statvfs *sv)
   sv->f_bfree  = 0;
   sv->f_bavail = 0;
   for(m=km;m;m=m->next){
-    sv->f_blocks += (m->dsize * m->fsize) / sv->f_frsize;
-    if(m->dfree * m->bsize > m->limit){
-      sv->f_bfree  += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
-      sv->f_bavail += ((m->dfree * m->bsize) - m->limit) / sv->f_bsize;
+    sv->f_blocks += m->dsize / sv->f_frsize;
+    if(m->dfree){
+      sv->f_bfree  += m->dfree / sv->f_bsize;
+      sv->f_bavail += m->dfree / sv->f_bsize;
     }
   }
   clrsvr(km);
