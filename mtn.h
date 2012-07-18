@@ -176,13 +176,18 @@ struct mtnmembers
   struct timeval tv;
 };
 
+struct mtnchoose
+{
+  uint64_t use;
+};
+
 typedef struct mtn_context
 {
   STR      groupstr;
   ARG      grouparg;
   char     host[HOST_NAME_MAX];
   char     module_name[64];
-  char     strerror[8192];
+  char     strerror[32768];
   uint16_t max_packet_size;
   uint32_t max_open;
   uint16_t mps_max;
@@ -196,6 +201,7 @@ typedef struct mtn_context
   struct timeval    mpstv;
   struct mtnmutex   mutex;
   struct mtnstatus  status;
+  struct mtnchoose  choose;
   struct mtnmembers members;
 } MTN;
 
@@ -268,7 +274,7 @@ MTNSVR  *pushsvr(MTNSVR *list, MTNSVR *svr);
 int      cmpsvr(MTNSVR *s1, MTNSVR *s2);
 MTNSVR  *filtersvr(MTNSVR *s, int mode);
 MTNSVR *filtersvr_diskfree(MTNSVR *svr);
-MTNSVR *filtersvr_export(MTNSVR *svr);
+MTNSVR *filtersvr_export(MTNSVR *svr, uint64_t use);
 MTNSVR *filtersvr_execute(MTNSVR *svr);
 
 char lastchar(char *str);

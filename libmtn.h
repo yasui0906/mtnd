@@ -71,10 +71,11 @@ typedef struct statm
 
 typedef struct
 {
-  int  init;
-  int  mode;
-  uid_t uid;
-  gid_t gid;
+  int     init;
+  int     mode;
+  uid_t    uid;
+  gid_t    gid;
+  uint64_t use;
 } MTNINIT;
 
 typedef struct
@@ -104,14 +105,16 @@ typedef struct kdata
 
 typedef struct mtntask
 {
-  int      fd;
-  int     con;
-  int     res;
-  int  std[3];
-  pid_t   pid;
-  DIR    *dir;
+  int       fd;
+  int      rpp;
+  int      wpp;
+  int      con;
+  int      res;
+  int   std[3];
+  pid_t    pid;
+  DIR     *dir;
+  uint8_t  fin;
   uint8_t type;
-  uint8_t fin;
   uint8_t create;
   struct  timeval tv;
   struct  stat  stat;
@@ -156,6 +159,7 @@ int mtndata_set_string(char *str, MTNDATA *kd);
 int mtndata_set_int(void *val, MTNDATA *kd, int size);
 int mtndata_set_stat(struct stat *st, MTNDATA *kd);
 int mtndata_set_data(void *buff, MTNDATA *kd, size_t size);
+uint32_t get_task_count(MTNTASK *kt);
 uint32_t get_members_count(MTNSVR *mb);
 int getstatm(statm *m);
 int getmeminfo(uint64_t *size, uint64_t *free);

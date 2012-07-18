@@ -261,7 +261,7 @@ static void mtnd_info_process(MTNTASK *kt)
   getmeminfo(&(mb.memsize), &(mb.memfree));
   mb.limit   = ctx->free_limit;
   mb.cnt.prc = getpscount();
-  mb.cnt.cld = ctx->cld.count;
+  mb.cnt.cld = get_task_count(ctx->cldtask);
   mb.cnt.mbr = get_members_count(ctx->members);
   mb.cnt.mem = getcount(MTNCOUNT_MALLOC);
   mb.cnt.tsk = getcount(MTNCOUNT_TASK);
@@ -682,6 +682,30 @@ static void mtnd_utime_process(MTNTASK *kt)
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
+int mtnd_cld_process(int s)
+{
+  int r;
+  MTNTASK *n;
+  MTNDATA data;
+  memset(&data, 0, sizeof(data));
+  for(n=ctx->cldtask;n;n=n->next){
+    if(s == n->rpp){
+      r = recv_data_stream(mtn, s, &data);
+      if(r == -1){
+        mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+      }
+      if(r == 0){
+        if(data.head.type == MTNCMD_OPEN){
+          mtndata_get_int(&(n->init.use), &data, sizeof(n->init.use));
+          mtndata_get_string(n->path, &data);
+        }
+      }
+      return(1);
+    }
+  }
+  return(0);
+}
+
 void mtnd_udp_process(int s)
 {
   MTNADDR addr;
@@ -835,12 +859,13 @@ void mtnd_child_put(MTNTASK *kt)
 }
 
 //------------------------------------------------------
-// mtnmount commands for TCP
+// mtnfs commands for TCP
 //------------------------------------------------------
 void mtnd_child_open(MTNTASK *kt)
 {
-  int flags;
-  mode_t mode;
+  int    flags;
+  mode_t  mode;
+  MTNDATA data;
   char d[PATH_MAX];
   char f[PATH_MAX];
   mtndata_get_string(kt->path, &(kt->recv));
@@ -858,6 +883,15 @@ void mtnd_child_open(MTNTASK *kt)
   }else{
     fstat(kt->fd, &(kt->stat));
     mtnlogger(mtn, 1, "[info]  %s: path=%s create=%d mode=%o\n", __func__, kt->path, ((flags & O_CREAT) != 0), mode);
+    memset(&data, 0, sizeof(data));
+    data.head.ver  = PROTOCOL_VERSION;
+    data.head.type = MTNCMD_OPEN;
+    data.head.size = 0;
+    mtndata_set_int(&(kt->init.use), &data, sizeof(kt->init.use));
+    mtndata_set_string(kt->path, &data);
+    if(send_data_stream(mtn, kt->wpp, &data) == -1){
+      mtnlogger(mtn, 0, "[error]  %s: %s\n", __func__, strerror(errno));
+    }
   }
 }
 
@@ -1072,10 +1106,24 @@ void mtnd_child_result(MTNTASK *kt)
 
 void mtnd_child_init_export(MTNTASK *kt)
 {
+  MTNSVR   mb;
+  uint64_t df;
+
   if(!ctx->export || !strlen(ctx->cwd)){
     kt->fin = 1;
     errno = EPERM;
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+    return;
+  }
+
+  memset(&mb, 0, sizeof(mb));
+  getstatf(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
+  df = mb.bsize * mb.dfree - ctx->free_limit;
+  if(kt->init.use > df){
+    kt->fin = 1;
+    errno = ENOSPC;
+    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+    return;
   }
 }
 
@@ -1115,6 +1163,7 @@ void mtnd_child_init(MTNTASK *kt)
   r += mtndata_get_int(&(kt->init.uid),  &(kt->recv), sizeof(kt->init.uid));
   r += mtndata_get_int(&(kt->init.gid),  &(kt->recv), sizeof(kt->init.gid));
   r += mtndata_get_int(&(kt->init.mode), &(kt->recv), sizeof(kt->init.mode)); 
+  r += mtndata_get_int(&(kt->init.use),  &(kt->recv), sizeof(kt->init.use)); 
   if(r){
     mtnlogger(mtn, 0, "[error] %s: mtn protocol error\n", __func__);
     kt->send.head.type = MTNCMD_ERROR;
@@ -1459,37 +1508,71 @@ void mtnd_child(MTNTASK *kt)
   mtnlogger(mtn, 1, "[debug] %s: close\n", __func__);
 }
 
-void mtnd_accept_process(int l)
+MTNTASK *mtnd_accept_process(int l)
 {
-  MTNTASK kt;
+  int pp[2][2];
+  MTNTASK *kt  = newtask();
+  kt->addr.len = sizeof(kt->addr.addr);
+  kt->con = accept(l, &(kt->addr.addr.addr), &(kt->addr.len));
 
-  memset(&kt, 0, sizeof(kt));
-  kt.addr.len = sizeof(kt.addr.addr);
-  kt.con = accept(l, &(kt.addr.addr.addr), &(kt.addr.len));
-  if(kt.con == -1){
+  if(kt->con == -1){
     mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
-    return;
+    deltask(kt);
+    return(NULL);
   }
 
-  kt.pid = fork();
-  if(kt.pid == -1){
-    mtnlogger(mtn, 0, "[error] %s: fork error %s\n", __func__, strerror(errno));
-    close(kt.con);
-    return;
+  if(pipe(pp[0]) == -1){
+    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+    close(kt->con);
+    deltask(kt);
+    return(NULL);
   }
-  if(kt.pid){
-    ctx->cld.count++;
-    ctx->cld.pid = realloc(ctx->cld.pid, sizeof(pid_t) * ctx->cld.count);
-    ctx->cld.pid[ctx->cld.count - 1] = kt.pid;
-    close(kt.con);
-    return;
+
+  if(pipe(pp[1]) == -1){
+    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+    close(kt->con);
+    close(pp[0][0]);
+    close(pp[0][1]);
+    deltask(kt);
+    return(NULL);
+  }
+
+  kt->pid = fork();
+  if(kt->pid == -1){
+    mtnlogger(mtn, 0, "[error] %s: fork error %s\n", __func__, strerror(errno));
+    close(kt->con);
+    close(pp[0][0]);
+    close(pp[0][1]);
+    close(pp[1][0]);
+    close(pp[1][1]);
+    deltask(kt);
+    return(NULL);
+  }
+
+  if(kt->pid){
+    kt->rpp = pp[0][0];
+    kt->wpp = pp[1][1];
+    close(pp[0][1]);
+    close(pp[1][0]);
+    close(kt->con);
+    return(kt);
   }
 
   //----- child process -----
-  close(l);
-  fcntl(kt.con, F_SETFD, FD_CLOEXEC);
-  mtnd_child(&kt);
-  close(kt.con);
+  kt->rpp = pp[1][0];
+  kt->wpp = pp[0][1];
+  close(pp[0][0]);
+  close(pp[1][1]);
+  while(ctx->cldtask){
+    ctx->cldtask = deltask(ctx->cldtask);
+  }
+  fcntl(kt->con, F_SETFD, FD_CLOEXEC);
+  fcntl(kt->rpp, F_SETFD, FD_CLOEXEC);
+  fcntl(kt->wpp, F_SETFD, FD_CLOEXEC);
+  mtnd_child(kt);
+  close(kt->con);
+  close(kt->rpp);
+  close(kt->wpp);
   _exit(0);
 }
 
@@ -1500,18 +1583,18 @@ void mtnd_accept_process(int l)
  */
 void mtnd_waitpid(int mode)
 {
-  int i;
-  int opt;
-  pid_t pid;
+  int    opt;
+  pid_t  pid;
+  MTNTASK *t;
 
   opt = mode ? 0 : WNOHANG;
   if(mode && ctx->signal){
-    for(i=0;i<ctx->cld.count;i++){
-      mtnlogger(mtn, 0, "[info] %s: send signal pid=%d sig=%d\n", __func__, ctx->cld.pid[i], ctx->signal);
-      kill(ctx->cld.pid[i], ctx->signal);
+    for(t=ctx->cldtask;t;t=t->next){
+      mtnlogger(mtn, 0, "[info] %s: send signal pid=%d sig=%d\n", __func__, t->pid, ctx->signal);
+      kill(t->pid, ctx->signal);
     }
   }
-  while(ctx->cld.count){
+  while(ctx->cldtask){
     pid = waitpid(-1, NULL, opt);
     if(pid <= 0){
       if(mode){
@@ -1520,27 +1603,24 @@ void mtnd_waitpid(int mode)
         break;
       }
     }
-    for(i=0;i<ctx->cld.count;i++){
-      if(ctx->cld.pid[i] == pid){
+    for(t=ctx->cldtask;t;t=t->next){
+      if(t->pid == pid){
         break;
       }
     }
-    if(i == ctx->cld.count){
+    if(!t){
       if(mode){
         continue;
       }else{
         break;
       }
     }
-    ctx->cld.count--;
-    if(i < ctx->cld.count){
-      memmove(&(ctx->cld.pid[i]), &(ctx->cld.pid[i+1]), (ctx->cld.count - i) * sizeof(pid_t));
-    }
-    if(ctx->cld.count){
-      ctx->cld.pid = realloc(ctx->cld.pid, sizeof(pid_t) * ctx->cld.count);
+    close(t->rpp);
+    close(t->wpp);
+    if(t == ctx->cldtask){
+      ctx->cldtask = deltask(t);
     }else{
-      free(ctx->cld.pid);
-      ctx->cld.pid = NULL;
+      deltask(t);
     }
   }
 }
@@ -1590,13 +1670,15 @@ void mtnd_loop(int e, int l)
 {
   int  r;
   char d;
+  MTNTASK *n = NULL;
   struct timeval tv;
-  struct epoll_event ev[3];
+  struct epoll_event en;
+  struct epoll_event ev[8];
 
-  //===== Main Loop =====
+  /*===== Main Loop =====*/
   while(is_loop){
     mtnd_waitpid(0);
-    r = epoll_wait(e, ev, 3, 1000);
+    r = epoll_wait(e, ev, 8, 1000);
     gettimeofday(&tv,NULL);
     mtnd_loop_startup(&tv);
     mtnd_loop_clrtask(&tv);
@@ -1608,8 +1690,23 @@ void mtnd_loop(int e, int l)
       continue;
     }
     while(r--){
+      if(mtnd_cld_process(ev[r].data.fd)){
+        continue;
+      }
       if(ev[r].data.fd == l){
-        mtnd_accept_process(ev[r].data.fd);
+        if((n = mtnd_accept_process(ev[r].data.fd))){
+          en.data.fd = n->rpp;
+          en.events  = EPOLLIN;
+          if(epoll_ctl(e, EPOLL_CTL_ADD, n->rpp, &en) == -1){
+            mtnlogger(mtn, 0, "[error] %s: epoll_ctl1: %s\n", __func__, strerror(errno));
+            deltask(n);
+          }else{
+            if((n->next = ctx->cldtask)){
+              ctx->cldtask->prev = n;
+            }
+            ctx->cldtask = n;
+          }
+        }
         continue;
       }
       if(ev[r].data.fd == ctx->fsig[0]){

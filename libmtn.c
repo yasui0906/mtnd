@@ -504,7 +504,7 @@ static int send_stream(MTN *mtn, int s, uint8_t *buff, size_t size)
   int r;
 	mtnlogger(mtn, 9, "[debug] %s:\n", __func__);
   while(size && send_readywait(mtn, s)){
-    r = send(s, buff, size, 0);
+    r = write(s, buff, size);
     if(r == -1){
       if(errno == EINTR){
         continue;
@@ -1578,8 +1578,9 @@ static MTNSVR *filtersvr_order(MTNSVR *svr)
   return(r);
 }
 
-MTNSVR *filtersvr_export(MTNSVR *svr)
+MTNSVR *filtersvr_export(MTNSVR *svr, uint64_t use)
 {
+  uint64_t df;
   MTNSVR *s = NULL;
   MTNSVR *r = NULL;
   if(!svr){
@@ -1587,6 +1588,10 @@ MTNSVR *filtersvr_export(MTNSVR *svr)
   }
   for(s=svr;s;s=s->next){
     if(is_export(s)){
+      df = s->dfree * s->bsize - s->limit;
+      if(use > df){
+        continue;
+      }
       r = pushsvr(r, s);
     }
   }
@@ -1615,16 +1620,20 @@ MTNSVR *filtersvr(MTNSVR *s, int mode)
 {
   switch(mode){
     case 0:
-      s = filtersvr_loadavg(s); // LAが1以上のノードを除外する
-      s = filtersvr_cnt_prc(s); // プロセス数が少ないノードを抽出する
-      s = filtersvr_cnt_cpu(s); // ジョブが少ないノードを抽出する
-      s = filtersvr_memfree(s); // 空きメモリが多いノードを抽出する
-      s = filtersvr_order(s);   // 応答速度が一番速かったノードを選択する
+      s = filtersvr_loadavg(s);  // LAが1以上のノードを除外する
+      s = filtersvr_cnt_prc(s);  // プロセス数が少ないノードを抽出する
+      s = filtersvr_cnt_cpu(s);  // ジョブが少ないノードを抽出する
+      s = filtersvr_memfree(s);  // 空きメモリが多いノードを抽出する
+      s = filtersvr_order(s);    // 応答速度が一番速いノードを選択する
       break;
     case 1:
-      s = filtersvr_cnt_job(s);
-      s = filtersvr_diskfree(s); 
-      s = filtersvr_order(s);
+      s = filtersvr_cnt_job(s);  // 忙しいノードを除外
+      s = filtersvr_diskfree(s); // ディスクの空き容量が多いノードを抽出
+      s = filtersvr_order(s);    // 応答速度が一番速いノードを選択する
+      break;
+    case 2:
+      s = filtersvr_cnt_job(s);  // 忙しいノードを除外
+      s = filtersvr_order(s);    // 応答速度が一番速いノードを選択する
       break;
   }
   return(s);
@@ -1724,14 +1733,24 @@ MTNTASK *deltask(MTNTASK *t)
 //----------------------------------------------------------------
 // 
 //----------------------------------------------------------------
+uint32_t get_task_count(MTNTASK *kt)
+{
+  uint32_t c = 0;
+  while(kt){
+    c++;
+    kt = kt->next;
+  }
+  return(c);
+}
+
 uint32_t get_members_count(MTNSVR *mb)
 {
-  uint32_t mcount = 0;
+  uint32_t c = 0;
   while(mb){
-    mcount++;
+    c++;
     mb = mb->next;
   }
-  return(mcount);
+  return(c);
 }
 
 MTNSVR *get_members(MTN *mtn){
@@ -2066,9 +2085,9 @@ MTNSVR *mtn_choose(MTN *mtn)
 	mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   MTNSVR *s = mtn_info(mtn);
 	mtnlogger(mtn, 9, "[debug] %s: info=%p\n", __func__, s);
-  s = filtersvr_export(s);
+  s = filtersvr_export(s, mtn->choose.use);
 	mtnlogger(mtn, 9, "[debug] %s: filtersvr_export=%p\n", __func__, s);
-  s = filtersvr(s, 1);
+  s = filtersvr(s, mtn->choose.use ? 2 : 1);
 	mtnlogger(mtn, 9, "[debug] %s: filtersvr=%p\n", __func__, s);
 	mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
   return(s);
@@ -2370,6 +2389,7 @@ static int mtn_connect(MTN *mtn, MTNSVR *svr, MTNINIT *mi)
   mtndata_set_int(&(mi->uid),  &sd, sizeof(mi->uid));
   mtndata_set_int(&(mi->gid),  &sd, sizeof(mi->gid));
   mtndata_set_int(&(mi->mode), &sd, sizeof(mi->mode));
+  mtndata_set_int(&(mi->use),  &sd, sizeof(mi->use));
   if(send_recv_stream(mtn, s, &sd, &rd) == -1){
     close(s);
     return(-1);
@@ -2631,6 +2651,7 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
   }
   mi.uid  = st->stat.st_uid;
   mi.gid  = st->stat.st_gid;
+  mi.use  = mtn->choose.use;
   mi.mode = MTNMODE_EXPORT;
   s = mtn_connect(mtn, svr, &mi);
   if(s == -1){

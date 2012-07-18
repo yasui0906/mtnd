@@ -294,7 +294,7 @@ void test()
   uint32_t cpu_num = 0;
 
   s = mtn_info(mtn);
-  s = filtersvr_export(s);
+  s = filtersvr_export(s,0);
   s = filtersvr_diskfree(s);
   while(s){
     node++;

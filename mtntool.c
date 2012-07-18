@@ -27,6 +27,7 @@
 #include <grp.h>
 #include "mtn.h"
 #include "libmtn.h"
+#include "common.h"
 #include "mtntool.h"
 
 static MTN *mtn;
@@ -47,27 +48,89 @@ void usage()
   printf("   -v            (--version) # show version\n");
   printf("   -i            (--info)    # show infomation\n");
   printf("   -c            (--choose)  # choose host\n");
-  printf("   -D            (--delete)  # file delete\n");
+  printf("   -u nnnn[KMG]  (--use)     # use space\n");
   printf("   -P LOCAL_PATH (--put)     # file upload\n");
   printf("   -G LOCAL_PATH (--get)     # file download\n");
+  printf("   -D            (--delete)  # file delete\n");
   printf("   -m addr                   # multicast addr\n");
   printf("   -p port                   # multicast port\n");
+
   printf("\n");
+}
+
+MTNSVR *getinfo()
+{
+  MTNSVR *s;
+  MTNSVR *members = NULL;
+  MTNSVR *svrlist = NULL;
+  svrlist = mtn_info(mtn);
+  for(s=svrlist;s;s=s->next){
+    if(is_export(s)){
+      members = pushsvr(members, s);
+    }
+  }
+  clrsvr(svrlist);
+  return(members);
 }
 
 int mtntool_info()
 {
+  MTNSVR *s;
+  uint32_t node  = 0;
+  uint64_t msize = 0;
+  uint64_t mfree = 0;
+  uint64_t dsize = 0;
+  uint64_t dfree = 0;
+  uint32_t cpu_num = 0;
+  for(s=getinfo();s;s=s->next){
+    node++;
+    cpu_num += s->cnt.cpu;
+    msize += s->memsize/1024/1024;
+    mfree += s->memfree/1024/1024;
+    dsize = (s->dsize * s->fsize - s->limit) / 1024 / 1024;
+    dfree = (s->dfree * s->bsize - s->limit) / 1024 / 1024;
+    printf("%5s: ",        s->host);
+    printf("ORD=%03d ",    s->order);
+    printf("CPU=%02d ",    s->cnt.cpu);
+    printf("LA=%d.%02d ",  s->loadavg / 100, s->loadavg % 100);
+    printf("MS=%luM ",     s->memsize/1024/1024);
+    printf("MF=%luM ",     s->memfree/1024/1024);
+    printf("DF=%luG(%02lu%%) ", dfree / 1024, dfree * 100 / dsize);
+    printf("PS=%d ",       s->cnt.prc);
+    printf("VSZ=%luK ",    s->vsz/1024);
+    printf("RES=%luK ",    s->res/1024);
+    printf("MLC=%d ",      s->cnt.mem);
+    printf("TSK=%d ",      s->cnt.tsk);
+    printf("TSV=%d ",      s->cnt.tsv);
+    printf("SVR=%d ",      s->cnt.svr);
+    printf("DIR=%d ",      s->cnt.dir);
+    printf("STA=%d ",      s->cnt.sta);
+    printf("STR=%d ",      s->cnt.str);
+    printf("ARG=%d ",      s->cnt.arg);
+    printf("CLD=%d ",      s->cnt.cld);
+    printf("\n");
+  }
+  if(!node){
+    printf("node not found");
+  }else{
+    printf("TOTAL: ");
+    printf("%dCPU(%dnode) ", cpu_num, node);
+    if(msize){
+      printf("MEM=%luM/%luM(%lu%%Free) ",  mfree, msize, mfree * 100 / msize);
+    }
+  }
+  printf("\n");
   return(0);
 }
 
 int mtntool_choose()
 {
   MTNSVR *s = mtn_choose(mtn);
-  if(s){
+  while(s){
     printf("%s\n", s->host);
-    return(0);
-  } 
-  return(1);
+    s = delsvr(s);
+  }
+  return(0);
 }
 
 STR mtntool_list_format_string(MTNSTAT *kst)
@@ -375,6 +438,7 @@ static struct option opts[]={
   {"help",    0, NULL, 'h'},
   {"version", 0, NULL, 'v'},
   {"info",    0, NULL, 'i'},
+  {"choose",  0, NULL, 'c'},
   {"put",     1, NULL, 'P'},
   {"get",     1, NULL, 'G'},
   {"delete",  0, NULL, 'D'},
@@ -383,6 +447,7 @@ static struct option opts[]={
 
 int init(int argc, char *argv[])
 {
+  int i;
   int r;
   mtn = mtn_init(MODULE_NAME);
   ctx = calloc(1,sizeof(CTX));
@@ -396,7 +461,7 @@ int init(int argc, char *argv[])
   mtn->logtype = 0;
   mtn->logmode = MTNLOG_STDERR;
   ctx->mode    = (argc == 1) ? MTNTOOL_CONSOLE : MTNTOOL_LIST;
-  while((r = getopt_long(argc, argv, "P:G:Dhvicdmp", opts, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "P:G:Du:hvicdmp", opts, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -407,10 +472,18 @@ int init(int argc, char *argv[])
         exit(0);
 
       case 'i':
+        if(ctx->mode != MTNTOOL_LIST){
+          usage();
+          exit(1);
+        }
         ctx->mode = MTNTOOL_INFO;
         break;
 
       case 'c':
+        if(ctx->mode != MTNTOOL_LIST){
+          usage();
+          exit(1);
+        }
         ctx->mode = MTNTOOL_CHOOSE;
         break;
 
@@ -438,6 +511,14 @@ int init(int argc, char *argv[])
           exit(1);
         }
         ctx->mode = MTNTOOL_DEL;
+        break;
+
+      case 'u':
+        mtn->choose.use = atoikmg(optarg);
+        if(!mtn->choose.use){
+          usage();
+          exit(1);
+        }
         break;
 
       case 'd':
