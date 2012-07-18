@@ -1,5 +1,5 @@
 /*
- * mtntool.c
+ * mtnfile.c
  * Copyright (C) 2011 KLab Inc.
  */
 #ifdef HAVE_CONFIG_H
@@ -28,7 +28,7 @@
 #include "mtn.h"
 #include "libmtn.h"
 #include "common.h"
-#include "mtntool.h"
+#include "mtnfile.h"
 
 static MTN *mtn;
 static CTX *ctx;
@@ -73,7 +73,7 @@ MTNSVR *getinfo()
   return(members);
 }
 
-int mtntool_info()
+int mtnfile_info()
 {
   MTNSVR *s;
   uint32_t node  = 0;
@@ -123,7 +123,7 @@ int mtntool_info()
   return(0);
 }
 
-int mtntool_choose()
+int mtnfile_choose()
 {
   MTNSVR *s = mtn_choose(mtn);
   while(s){
@@ -133,7 +133,7 @@ int mtntool_choose()
   return(0);
 }
 
-STR mtntool_list_format_string(MTNSTAT *kst)
+STR mtnfile_list_format_string(MTNSTAT *kst)
 {
   int d = 0;
   int l = 0;
@@ -181,7 +181,7 @@ STR mtntool_list_format_string(MTNSTAT *kst)
   return(newstr(buff));
 }
 
-int mtntool_list(char *path)
+int mtnfile_list(char *path)
 {
   char pname[64];
   char gname[64];
@@ -190,7 +190,7 @@ int mtntool_list(char *path)
   struct group  *gr;
   MTNSTAT *rst = mtn_list(mtn, path);
   MTNSTAT *kst = rst;
-  STR fs = mtntool_list_format_string(rst);
+  STR fs = mtnfile_list_format_string(rst);
   while(kst){
     tm = localtime(&(kst->stat.st_mtime));
     if((pw = getpwuid(kst->stat.st_uid))){
@@ -213,7 +213,7 @@ int mtntool_list(char *path)
   return(0);
 }
 
-int mtntool_put(char *save_path, char *file_path)
+int mtnfile_put(char *save_path, char *file_path)
 {
   int f = 0;
   if(strcmp("-", file_path)){
@@ -228,7 +228,7 @@ int mtntool_put(char *save_path, char *file_path)
   return(0); 
 }
 
-int mtntool_get_open(char *path, MTNSTAT *st)
+int mtnfile_get_open(char *path, MTNSTAT *st)
 {
   int f;
   if(strcmp("-", path) == 0){
@@ -242,12 +242,12 @@ int mtntool_get_open(char *path, MTNSTAT *st)
   return(f);
 }
 
-int mtntool_get(char *path, char *file)
+int mtnfile_get(char *path, char *file)
 {
   int f = 0;
   MTNSTAT *st;
   st = mtn_stat(mtn, path);
-  f = mtntool_get_open(file, st);
+  f = mtnfile_get_open(file, st);
   if(f == -1){
     return(1);
   }
@@ -258,12 +258,12 @@ int mtntool_get(char *path, char *file)
   return(0); 
 }
 
-int mtntool_del(STR remote)
+int mtnfile_del(STR remote)
 {
   return(0);
 }
 
-int mtntool_console_help(STR cmd)
+int mtnfile_console_help(STR cmd)
 {
   if(!cmd){
     printf("ls\n");
@@ -290,7 +290,7 @@ int mtntool_console_help(STR cmd)
   return(0);
 }
 
-STR mtntool_console_path(STR opt)
+STR mtnfile_console_path(STR opt)
 {
   int i;
   STR path;
@@ -312,23 +312,23 @@ STR mtntool_console_path(STR opt)
   return(path);
 }
 
-int mtntool_console_cat(int argc, ARG args)
+int mtnfile_console_cat(int argc, ARG args)
 {
-  STR path = mtntool_console_path(args[1]);
-  mtntool_get(path, "-");
+  STR path = mtnfile_console_path(args[1]);
+  mtnfile_get(path, "-");
   path = clrstr(path);
   return(0);
 }
 
-int mtntool_console_ls(int argc, ARG args)
+int mtnfile_console_ls(int argc, ARG args)
 {
-  STR path = mtntool_console_path(args[1]);
-  mtntool_list(path);
+  STR path = mtnfile_console_path(args[1]);
+  mtnfile_list(path);
   path = clrstr(path);
   return(0);
 }
 
-int mtntool_console_cd(int argc, ARG args)
+int mtnfile_console_cd(int argc, ARG args)
 {
   STR path;
   int r = 1;
@@ -338,7 +338,7 @@ int mtntool_console_cd(int argc, ARG args)
     ctx->remote_path = modstr(ctx->remote_path, "/");
     return(0);
   }
-  path = mtntool_console_path(args[1]);
+  path = mtnfile_console_path(args[1]);
   rst = mtn_stat(mtn, path);
   for(kst=rst;kst;kst=kst->next){
     if(S_ISDIR(kst->stat.st_mode)){
@@ -355,27 +355,27 @@ int mtntool_console_cd(int argc, ARG args)
   return(r);
 }
 
-int mtntool_console_lcd()
+int mtnfile_console_lcd()
 {
   return(0);
 }
 
-int mtntool_console_get()
+int mtnfile_console_get()
 {
   return(0);
 }
 
-int mtntool_console_put()
+int mtnfile_console_put()
 {
   return(0);
 }
 
-int mtntool_console_del()
+int mtnfile_console_del()
 {
   return(0);
 }
 
-char* mtntool_console_readline_command(const char* text, int state)
+char* mtnfile_console_readline_command(const char* text, int state)
 {
   int i;
   int l;
@@ -389,19 +389,19 @@ char* mtntool_console_readline_command(const char* text, int state)
   return(NULL);
 }
 
-char** mtntool_console_readline_callback(const char* text, int start, int end)
+char** mtnfile_console_readline_callback(const char* text, int start, int end)
 {
-  return(rl_completion_matches(text, mtntool_console_readline_command));
+  return(rl_completion_matches(text, mtnfile_console_readline_command));
 }
 
-int mtntool_console()
+int mtnfile_console()
 {
   int   argc;
   ARG   args;
   char *line;
   STR prompt = newstr("mtn:/> ");
   ctx->remote_path = newstr("/");
-  rl_attempted_completion_function = mtntool_console_readline_callback;
+  rl_attempted_completion_function = mtnfile_console_readline_callback;
   while((line = readline(prompt))){
     if(!strlen(line)){
       free(line); 
@@ -414,14 +414,14 @@ int mtntool_console()
       continue;
     }else if(!strcmp(args[0], "exit")){ break;
     }else if(!strcmp(args[0], "quit")){ break;
-    }else if(!strcmp(args[0], "help")){ mtntool_console_help(args[1]);
-    }else if(!strcmp(args[0], "ls"  )){ mtntool_console_ls(argc,  args);
-    }else if(!strcmp(args[0], "cd"  )){ mtntool_console_cd(argc,  args);
-    }else if(!strcmp(args[0], "lcd" )){ mtntool_console_lcd(argc, args);
-    }else if(!strcmp(args[0], "cat" )){ mtntool_console_cat(argc, args);
-    }else if(!strcmp(args[0], "get" )){ mtntool_console_get(argc, args);
-    }else if(!strcmp(args[0], "put" )){ mtntool_console_put(argc, args);
-    }else if(!strcmp(args[0], "del" )){ mtntool_console_del(argc, args);
+    }else if(!strcmp(args[0], "help")){ mtnfile_console_help(args[1]);
+    }else if(!strcmp(args[0], "ls"  )){ mtnfile_console_ls(argc,  args);
+    }else if(!strcmp(args[0], "cd"  )){ mtnfile_console_cd(argc,  args);
+    }else if(!strcmp(args[0], "lcd" )){ mtnfile_console_lcd(argc, args);
+    }else if(!strcmp(args[0], "cat" )){ mtnfile_console_cat(argc, args);
+    }else if(!strcmp(args[0], "get" )){ mtnfile_console_get(argc, args);
+    }else if(!strcmp(args[0], "put" )){ mtnfile_console_put(argc, args);
+    }else if(!strcmp(args[0], "del" )){ mtnfile_console_del(argc, args);
     }else{ mtnlogger(mtn, 0, "%s: no such command.\n", args[0]); }
     add_history(line);
     free(line);
@@ -560,31 +560,31 @@ int main(int argc, char *argv[])
       break;
 
     case MTNTOOL_CONSOLE:
-      r = mtntool_console();
+      r = mtnfile_console();
       break;
 
     case MTNTOOL_INFO:
-      r = mtntool_info();
+      r = mtnfile_info();
       break;
 
     case MTNTOOL_CHOOSE:
-      r = mtntool_choose();
+      r = mtnfile_choose();
       break;
 
     case MTNTOOL_LIST:
-      r = mtntool_list(ctx->remote_path);
+      r = mtnfile_list(ctx->remote_path);
       break;
 
     case MTNTOOL_PUT:    
-      r = mtntool_put(ctx->remote_path, ctx->local_path);
+      r = mtnfile_put(ctx->remote_path, ctx->local_path);
       break;
 
     case MTNTOOL_GET:
-      r = mtntool_get(ctx->remote_path, ctx->local_path);
+      r = mtnfile_get(ctx->remote_path, ctx->local_path);
       break;
 
     case MTNTOOL_DEL:
-      r = mtntool_del(ctx->remote_path);
+      r = mtnfile_del(ctx->remote_path);
       break;
   }
   exit(r);

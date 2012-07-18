@@ -1,5 +1,5 @@
 /*
- * mtntool.h
+ * mtnfile.h
  * Copyright (C) 2011 KLab Inc.
  */
 #define MTNTOOL_ERROR   0
@@ -12,7 +12,7 @@
 #define MTNTOOL_DEL     7
 #define MAX(a, b) ((a < b) ? b : a)
 
-typedef struct mtntool_context
+typedef struct mtnfile_context
 {
   int mode;
   STR local_path;

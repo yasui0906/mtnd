@@ -250,15 +250,28 @@ static void mtnd_hello_process(MTNTASK *kt)
 
 static void mtnd_info_process(MTNTASK *kt)
 {
-  statm  sm;
-  MTNSVR mb;
+  statm   sm;
+  MTNSVR  mb;
+  MTNTASK *t;
   double loadavg;
+  struct stat st;
 
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   memset(&mb, 0, sizeof(mb));
   getstatm(&sm);
   getstatf(&(mb.bsize), &(mb.fsize), &(mb.dsize), &(mb.dfree));
   getmeminfo(&(mb.memsize), &(mb.memfree));
+  for(t=ctx->cldtask;t;t=t->next){
+    if(t->init.use){
+      if(stat(t->path, &st) == -1){
+        mb.dfree -= t->init.use / mb.bsize;
+      }else{
+        if(t->init.use > st.st_size){
+          mb.dfree -= (t->init.use - st.st_size) / mb.bsize;
+        }
+      }
+    }
+  }
   mb.limit   = ctx->free_limit;
   mb.cnt.prc = getpscount();
   mb.cnt.cld = get_task_count(ctx->cldtask);
@@ -763,7 +776,7 @@ void mtnd_task_process(int s)
 }
 
 //------------------------------------------------------
-// mtntool commands for TCP
+// mtnfile commands for TCP
 //------------------------------------------------------
 void mtnd_child_get(MTNTASK *kt)
 {
