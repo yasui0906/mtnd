@@ -12,7 +12,7 @@ endif
 bin_PROGRAMS     = mtnexec mtnfile
 noinst_LIBRARIES = libmtn.a
 libmtn_a_SOURCES = libmtn.c
-mtnd_SOURCES     = mtnd.c common.c
+mtnd_SOURCES     = mtnd.c mtnd_child.c common.c
 mtnexec_SOURCES  = mtnexec.c common.c
 mtnfile_SOURCES  = mtnfile.c common.c
 libmtn_a_CFLAGS  = -Wall $(DEBUG_OPTS)

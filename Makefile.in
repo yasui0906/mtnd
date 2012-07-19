@@ -60,7 +60,8 @@ am_libmtn_a_OBJECTS = libmtn_a-libmtn.$(OBJEXT)
 libmtn_a_OBJECTS = $(am_libmtn_a_OBJECTS)
 am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(sbindir)"
 PROGRAMS = $(bin_PROGRAMS) $(sbin_PROGRAMS)
-am_mtnd_OBJECTS = mtnd-mtnd.$(OBJEXT) mtnd-common.$(OBJEXT)
+am_mtnd_OBJECTS = mtnd-mtnd.$(OBJEXT) mtnd-mtnd_child.$(OBJEXT) \
+	mtnd-common.$(OBJEXT)
 mtnd_OBJECTS = $(am_mtnd_OBJECTS)
 mtnd_DEPENDENCIES = libmtn.a
 mtnd_LINK = $(CCLD) $(mtnd_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
@@ -205,7 +206,7 @@ top_srcdir = @top_srcdir@
 @ENABLE_MTNFS_TRUE@mtnfs_LDADD = libmtn.a -lfuse $(FUSE_LDFLAGS)
 noinst_LIBRARIES = libmtn.a
 libmtn_a_SOURCES = libmtn.c
-mtnd_SOURCES = mtnd.c common.c
+mtnd_SOURCES = mtnd.c mtnd_child.c common.c
 mtnexec_SOURCES = mtnexec.c common.c
 mtnfile_SOURCES = mtnfile.c common.c
 libmtn_a_CFLAGS = -Wall $(DEBUG_OPTS)
@@ -374,6 +375,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libmtn_a-libmtn.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnd-common.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnd-mtnd.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnd-mtnd_child.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnexec-common.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnexec-mtnexec.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mtnfile-common.Po@am__quote@
@@ -422,6 +424,20 @@ mtnd-mtnd.obj: mtnd.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	source='mtnd.c' object='mtnd-mtnd.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtnd_CFLAGS) $(CFLAGS) -c -o mtnd-mtnd.obj `if test -f 'mtnd.c'; then $(CYGPATH_W) 'mtnd.c'; else $(CYGPATH_W) '$(srcdir)/mtnd.c'; fi`
+
+mtnd-mtnd_child.o: mtnd_child.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtnd_CFLAGS) $(CFLAGS) -MT mtnd-mtnd_child.o -MD -MP -MF $(DEPDIR)/mtnd-mtnd_child.Tpo -c -o mtnd-mtnd_child.o `test -f 'mtnd_child.c' || echo '$(srcdir)/'`mtnd_child.c
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/mtnd-mtnd_child.Tpo $(DEPDIR)/mtnd-mtnd_child.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='mtnd_child.c' object='mtnd-mtnd_child.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtnd_CFLAGS) $(CFLAGS) -c -o mtnd-mtnd_child.o `test -f 'mtnd_child.c' || echo '$(srcdir)/'`mtnd_child.c
+
+mtnd-mtnd_child.obj: mtnd_child.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtnd_CFLAGS) $(CFLAGS) -MT mtnd-mtnd_child.obj -MD -MP -MF $(DEPDIR)/mtnd-mtnd_child.Tpo -c -o mtnd-mtnd_child.obj `if test -f 'mtnd_child.c'; then $(CYGPATH_W) 'mtnd_child.c'; else $(CYGPATH_W) '$(srcdir)/mtnd_child.c'; fi`
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/mtnd-mtnd_child.Tpo $(DEPDIR)/mtnd-mtnd_child.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='mtnd_child.c' object='mtnd-mtnd_child.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtnd_CFLAGS) $(CFLAGS) -c -o mtnd-mtnd_child.obj `if test -f 'mtnd_child.c'; then $(CYGPATH_W) 'mtnd_child.c'; else $(CYGPATH_W) '$(srcdir)/mtnd_child.c'; fi`
 
 mtnd-common.o: common.c
 @am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(mtnd_CFLAGS) $(CFLAGS) -MT mtnd-common.o -MD -MP -MF $(DEPDIR)/mtnd-common.Tpo -c -o mtnd-common.o `test -f 'common.c' || echo '$(srcdir)/'`common.c

@@ -1,6 +1,10 @@
 /*
  * mtnd.h
  */
+#include "mtn.h"
+#include "libmtn.h"
+#include "common.h"
+
 typedef struct mtnd_context{
   MTNTASK *cldtask;
   MTNSVR  *members;
@@ -15,3 +19,14 @@ typedef struct mtnd_context{
   int  execute;
   int  fsig[2];
 } MTND;
+
+typedef void (*MTNFSTASKFUNC)(MTNTASK *);
+extern int is_loop;
+extern MTN  *mtn;
+extern MTND *ctx;
+
+char *mtnd_fix_path(char *path);
+int getstatd(uint64_t *dfree, uint64_t *dsize);
+int is_freelimit(void);
+void init_task_child(void);
+void mtnd_child(MTNTASK *kt);
