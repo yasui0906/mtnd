@@ -2,6 +2,8 @@
  * mtn.h
  * Copyright (C) 2011 KLab Inc.
  */
+#ifndef _MTN_H
+#define _MTN_H
 #include <unistd.h>
 #include <stdint.h>
 #include <dirent.h>
@@ -288,6 +290,7 @@ ARG addarg(ARG arg, STR str);
 ARG clrarg(ARG args);
 ARG copyarg(ARG args);
 STR poparg(ARG args);
+STR sftarg(ARG args);
 STR joinarg(ARG args, STR delim);
 STR findarg(ARG arg, STR str);
 int cntarg(ARG arg);
@@ -304,3 +307,5 @@ void free_mtnstatus_loglevel(char *buff);
 
 void mtndebug(const char *func, char *fmt, ...);
 void mtndumparg(const char *func, ARG arg);
+#endif
+

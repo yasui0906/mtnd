@@ -231,10 +231,8 @@ int mtnfile_put(char *save_path, char *file_path)
 
 int mtnfile_get_open(char *path, MTNSTAT *st)
 {
-  int f;
-  if(strcmp("-", path) == 0){
-    f = 0;
-  }else{
+  int f = 1;
+  if(strcmp("-", path)){
     f = creat(path, st->stat.st_mode);
     if(f == -1){
       mtnlogger(mtn, 0, "[error]: %s %s\n", strerror(errno), path);
@@ -245,15 +243,15 @@ int mtnfile_get_open(char *path, MTNSTAT *st)
 
 int mtnfile_get(char *path, char *file)
 {
-  int f = 0;
+  int f;
   MTNSTAT *st;
   st = mtn_stat(mtn, path);
-  f = mtnfile_get_open(file, st);
+  f  = mtnfile_get_open(file, st);
   if(f == -1){
     return(1);
   }
   mtn_get(mtn, f, path);
-  if(f){
+  if(f > 2){
     close(f);
   }
   return(0); 
@@ -462,7 +460,7 @@ int init(int argc, char *argv[])
   mtn->logtype = 0;
   mtn->logmode = MTNLOG_STDERR;
   ctx->mode    = (argc == 1) ? MTNTOOL_CONSOLE : MTNTOOL_LIST;
-  while((r = getopt_long(argc, argv, "P:G:Du:hvicdmp", opts, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "P:G:Du:m:p:hvicd", opts, NULL)) != -1){
     switch(r){
       case 'h':
         usage();

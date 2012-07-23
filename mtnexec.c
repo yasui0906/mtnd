@@ -1469,7 +1469,7 @@ ARG linearg()
   int i;
   ARG argl = newarg(ctx->arg_num);
   for(i=0;i<ctx->arg_num;i++){
-    argl[i] = poparg(ctx->linearg);
+    argl[i] = sftarg(ctx->linearg);
     if(!argl[i]){
       clrarg(argl);
       return(NULL);

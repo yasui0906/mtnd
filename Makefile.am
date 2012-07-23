@@ -22,3 +22,6 @@ mtnfile_CFLAGS   = -DMODULE_NAME=\"mtnfile\" -Wall $(DEBUG_OPTS)
 mtnd_LDADD       = libmtn.a
 mtnexec_LDADD    = libmtn.a
 mtnfile_LDADD    = libmtn.a -lreadline
+
+test: mtnd mtnexec mtnfile
+	./mtntest ./test

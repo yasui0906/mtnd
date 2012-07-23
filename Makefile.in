@@ -861,6 +861,9 @@ uninstall-am: uninstall-binPROGRAMS uninstall-sbinPROGRAMS
 	uninstall-am uninstall-binPROGRAMS uninstall-sbinPROGRAMS
 
 
+test: mtnd mtnexec mtnfile
+	./mtntest ./test
+
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.
 .NOEXPORT:

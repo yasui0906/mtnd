@@ -3613,6 +3613,23 @@ STR poparg(ARG args)
     return(NULL);
   }
   for(c=0;args[c];c++);
+  if(c == 0){
+    return(NULL);
+  }
+  c--;
+  s = args[c];
+  args[c] = NULL;
+  return(s);
+}
+
+STR sftarg(ARG args)
+{
+  int c;
+  STR s;
+  if(!args){
+    return(NULL);
+  }
+  for(c=0;args[c];c++);
   s = args[0];
   memmove(args, &args[1], sizeof(STR) * c);
   return(s);

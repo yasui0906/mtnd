@@ -137,7 +137,7 @@ static void mtnd_child_open(MTNTASK *kt)
   mtndata_get_string(kt->path, &(kt->recv));
   mtndata_get_int(&flags, &(kt->recv), sizeof(flags));
   mtndata_get_int(&mode,  &(kt->recv), sizeof(mode));
-  mtnd_fix_path(kt->path);
+  mtnd_fix_path(kt->path, NULL);
   dirbase(kt->path, d, f);
   mkdir_ex(d);
   kt->fd = open(kt->path, flags, mode);
@@ -231,7 +231,7 @@ static void mtnd_child_truncate(MTNTASK *kt)
   off_t offset;
   mtndata_get_string(kt->path, &(kt->recv));
   mtndata_get_int(&offset, &(kt->recv), sizeof(offset));
-  mtnd_fix_path(kt->path);
+  mtnd_fix_path(kt->path, NULL);
   stat(kt->path, &(kt->stat));
   if(truncate(kt->path, offset) == -1){
     kt->send.head.type = MTNCMD_ERROR;
@@ -246,7 +246,7 @@ static void mtnd_child_mkdir(MTNTASK *kt)
 {
   mtnlogger(mtn, 9, "[debug] %s: START\n", __func__);
   mtndata_get_string(kt->path, &(kt->recv));
-  mtnd_fix_path(kt->path);
+  mtnd_fix_path(kt->path, NULL);
   if(mkdir(kt->path, 0777) == -1){
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
@@ -259,7 +259,7 @@ static void mtnd_child_rmdir(MTNTASK *kt)
 {
   mtnlogger(mtn, 9, "[debug] %s: START\n", __func__);
   mtndata_get_string(kt->path, &(kt->recv));
-  mtnd_fix_path(kt->path);
+  mtnd_fix_path(kt->path, NULL);
   if(rmdir(kt->path) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
@@ -274,7 +274,7 @@ static void mtnd_child_unlink(MTNTASK *kt)
 {
   mtnlogger(mtn, 9, "[debug] %s: START\n", __func__);
   mtndata_get_string(kt->path, &(kt->recv));
-  mtnd_fix_path(kt->path);
+  mtnd_fix_path(kt->path, NULL);
   if(lstat(kt->path, &(kt->stat)) == -1){
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));

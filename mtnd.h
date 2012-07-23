@@ -1,6 +1,8 @@
 /*
  * mtnd.h
  */
+#ifndef _MTND_H
+#define _MTND_H
 #include "mtn.h"
 #include "libmtn.h"
 #include "common.h"
@@ -25,8 +27,9 @@ extern int is_loop;
 extern MTN  *mtn;
 extern MTND *ctx;
 
-char *mtnd_fix_path(char *path);
+int mtnd_fix_path(char *path, char *real);
 int getstatd(uint64_t *dfree, uint64_t *dsize);
 int is_freelimit(void);
 void init_task_child(void);
 void mtnd_child(MTNTASK *kt);
+#endif

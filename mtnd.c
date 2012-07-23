@@ -58,23 +58,36 @@ void usage()
   printf("\n");
 }
 
-char *mtnd_fix_path(char *path)
+int mtnd_fix_path(char *path, char *real)
 {
+  int i = 0;
+  ARG a = NULL;
+  STR s = NULL;
+  char *p = NULL;
+  char *saveptr;
   char buff[PATH_MAX];
+
   strcpy(buff, path);
-  if(buff[0] == '/'){
-    strcpy(path, buff + 1);
-    return mtnd_fix_path(path);
+  p = strtok_r(buff, "/", &saveptr);
+  do{
+    if(!strcmp(".", p)){
+      continue;
+    }
+    if(!strcmp("..", p)){
+      s = poparg(a);
+      s = clrstr(s);
+      continue;
+    }
+    a = addarg(a, p);
+  }while((p = strtok_r(NULL, "/", &saveptr)));
+  if(!real){
+    real = path;
   }
-  if(memcmp(buff, "./", 2) == 0){
-    strcpy(path, buff + 2);
-    return mtnd_fix_path(path);
-  }
-  if(memcmp(buff, "../", 3) == 0){
-    strcpy(path, buff + 3);
-    return mtnd_fix_path(path);
-  }
-  return(path);
+  s = joinarg(a, "/");
+  sprintf(real, "%s/%s", ctx->cwd, s);
+  clrarg(a);
+  clrstr(s);
+  return(0);
 }
 
 int getstatd(uint64_t *dfree, uint64_t *dsize)
@@ -360,8 +373,7 @@ static void mtnd_list_process(MTNTASK *kt)
     kt->fin = 1;
     kt->send.head.size = 0;
     mtndata_get_string(buff, &(kt->recv));
-    mtnd_fix_path(buff);
-    sprintf(kt->path, "./%s", buff);
+    mtnd_fix_path(buff, kt->path);
     if(lstat(kt->path, &(kt->stat)) == -1){
       if(errno != ENOENT){
         mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
@@ -401,8 +413,7 @@ static void mtnd_stat_process(MTNTASK *kt)
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
   mtndata_get_string(buff, &(kt->recv));
-  mtnd_fix_path(buff);
-  sprintf(kt->path, "./%s", buff);
+  mtnd_fix_path(buff, kt->path);
   if(lstat(kt->path, &(kt->stat)) == -1){
     if(errno != ENOENT){
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
@@ -435,8 +446,7 @@ static void mtnd_truncate_process(MTNTASK *kt)
   kt->send.head.size = 0;
   mtndata_get_string(path, &(kt->recv));
   mtndata_get_int(&offset, &(kt->recv), sizeof(offset));
-  mtnd_fix_path(path);
-  sprintf(kt->path, "./%s", path);
+  mtnd_fix_path(path, kt->path);
   if(truncate(kt->path, offset) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
@@ -466,8 +476,7 @@ static void mtnd_mkdir_process(MTNTASK *kt)
   mtndata_get_string(buff, &(kt->recv));
   mtndata_get_int(&uid, &(kt->recv), sizeof(uid));
   mtndata_get_int(&gid, &(kt->recv), sizeof(gid));
-  mtnd_fix_path(buff);
-  sprintf(kt->path, "./%s", buff);
+  mtnd_fix_path(buff, kt->path);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(mkdir_ex(kt->path) == -1){
     mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
@@ -493,8 +502,7 @@ static void mtnd_rm_process(MTNTASK *kt)
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
   mtndata_get_string(buff, &(kt->recv));
-  mtnd_fix_path(buff);
-  sprintf(kt->path, "./%s", buff);
+  mtnd_fix_path(buff, kt->path);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(lstat(kt->path, &(kt->stat)) != -1){
     if(S_ISDIR(kt->stat.st_mode)){
@@ -531,11 +539,10 @@ static void mtnd_rename_process(MTNTASK *kt)
   kt->send.head.size = 0;
   mtndata_get_string(obuff, &(kt->recv));
   mtndata_get_string(nbuff, &(kt->recv));
-  mtnd_fix_path(obuff);
-  mtnd_fix_path(nbuff);
-  sprintf(kt->path, "./%s", obuff);
+  mtnd_fix_path(obuff, kt->path);
+  mtnd_fix_path(nbuff, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
-  if(rename(obuff, nbuff) == -1){
+  if(rename(kt->path, nbuff) == -1){
     if(errno != ENOENT){
       mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
       kt->send.head.type = MTNCMD_ERROR;
@@ -562,7 +569,7 @@ static void mtnd_symlink_process(MTNTASK *kt)
   kt->send.head.size = 0;
   mtndata_get_string(oldpath, &(kt->recv));
   mtndata_get_string(newpath, &(kt->recv));
-  mtnd_fix_path(newpath);
+  mtnd_fix_path(newpath, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(symlink(oldpath, newpath) == -1){
     mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
@@ -589,7 +596,7 @@ static void mtnd_readlink_process(MTNTASK *kt)
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
   mtndata_get_string(newpath, &(kt->recv));
-  mtnd_fix_path(newpath);
+  mtnd_fix_path(newpath, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
   size = readlink(newpath, oldpath, PATH_MAX);
   if(size == -1){
@@ -620,7 +627,7 @@ static void mtnd_chmod_process(MTNTASK *kt)
   kt->send.head.size = 0;
   mtndata_get_string(path, &(kt->recv));
   mtndata_get_int(&mode, &(kt->recv), sizeof(mode));
-  mtnd_fix_path(path);
+  mtnd_fix_path(path, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(chmod(path, mode) == -1){
     if(errno != ENOENT){
@@ -651,7 +658,7 @@ static void mtnd_chown_process(MTNTASK *kt)
   mtndata_get_string(path, &(kt->recv));
   mtndata_get_int(&uid, &(kt->recv), sizeof(uid));
   mtndata_get_int(&gid, &(kt->recv), sizeof(gid));
-  mtnd_fix_path(path);
+  mtnd_fix_path(path, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(chown(path, uid, gid) == -1){
     if(errno != ENOENT){
@@ -681,7 +688,7 @@ static void mtnd_utime_process(MTNTASK *kt)
   mtndata_get_string(path, &(kt->recv));
   mtndata_get_int(&(ut.actime),  &(kt->recv), sizeof(ut.actime));
   mtndata_get_int(&(ut.modtime), &(kt->recv), sizeof(ut.modtime));
-  mtnd_fix_path(path);
+  mtnd_fix_path(path, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(utime(path, &ut) == -1){
     if(errno != ENOENT){
