@@ -2948,8 +2948,8 @@ int mtn_put_data(MTN *mtn, int s, int f)
   int r;
   MTNDATA sd;
   MTNDATA rd;
-
   sd.head.fin  = 0;
+  sd.head.flag = 0;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.type = MTNCMD_PUT;
   while((r = read(f, sd.data.data, sizeof(sd.data.data)))){

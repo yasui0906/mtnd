@@ -33,6 +33,7 @@ static MTNFSTASKFUNC taskfunc[MTNCMD_MAX];
 //------------------------------------------------------
 static void mtnd_child_get(MTNTASK *kt)
 {
+  mtnlogger(mtn, 8, "[debug] %s: START\n", __func__);
   if(kt->fd == -1){
     errno = EBADF;
     mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
@@ -65,6 +66,7 @@ static void mtnd_child_get(MTNTASK *kt)
       break;
     }
   }
+  mtnlogger(mtn, 8, "[debug] %s: END\n", __func__);
 }
 
 static void mtnd_child_put(MTNTASK *kt)
@@ -72,7 +74,7 @@ static void mtnd_child_put(MTNTASK *kt)
   char d[PATH_MAX];
   char f[PATH_MAX];
 
-  mtnlogger(mtn, 9, "[debug] %s: START\n", __func__);
+  mtnlogger(mtn, 8, "[debug] %s: START\n", __func__);
   if(kt->fd){
     if(kt->recv.head.size == 0){
       //----- EOF -----
@@ -121,7 +123,7 @@ static void mtnd_child_put(MTNTASK *kt)
       }
     }
   }
-  mtnlogger(mtn, 9, "[debug] %s: END\n", __func__);
+  mtnlogger(mtn, 8, "[debug] %s: END\n", __func__);
 }
 
 //------------------------------------------------------
@@ -148,7 +150,6 @@ static void mtnd_child_open(MTNTASK *kt)
     mtnlogger(mtn, 0, "[error] %s: %s, path=%s create=%d mode=%o\n", __func__, strerror(errno), kt->path, ((flags & O_CREAT) != 0), mode);
   }else{
     fstat(kt->fd, &(kt->stat));
-    mtnlogger(mtn, 1, "[info]  %s: path=%s create=%d mode=%o\n", __func__, kt->path, ((flags & O_CREAT) != 0), mode);
     memset(&data, 0, sizeof(data));
     data.head.ver  = PROTOCOL_VERSION;
     data.head.type = MTNCMD_OPEN;
@@ -766,11 +767,13 @@ void mtnd_child(MTNTASK *kt)
       mtnlogger(mtn, 0, "[error] %s: not init: TYPE=%d\n", __func__, kt->recv.head.type);
       break;
     }
+
     if(taskfunc[kt->recv.head.type]){
       taskfunc[kt->recv.head.type](kt);
     }else{
       mtnd_child_error(kt);
     }
+
     if(kt->recv.head.flag == 0){
       send_data_stream(mtn, kt->con, &(kt->send));
     }else{

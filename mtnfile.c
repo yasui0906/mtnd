@@ -216,17 +216,22 @@ int mtnfile_list(char *path)
 
 int mtnfile_put(char *save_path, char *file_path)
 {
+  int r = 0;
   int f = 0;
   if(strcmp("-", file_path)){
     if((f = open(file_path, O_RDONLY)) == -1){
-      return(-1);
+      mtnlogger(mtn, 0, "[error]: %s %s\n", strerror(errno), file_path);
+      return(1);
     }
   }
-  mtn_put(mtn, f, save_path);
+  if(mtn_put(mtn, f, save_path) == 1){
+    r = 1;
+    mtnlogger(mtn, 0, "[error]: %s %s\n", strerror(errno), save_path);
+  }
   if(f){
     close(f);
   }
-  return(0); 
+  return(r); 
 }
 
 int mtnfile_get_open(char *path, MTNSTAT *st)

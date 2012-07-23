@@ -80,12 +80,12 @@ typedef struct
 
 typedef struct
 {
-  uint8_t  ver;
-  uint8_t  fin;
-  uint8_t  type;
-  uint8_t  flag;
-  uint16_t sqno;
-  uint16_t size;
+  uint8_t  ver;  // プロトコルバージョン
+  uint8_t  fin;  // 処理が完了したら1になる
+  uint8_t  type; // MTNCMD_* をセットする
+  uint8_t  flag; // 連続してデータを送信したいときに1をセット
+  uint16_t sqno; // シーケンス番号
+  uint16_t size; // データサイズ
 }__attribute__((packed)) MTNHEAD;
 
 typedef struct kdata
