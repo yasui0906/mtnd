@@ -1,0 +1,86 @@
+#!/bin/sh
+
+FAIL=
+OKCOUNT=0
+NGCOUNT=0
+LOGFILE="test.log"
+
+usage(){
+  echo "$0 path"
+  exit
+}
+
+stamp()
+{
+  d=$(date "+%H:%M:%S")
+  echo -n "$d "
+}
+
+assert_ok(){
+  OKCOUNT=$(($OKCOUNT+1))
+  echo -n o
+}
+
+assert_ng(){
+  FAIL=1
+  NGCOUNT=$(($NGCOUNT+1))
+  echo -n x
+}
+
+assert_cmp(){
+  if [ "$1" == "$2" ]; then
+    assert_ok
+  else
+    assert_ng
+  fi 
+}
+
+assert_fin(){
+  if [ -z $FAIL ]; then
+    echo " OK"
+  else
+    echo " NG"
+  fi
+  FAIL=
+}
+
+if [ -z "$1" ]; then
+  usage
+fi
+
+export stamp
+export assert_ok
+export assert_ng
+export assert_cmp
+export modulename
+export srcdir=$(pwd)
+
+main()
+{
+  cd $1 || exit 1
+  if [ -r "./config" ]; then
+    source ./config
+  fi
+
+  if [ -f "./startup" ]; then
+    stamp;echo "STARTUP"
+    source ./startup
+  fi
+
+  for modulename in */*.t;do
+    stamp
+    echo -ne "${modulename%.t}: "
+    source $modulename
+    assert_fin
+  done
+
+  if [ -f "./cleanup" ]; then
+    stamp;echo "CLEANUP"
+    source ./cleanup
+  fi
+  echo "Total: $(($OKCOUNT + $NGCOUNT)) tests (Success $OKCOUNT, Fail $NGCOUNT)"
+}
+
+[ -n "$2" ] && LOGFILE="$2"
+main $1 2>&1 | tee $LOGFILE
+

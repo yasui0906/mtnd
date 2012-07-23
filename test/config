@@ -1,0 +1,13 @@
+WBASE="/tmp/mtnwork"
+REMOTEPATH=(       \
+"aaa"              \
+"aaa/bbb"          \
+"aaa/12345"        \
+"aaa/ccccc/12345"  \
+"aaa/ddddd/12345"  \
+"aaa/eeeeee/12345" \
+"aaa/ffffff/12345" \
+"aaa/asnlii/12345" \
+"aaa/bbb/cc/dd/ee" \
+)
+CDATA=${#REMOTEPATH[@]}

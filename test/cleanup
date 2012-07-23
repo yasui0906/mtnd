@@ -1,0 +1,4 @@
+if [ -d "$WBASE" ]; then
+  kill $(cat $WBASE/mtnd.pid)
+  rm -fr $WBASE
+fi
