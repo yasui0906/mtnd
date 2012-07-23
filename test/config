@@ -1,3 +1,4 @@
+PORT=16000
 WBASE="/tmp/mtnwork"
 REMOTEPATH=(       \
 "aaa"              \

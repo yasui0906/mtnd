@@ -2,7 +2,7 @@ mkdir $WBASE
 mkdir $WBASE/data
 mkdir $WBASE/export
 mkdir $WBASE/execute
-${srcdir}/mtnd --pid=$WBASE/mtnd.pid -e $WBASE/export -E $WBASE/execute
+${srcdir}/mtnd --pid=$WBASE/mtnd.pid -e $WBASE/export -E $WBASE/execute -p $PORT
 for i in $(seq 1 $CDATA); do
   res=$(dd if=/dev/urandom of=$WBASE/data/data$i bs=$(($RANDOM+1)) count=$i 2>&1)
   if [ $? -ne 0 ]; then
