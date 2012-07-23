@@ -80,10 +80,9 @@ int mtnd_fix_path(char *path, char *real)
   if(!real){
     real = path;
   }
+  strcpy(real, "./");
   if((s = joinarg(a, "/"))){
-    sprintf(real, "%s/%s", ctx->cwd, s);
-  }else{
-    sprintf(real, "%s", ctx->cwd);
+    strcat(real, s);
   }
   clrarg(a);
   clrstr(s);
