@@ -60,31 +60,31 @@ void usage()
 
 int mtnd_fix_path(char *path, char *real)
 {
-  int i = 0;
   ARG a = NULL;
   STR s = NULL;
   char *p = NULL;
-  char *saveptr;
+  char *r = NULL;
   char buff[PATH_MAX];
 
   strcpy(buff, path);
-  p = strtok_r(buff, "/", &saveptr);
-  do{
-    if(!strcmp(".", p)){
-      continue;
-    }
+  p = strtok_r(buff, "/", &r);
+  while(p){
     if(!strcmp("..", p)){
       s = poparg(a);
       s = clrstr(s);
-      continue;
+    }else if(strcmp(".", p)){
+      a = addarg(a, p);
     }
-    a = addarg(a, p);
-  }while((p = strtok_r(NULL, "/", &saveptr)));
+    p = strtok_r(NULL, "/", &r);
+  }
   if(!real){
     real = path;
   }
-  s = joinarg(a, "/");
-  sprintf(real, "%s/%s", ctx->cwd, s);
+  if((s = joinarg(a, "/"))){
+    sprintf(real, "%s/%s", ctx->cwd, s);
+  }else{
+    sprintf(real, "%s", ctx->cwd);
+  }
   clrarg(a);
   clrstr(s);
   return(0);
