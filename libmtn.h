@@ -83,7 +83,7 @@ typedef struct
   uint8_t  ver;  // プロトコルバージョン
   uint8_t  fin;  // 処理が完了したら1になる
   uint8_t  type; // MTNCMD_* をセットする
-  uint8_t  flag; // 連続してデータを送信したいときに1をセット
+  uint8_t  flag; // 連続してデータを送信したいときに1をセットする
   uint16_t sqno; // シーケンス番号
   uint16_t size; // データサイズ
 }__attribute__((packed)) MTNHEAD;
@@ -105,19 +105,19 @@ typedef struct kdata
 
 typedef struct mtntask
 {
-  int       fd;
-  int      rpp;
-  int      wpp;
-  int      con;
-  int      res;
-  int   std[3];
-  pid_t    pid;
-  DIR     *dir;
-  uint8_t  fin;
-  uint8_t type;
-  uint8_t create;
-  struct  timeval tv;
-  struct  stat  stat;
+  int       fd;       // ファイル操作用ディスクリプタ
+  int      rpp;       // プロセス間通信用ディスクリプタ
+  int      wpp;       // プロセス間通信用ディスクリプタ
+  int      con;       // クライアント通信用ソケット
+  int   std[3];       //
+  int      res;       //
+  pid_t    pid;       //
+  DIR     *dir;       //
+  uint8_t  fin;       //
+  uint8_t type;       //
+  uint8_t create;     //
+  struct  timeval tv; //
+  struct  stat  stat; //
   MTNINIT init;
   MTNADDR addr;
   MTNDATA send;
@@ -133,7 +133,7 @@ typedef struct mtntask
 typedef struct mtnsavetask
 {
   uint16_t sqno;
-  MTNADDR addr;
+  MTNADDR  addr;
   struct timeval tv;
   struct mtnsavetask *prev;
   struct mtnsavetask *next;
@@ -173,5 +173,6 @@ int send_recv_stream(MTN *mtn, int s, MTNDATA *sd, MTNDATA *rd);
 char *get_mode_string(mode_t mode);
 char *v4addr(MTNADDR *addr, char *buff);
 int  v4port(MTNADDR *addr);
+char *v4apstr(MTNADDR *addr);
 void mtn_startup(MTN *mtn, int f);
 void mtn_shutdown(MTN *mtn);

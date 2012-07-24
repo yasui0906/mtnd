@@ -477,7 +477,8 @@ static int recv_stream(MTN *mtn, int s, void *buff, size_t size)
     if(recv_readywait(mtn, s) == -1){
       return(-1);
     }
-    if(!(r = read(s, buff, size))){
+    r = read(s, buff, size);
+    if(r == 0){
       return(1);
     }
     if(r == -1){
@@ -758,6 +759,14 @@ char *v4addr(MTNADDR *addr, char *buff)
 int v4port(MTNADDR *addr)
 {
   return(ntohs(addr->addr.in.sin_port));
+}
+
+char *v4apstr(MTNADDR *addr)
+{
+  char addrstr[INET_ADDRSTRLEN];
+  static char addrport[INET_ADDRSTRLEN + 7];
+  sprintf(addrport, "%s:%d", v4addr(addr, addrstr), v4port(addr));
+  return(addrport);
 }
 
 int mtndata_get_string(char *str, MTNDATA *kd)
@@ -1691,6 +1700,13 @@ MTNTASK *newtask()
   if((kt = xcalloc(sizeof(MTNTASK)))){
     inccount(MTNCOUNT_TASK);
   }
+  kt->fd     = -1;
+  kt->rpp    = -1;
+  kt->wpp    = -1;
+  kt->con    = -1;
+  kt->std[0] = -1;
+  kt->std[1] = -1;
+  kt->std[2] = -1;
   return(kt);
 }
 
@@ -2628,7 +2644,6 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
   MTNINIT  mi;
   MTNSTAT *fs;
   MTNSVR *svr;
-  char buff[64];
 
 	mtnlogger(mtn, 2, "[debug] %s:\n", __func__);
   fs  = NULL;
@@ -2648,7 +2663,7 @@ int mtn_open(MTN *mtn, const char *path, int flags, MTNSTAT *st)
   mi.mode = MTNMODE_EXPORT;
   s = mtn_connect(mtn, svr, &mi);
   if(s == -1){
-    mtnlogger(mtn, 0, "[error] %s: can't connect: %s %s\n", __func__, strerror(errno), v4addr(&(svr->addr), buff));
+    mtnlogger(mtn, 0, "[error] %s: can't connect: %s %s\n", __func__, strerror(errno), v4apstr(&(svr->addr)));
     clrstat(fs);
     clrsvr(svr);
     return(-1);
@@ -2952,7 +2967,8 @@ int mtn_put_data(MTN *mtn, int s, int f)
   sd.head.flag = 0;
   sd.head.ver  = PROTOCOL_VERSION;
   sd.head.type = MTNCMD_PUT;
-  while((r = read(f, sd.data.data, sizeof(sd.data.data)))){
+  do{
+    r = read(f, sd.data.data, sizeof(sd.data.data));
     if(r == -1){
       return(-1);
     }
@@ -2965,7 +2981,7 @@ int mtn_put_data(MTN *mtn, int s, int f)
       mtndata_get_int(&errno, &rd, sizeof(errno));
       return(-1);
     }
-  }
+  }while(!rd.head.fin);
   return(0);
 }
 

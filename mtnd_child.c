@@ -1,7 +1,7 @@
-/*
- * mtnd.c
- * Copyright (C) 2011 KLab Inc.
- */
+//
+// mtnd.c
+// Copyright (C) 2012 KLab Inc.
+//
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -15,9 +15,7 @@
 #include <errno.h>
 #include <utime.h>
 #include <fcntl.h>
-#include <getopt.h>
 #include <grp.h>
-#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/epoll.h>
@@ -33,11 +31,14 @@ static MTNFSTASKFUNC taskfunc[MTNCMD_MAX];
 //------------------------------------------------------
 static void mtnd_child_get(MTNTASK *kt)
 {
-  mtnlogger(mtn, 8, "[debug] %s: START\n", __func__);
+  mtnlogger(mtn, 7, "[debug] %s: IN\n", __func__);
   if(kt->fd == -1){
     errno = EBADF;
     mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
     kt->send.head.type = MTNCMD_ERROR;
+    kt->send.head.size = 0;
+    kt->send.head.flag = 0;
+    kt->send.head.fin  = 1;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     return;
   }
@@ -46,7 +47,7 @@ static void mtnd_child_get(MTNTASK *kt)
     if(kt->send.head.size == 0){ // EOF
       close(kt->fd);
       kt->send.head.fin = 1;
-      kt->fd = 0;
+      kt->fd = -1;
       break;
     }
     if(kt->send.head.size == -1){
@@ -66,64 +67,47 @@ static void mtnd_child_get(MTNTASK *kt)
       break;
     }
   }
-  mtnlogger(mtn, 8, "[debug] %s: END\n", __func__);
+  mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
 static void mtnd_child_put(MTNTASK *kt)
 {
-  char d[PATH_MAX];
-  char f[PATH_MAX];
-
-  mtnlogger(mtn, 8, "[debug] %s: START\n", __func__);
-  if(kt->fd){
-    if(kt->recv.head.size == 0){
-      //----- EOF -----
-      struct timeval tv[2];
-      tv[0].tv_sec  = kt->stat.st_atime;
-      tv[0].tv_usec = 0;
-      tv[1].tv_sec  = kt->stat.st_mtime;
-      tv[1].tv_usec = 0;
-      futimes(kt->fd, tv);
-      close(kt->fd);
-      kt->send.head.fin = 1;
-      kt->fin = 1;
-      kt->fd = 0;
-    }else{
-      //----- write -----
-      kt->res = write(kt->fd, kt->recv.data.data, kt->recv.head.size);
-      if(kt->res == -1){
-        mtnlogger(mtn, 0, "[error] %s: file write error %s\n",__func__, strerror(errno));
-        kt->fin = 1;
-        kt->send.head.fin = 1;
-        kt->send.head.type = MTNCMD_ERROR;
-        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      }
-    }
+  struct timeval tv[2];
+  if(kt->fd == -1){
+    errno = EBADF;
+    mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+    kt->send.head.type = MTNCMD_ERROR;
+    kt->send.head.size = 0;
+    kt->send.head.flag = 0;
+    kt->send.head.fin  = 1;
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+    return;
+  }
+  mtnlogger(mtn, 8, "[debug] %s: IN\n", __func__);
+  if(kt->recv.head.size == 0){
+    //----- EOF -----
+    mtnlogger(mtn, 7, "[debug] %s: EOF\n", __func__);
+    tv[0].tv_sec  = kt->stat.st_atime;
+    tv[0].tv_usec = 0;
+    tv[1].tv_sec  = kt->stat.st_mtime;
+    tv[1].tv_usec = 0;
+    futimes(kt->fd, tv);
+    close(kt->fd);
+    kt->send.head.fin = 1;
+    kt->fin =  1;
+    kt->fd  = -1;
   }else{
-    //----- open/create -----
-    mtndata_get_string(kt->path,  &(kt->recv));
-    mtndata_get_stat(&(kt->stat), &(kt->recv));
-    mtnlogger(mtn, 0,"[info]  %s: creat %s\n", __func__, kt->path);
-    dirbase(kt->path, d, f);
-    if(mkdir_ex(d) == -1){
-      mtnlogger(mtn, 0,"[error] %s: mkdir error %s %s\n", __func__, strerror(errno), d);
+    //----- write -----
+    kt->res = write(kt->fd, kt->recv.data.data, kt->recv.head.size);
+    if(kt->res == -1){
+      mtnlogger(mtn, 0, "[error] %s: file write error %s\n",__func__, strerror(errno));
       kt->fin = 1;
       kt->send.head.fin = 1;
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-    }else{
-      kt->fd = creat(kt->path, kt->stat.st_mode);
-      if(kt->fd == -1){
-        mtnlogger(mtn, 0,"[error] %s: can't creat %s %s\n", __func__, strerror(errno), kt->path);
-        kt->fd  = 0;
-        kt->fin = 1;
-        kt->send.head.fin = 1;
-        kt->send.head.type = MTNCMD_ERROR;
-        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      }
     }
   }
-  mtnlogger(mtn, 8, "[debug] %s: END\n", __func__);
+  mtnlogger(mtn, 8, "[debug] %s: OUT\n", __func__);
 }
 
 //------------------------------------------------------
@@ -136,15 +120,22 @@ static void mtnd_child_open(MTNTASK *kt)
   MTNDATA data;
   char d[PATH_MAX];
   char f[PATH_MAX];
+
+  mtnlogger(mtn, 7, "[debug] %s: IN\n", __func__);
   mtndata_get_string(kt->path, &(kt->recv));
   mtndata_get_int(&flags, &(kt->recv), sizeof(flags));
   mtndata_get_int(&mode,  &(kt->recv), sizeof(mode));
   mtnd_fix_path(kt->path, NULL);
   dirbase(kt->path, d, f);
-  mkdir_ex(d);
+  if(mkdir_ex(d) == -1){
+    mtnlogger(mtn, 0,"[error] %s: mkdir error %s %s\n", __func__, strerror(errno), d);
+    kt->fin = 1;
+    kt->send.head.fin = 1;
+    kt->send.head.type = MTNCMD_ERROR;
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+  }
   kt->fd = open(kt->path, flags, mode);
   if(kt->fd == -1){
-    kt->fd = 0;
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s, path=%s create=%d mode=%o\n", __func__, strerror(errno), kt->path, ((flags & O_CREAT) != 0), mode);
@@ -160,6 +151,7 @@ static void mtnd_child_open(MTNTASK *kt)
       mtnlogger(mtn, 0, "[error]  %s: %s\n", __func__, strerror(errno));
     }
   }
+  mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
 static void mtnd_child_read(MTNTASK *kt)
@@ -745,9 +737,7 @@ void init_task_child()
 void mtnd_child(MTNTASK *kt)
 {
   char cmd[PATH_MAX + 16];
-  char addr[INET_ADDRSTRLEN];
-  v4addr(&(kt->addr), addr);
-  mtnlogger(mtn, 1, "[debug] %s: accept from %s:%d sock=%d\n", __func__, addr, v4port(&(kt->addr)), kt->con);
+  mtnlogger(mtn, 1, "[debug] %s: accept from %s sock=%d\n", __func__, v4apstr(&(kt->addr)), kt->con);
   kt->keep.head.ver  = PROTOCOL_VERSION;
   kt->keep.head.type = MTNCMD_SUCCESS;
   kt->keep.head.size = 0;
@@ -756,24 +746,23 @@ void mtnd_child(MTNTASK *kt)
     kt->send.head.type = MTNCMD_SUCCESS;
     kt->send.head.size = 0;
     kt->res = recv_data_stream(mtn, kt->con, &(kt->recv));
-    if(kt->res == -1){
-      mtnlogger(mtn, 0, "[error] %s: recv error type=%d sock=%d\n", __func__, kt->recv.head.type, kt->con);
+    if(kt->res == 1){
+      mtnlogger(mtn, 0, "[error] %s: %s Connection reset by peer sock=%d\n", __func__, v4apstr(&(kt->addr)), kt->con);
       break;
     }
-    if(kt->res == 1){
+    if(kt->res == -1){
+      mtnlogger(mtn, 0, "[error] %s: recv error type=%d sock=%d\n", __func__, kt->recv.head.type, kt->con);
       break;
     }
     if(!kt->init.init && (kt->recv.head.type != MTNCMD_INIT)){
       mtnlogger(mtn, 0, "[error] %s: not init: TYPE=%d\n", __func__, kt->recv.head.type);
       break;
     }
-
     if(taskfunc[kt->recv.head.type]){
       taskfunc[kt->recv.head.type](kt);
     }else{
       mtnd_child_error(kt);
     }
-
     if(kt->recv.head.flag == 0){
       send_data_stream(mtn, kt->con, &(kt->send));
     }else{

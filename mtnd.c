@@ -23,7 +23,6 @@
 #include <sys/epoll.h>
 #include <sys/time.h>
 #include <sys/wait.h>
-#include <sched.h>
 #include "mtnd.h"
 
 int  is_loop = 1;
@@ -60,8 +59,8 @@ void usage()
 
 int mtnd_fix_path(char *path, char *real)
 {
-  ARG a = NULL;
-  STR s = NULL;
+  ARG   a = NULL;
+  STR   s = NULL;
   char *p = NULL;
   char *r = NULL;
   char buff[PATH_MAX];
@@ -162,8 +161,9 @@ uint64_t get_datasize(char *path)
 
 MTNTASK *mtnd_task_create(MTNDATA *data, MTNADDR *addr)
 {
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   MTNTASK *kt;
+
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   for(kt=tasklist;kt;kt=kt->next){
     if(cmpaddr(&(kt->addr), addr) != 0){
       continue;
@@ -182,7 +182,7 @@ MTNTASK *mtnd_task_create(MTNDATA *data, MTNADDR *addr)
   if(tasklist){
     tasklist->prev = kt;
   }
-  kt->next  = tasklist;
+  kt->next = tasklist;
   tasklist = kt;
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
   return(kt);
@@ -201,7 +201,7 @@ MTNTASK *mtnd_task_save(MTNTASK *t)
   }
 
   if(!(s = newsavetask(t))){
-    /* mem alloc error */
+    mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
   }else{
     if((s->next = tasksave)){
       s->next->prev = s;
