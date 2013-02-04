@@ -29,11 +29,11 @@
 #include <sys/resource.h>
 typedef void (*MTNPROCFUNC)(MTN *mtn, MTNSVR *, MTNDATA *, MTNDATA *, MTNADDR *);
 
-static int is_loop = 1;
 static int socket_rcvbuf = 0;
 static int count[MTNCOUNT_MAX];
 static pthread_mutex_t sqno_mutex  = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
+static volatile sig_atomic_t is_loop = 1;
 
 char *mtncmdstr[]={
   "STARTUP",
@@ -3045,7 +3045,13 @@ int mtn_put(MTN *mtn, int f, char *path)
   if(s == -1){
     return(-1);
   }
-  return(mtn_put_data(mtn, s, f));
+  if(mtn_put_data(mtn, s, f) == 0){
+    mtn_close(mtn, s);
+    mtn_chmod(mtn, file, st.stat.st_mode);
+    mtn_chown(mtn, file, st.stat.st_uid, st.stat.st_gid);
+    mtn_utime(mtn, file, st.stat.st_atime, st.stat.st_mtime);
+  }
+  return(0);
 }
 
 //-------------------------------------------------------------------

@@ -72,7 +72,6 @@ static void mtnd_child_get(MTNTASK *kt)
 
 static void mtnd_child_put(MTNTASK *kt)
 {
-  struct timeval tv[2];
   if(kt->fd == -1){
     errno = EBADF;
     mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
@@ -87,15 +86,7 @@ static void mtnd_child_put(MTNTASK *kt)
   if(kt->recv.head.size == 0){
     //----- EOF -----
     mtnlogger(mtn, 7, "[debug] %s: EOF\n", __func__);
-    tv[0].tv_sec  = kt->stat.st_atime;
-    tv[0].tv_usec = 0;
-    tv[1].tv_sec  = kt->stat.st_mtime;
-    tv[1].tv_usec = 0;
-    futimes(kt->fd, tv);
-    close(kt->fd);
     kt->send.head.fin = 1;
-    kt->fin =  1;
-    kt->fd  = -1;
   }else{
     //----- write -----
     kt->res = write(kt->fd, kt->recv.data.data, kt->recv.head.size);

@@ -1,7 +1,7 @@
-/*
- * mtnd.c
- * Copyright (C) 2011 KLab Inc.
- */
+//
+// mtnd.c
+// Copyright (C) 2011 KLab Inc.
+//
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -25,12 +25,12 @@
 #include <sys/wait.h>
 #include "mtnd.h"
 
-int  is_loop = 1;
 MTN  *mtn = NULL;
 MTND *ctx = NULL;
 MTNTASK *tasklist = NULL;
 MTNSAVETASK *tasksave = NULL;
 static MTNFSTASKFUNC taskfunc[MTNCMD_MAX];
+volatile sig_atomic_t is_loop = 1;
 
 void version()
 {
@@ -212,6 +212,26 @@ MTNTASK *mtnd_task_save(MTNTASK *t)
   return(n);
 }
 
+static int mtnd_guid_set(uid_t uid, gid_t gid)
+{
+  seteuid(uid);
+  setegid(gid);
+  return(0);
+}
+
+static int mtnd_guid_restore()
+{
+  uid_t uid = getuid();
+  gid_t gid = getgid();
+  if(uid != geteuid()){
+    seteuid(uid);
+  }
+  if(gid != getegid()){
+    setegid(gid);
+  }
+  return(0);
+}
+
 //-------------------------------------------------------------------
 // UDP PROSESS
 //-------------------------------------------------------------------
@@ -356,15 +376,8 @@ int mtnd_list_dir(MTNTASK *kt)
 //-------------------------------------------------------------------
 static void mtnd_list_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
-
   char buff[PATH_MAX];
+  MTND_EXPORT_RETURN;
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   if(kt->dir){
     mtnd_list_dir(kt);
@@ -398,16 +411,10 @@ static void mtnd_list_process(MTNTASK *kt)
 
 static void mtnd_stat_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   char buff[PATH_MAX];
   char file[PATH_MAX];
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -429,15 +436,9 @@ static void mtnd_stat_process(MTNTASK *kt)
 
 static void mtnd_truncate_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
   off_t offset;
   char path[PATH_MAX];
+  MTND_EXPORT_RETURN;
   mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.type = MTNCMD_SUCCESS;
@@ -458,17 +459,11 @@ static void mtnd_truncate_process(MTNTASK *kt)
 
 static void mtnd_mkdir_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   uid_t uid;
   gid_t gid;
   char buff[PATH_MAX];
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -488,15 +483,9 @@ static void mtnd_mkdir_process(MTNTASK *kt)
 
 static void mtnd_rm_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   char buff[PATH_MAX];
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -523,16 +512,10 @@ static void mtnd_rm_process(MTNTASK *kt)
 
 static void mtnd_rename_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   char obuff[PATH_MAX];
   char nbuff[PATH_MAX];
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -553,16 +536,10 @@ static void mtnd_rename_process(MTNTASK *kt)
 
 static void mtnd_symlink_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   char oldpath[PATH_MAX];
   char newpath[PATH_MAX];
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -580,17 +557,11 @@ static void mtnd_symlink_process(MTNTASK *kt)
 
 static void mtnd_readlink_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   ssize_t size;
   char newpath[PATH_MAX];
   char oldpath[PATH_MAX];
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -611,16 +582,10 @@ static void mtnd_readlink_process(MTNTASK *kt)
 
 static void mtnd_chmod_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
   mode_t mode;
   char path[PATH_MAX];
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 7, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -635,22 +600,16 @@ static void mtnd_chmod_process(MTNTASK *kt)
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
-  mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
+  mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
 static void mtnd_chown_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
   uid_t uid;
   gid_t gid;
   char path[PATH_MAX];
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 7, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -666,21 +625,15 @@ static void mtnd_chown_process(MTNTASK *kt)
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
-  mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
+  mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
 static void mtnd_utime_process(MTNTASK *kt)
 {
-  if(!ctx->export){
-    kt->fin = 1;
-    kt->send.head.type = MTNCMD_SUCCESS;
-    kt->send.head.size = 0;
-    kt->send.head.fin  = 1;
-    return;
-  }
   struct utimbuf ut;
   char path[PATH_MAX];
-  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
+  MTND_EXPORT_RETURN;
+  mtnlogger(mtn, 7, "[debug] %s: IN\n", __func__);
   kt->fin = 1;
   kt->send.head.fin  = 1;
   kt->send.head.size = 0;
@@ -696,7 +649,7 @@ static void mtnd_utime_process(MTNTASK *kt)
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     }
   }
-  mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
+  mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
 int mtnd_cld_process(int s)

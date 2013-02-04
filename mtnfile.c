@@ -579,7 +579,7 @@ int main(int argc, char *argv[])
       r = mtnfile_list(ctx->remote_path);
       break;
 
-    case MTNTOOL_PUT:    
+    case MTNTOOL_PUT:
       r = mtnfile_put(ctx->remote_path, ctx->local_path);
       break;
 

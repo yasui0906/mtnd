@@ -7,6 +7,15 @@
 #include "libmtn.h"
 #include "common.h"
 
+#define MTND_EXPORT_RETURN               \
+  if(!ctx->export){                      \
+    kt->fin = 1;                         \
+    kt->send.head.type = MTNCMD_SUCCESS; \
+    kt->send.head.size = 0;              \
+    kt->send.head.fin  = 1;              \
+    return;                              \
+  }                                      \
+
 typedef struct mtnd_context{
   MTNTASK *cldtask;
   MTNSVR  *members;
@@ -23,7 +32,7 @@ typedef struct mtnd_context{
 } MTND;
 
 typedef void (*MTNFSTASKFUNC)(MTNTASK *);
-extern int is_loop;
+extern volatile sig_atomic_t is_loop;
 extern MTN  *mtn;
 extern MTND *ctx;
 

@@ -56,7 +56,7 @@ void usage()
   printf("   -j num             # CPU usage limit(0-100[%%])\n");
   printf("   -v                 # verbose\n");
   printf("   -n                 # dryrun\n");
-  printf("   -b                 # \n");
+  printf("   -b                 # Buffering stdout/stderr to show it group by process\n");
   printf("   -B                 # stdout/stderr binary mode\n");
   printf("   -g group           # \n");
   printf("   -P max-procs       # \n");
