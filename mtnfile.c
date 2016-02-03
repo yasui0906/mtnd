@@ -109,6 +109,9 @@ int mtnfile_info()
     printf("STR=%d ",     s->cnt.str);
     printf("ARG=%d ",     s->cnt.arg);
     printf("CLD=%d ",     s->cnt.cld);
+    if(s->flags & MTNMODE_RDONLY){
+      printf("RDONLY ");
+    }
     printf("\n");
   }
   if(!node){

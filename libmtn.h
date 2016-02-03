@@ -58,6 +58,7 @@
 
 #define MTNMODE_EXPORT  1
 #define MTNMODE_EXECUTE 2
+#define MTNMODE_RDONLY  4
 
 typedef struct statm
 {
