@@ -253,6 +253,7 @@ int mtn_read(MTN *mtn, int s, char *buf, size_t size, off_t offset);
 int mtn_write(MTN *mtn, int s, const char *buf, size_t size, off_t offset);
 int mtn_flush(MTN *mtn, int s);
 int mtn_exec(MTN *mtn, MTNJOB *job);
+int mtn_rdonly(MTN *mtn, const char *host, int flag);
 
 MTNDIR  *newdir(const char *path);
 MTNDIR  *deldir(MTNDIR *md);

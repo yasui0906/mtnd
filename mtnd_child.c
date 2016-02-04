@@ -694,6 +694,23 @@ static void mtnd_child_exec(MTNTASK *kt)
   mtnlogger(mtn, 8, "[debug] %s: return\n", __func__);
 }
 
+static void mtnd_child_rdonly(MTNTASK *kt)
+{
+  int flag;
+  MTNDATA data;
+  mtnlogger(mtn, 9, "[debug] %s: IN\n", __func__);
+  mtndata_get_int(&flag, &(kt->recv), sizeof(flag));
+  memset(&data, 0, sizeof(data));
+  data.head.ver  = PROTOCOL_VERSION;
+  data.head.type = MTNCMD_RDONLY;
+  data.head.size = 0;
+  mtndata_set_int(&(flag), &data, sizeof(flag));
+  if(send_data_stream(mtn, kt->wpp, &data) == -1){
+    mtnlogger(mtn, 0, "[error]  %s: %s\n", __func__, strerror(errno));
+  }
+  mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
+}
+
 static void mtnd_child_error(MTNTASK *kt)
 {
   errno = EACCES;
@@ -723,6 +740,7 @@ void init_task_child()
   taskfunc[MTNCMD_INIT]     = mtnd_child_init;
   taskfunc[MTNCMD_EXIT]     = mtnd_child_exit;
   taskfunc[MTNCMD_EXEC]     = mtnd_child_exec;
+  taskfunc[MTNCMD_RDONLY]   = mtnd_child_rdonly;
 }
 
 void mtnd_child(MTNTASK *kt)

@@ -670,9 +670,14 @@ int mtnd_cld_process(int s)
         mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
       }
       if(r == 0){
-        if(data.head.type == MTNCMD_OPEN){
-          mtndata_get_int(&(n->init.use), &data, sizeof(n->init.use));
-          mtndata_get_string(n->path, &data);
+        switch(data.head.type){
+          case MTNCMD_OPEN:
+            mtndata_get_int(&(n->init.use), &data, sizeof(n->init.use));
+            mtndata_get_string(n->path, &data);
+            break;
+          case MTNCMD_RDONLY:
+            mtndata_get_int(&(ctx->rdonly), &data, sizeof(ctx->rdonly));
+            break;
         }
       }
       return(1);

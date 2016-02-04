@@ -44,16 +44,18 @@ void usage()
   printf("usage: %s [OPTION] [HOST]:REMOTE_PATH\n", MODULE_NAME);
   printf("\n");
   printf("  OPTION\n");
-  printf("   -h            (--help)    # help\n");
-  printf("   -v            (--version) # show version\n");
-  printf("   -i            (--info)    # show infomation\n");
-  printf("   -c            (--choose)  # choose host\n");
-  printf("   -u nnnn[KMG]  (--use)     # use space\n");
-  printf("   -P LOCAL_PATH (--put)     # file upload\n");
-  printf("   -G LOCAL_PATH (--get)     # file download\n");
-  printf("   -D            (--delete)  # file delete\n");
-  printf("   -m addr                   # multicast addr\n");
-  printf("   -p port                   # multicast port\n");
+  printf("   -h            (--help)      # help\n");
+  printf("   -v            (--version)   # show version\n");
+  printf("   -i            (--info)      # show infomation\n");
+  printf("   -c            (--choose)    # choose host\n");
+  printf("   -u nnnn[KMG]  (--use)       # use space\n");
+  printf("   -P LOCAL_PATH (--put)       # file upload\n");
+  printf("   -G LOCAL_PATH (--get)       # file download\n");
+  printf("   -D            (--delete)    # file delete\n");
+  printf("   -m addr                     # multicast addr\n");
+  printf("   -p port                     # multicast port\n");
+  printf("   -R host       (--rdonly)    # set read-only mode\n");
+  printf("   -W host       (--no-rdonly) # set read-write mode\n");
 
   printf("\n");
 }
@@ -270,6 +272,11 @@ int mtnfile_del(STR remote)
   return(0);
 }
 
+int mtnfile_rdonly(STR host, int flag)
+{
+  return(mtn_rdonly(mtn, host, flag));
+}
+
 int mtnfile_console_help(STR cmd)
 {
   if(!cmd){
@@ -442,14 +449,16 @@ int mtnfile_console()
 }
 
 static struct option opts[]={
-  {"help",    0, NULL, 'h'},
-  {"version", 0, NULL, 'v'},
-  {"info",    0, NULL, 'i'},
-  {"choose",  0, NULL, 'c'},
-  {"put",     1, NULL, 'P'},
-  {"get",     1, NULL, 'G'},
-  {"delete",  0, NULL, 'D'},
-  {NULL,      0, NULL, 0}
+  {"help",      0, NULL, 'h'},
+  {"version",   0, NULL, 'v'},
+  {"info",      0, NULL, 'i'},
+  {"choose",    0, NULL, 'c'},
+  {"put",       1, NULL, 'P'},
+  {"get",       1, NULL, 'G'},
+  {"delete",    0, NULL, 'D'},
+  {"rdonly",    1, NULL, 'R'},
+  {"no-rdonly", 1, NULL, 'W'},
+  {NULL,        0, NULL, 0}
 };
 
 int init(int argc, char *argv[])
@@ -468,7 +477,7 @@ int init(int argc, char *argv[])
   mtn->logtype = 0;
   mtn->logmode = MTNLOG_STDERR;
   ctx->mode    = (argc == 1) ? MTNTOOL_CONSOLE : MTNTOOL_LIST;
-  while((r = getopt_long(argc, argv, "P:G:Du:m:p:hvicd", opts, NULL)) != -1){
+  while((r = getopt_long(argc, argv, "R:W:P:G:Du:m:p:hvicd", opts, NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -540,6 +549,16 @@ int init(int argc, char *argv[])
         mtn->mcast_port = atoi(optarg);
         break;
 
+      case 'R':
+        ctx->remote_host = newstr(optarg);
+        ctx->mode = MTNTOOL_RDONLY;
+        break;
+
+      case 'W':
+        ctx->remote_host = newstr(optarg);
+        ctx->mode = MTNTOOL_NORDONLY;
+        break;
+
       case '?':
         usage();
         exit(1);
@@ -592,6 +611,14 @@ int main(int argc, char *argv[])
 
     case MTNTOOL_DEL:
       r = mtnfile_del(ctx->remote_path);
+      break;
+
+    case MTNTOOL_RDONLY:
+      r = mtnfile_rdonly(ctx->remote_host, 1);
+      break;
+
+    case MTNTOOL_NORDONLY:
+      r = mtnfile_rdonly(ctx->remote_host, 0);
       break;
   }
   exit(r);
