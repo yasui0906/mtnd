@@ -41,6 +41,7 @@
 #define MTNCMD_STDIN    30
 #define MTNCMD_STDOUT   31
 #define MTNCMD_STDERR   32
+#define MTNCMD_RDONLY   33
 #define MTNCMD_ERROR    97
 #define MTNCMD_SUCCESS  98
 #define MTNCMD_MAX      99
@@ -58,6 +59,7 @@
 
 #define MTNMODE_EXPORT  1
 #define MTNMODE_EXECUTE 2
+#define MTNMODE_RDONLY  4
 
 typedef struct statm
 {

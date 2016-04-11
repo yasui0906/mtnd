@@ -54,6 +54,7 @@ void usage()
   printf("   -D num           # debug level\n");
   printf("   -l size          # limit size (MB)\n");
   printf("   --pid=path       # pid file(ex: /var/run/mtnfs.pid)\n");
+  printf("   --rdonly         # read only\n");
   printf("\n");
 }
 
@@ -306,6 +307,9 @@ static void mtnd_info_process(MTNTASK *kt)
       }
     }
   }
+  if(ctx->rdonly){
+    mb.dfree = 0;
+  }
   mb.cnt.prc = getpscount();
   mb.cnt.cld = get_task_count(ctx->cldtask);
   mb.cnt.mbr = get_members_count(ctx->members);
@@ -322,6 +326,7 @@ static void mtnd_info_process(MTNTASK *kt)
   mb.loadavg = (uint32_t)(loadavg * 100);
   mb.flags  |= ctx->export  ? MTNMODE_EXPORT  : 0;
   mb.flags  |= ctx->execute ? MTNMODE_EXECUTE : 0;
+  mb.flags  |= ctx->rdonly  ? MTNMODE_RDONLY  : 0;
   mtndata_set_int(&(mb.dsize),      &(kt->send), sizeof(mb.dsize));
   mtndata_set_int(&(mb.dfree),      &(kt->send), sizeof(mb.dfree));
   mtndata_set_int(&(sm.vsz),        &(kt->send), sizeof(sm.vsz));
@@ -665,9 +670,14 @@ int mtnd_cld_process(int s)
         mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
       }
       if(r == 0){
-        if(data.head.type == MTNCMD_OPEN){
-          mtndata_get_int(&(n->init.use), &data, sizeof(n->init.use));
-          mtndata_get_string(n->path, &data);
+        switch(data.head.type){
+          case MTNCMD_OPEN:
+            mtndata_get_int(&(n->init.use), &data, sizeof(n->init.use));
+            mtndata_get_string(n->path, &data);
+            break;
+          case MTNCMD_RDONLY:
+            mtndata_get_int(&(ctx->rdonly), &data, sizeof(ctx->rdonly));
+            break;
         }
       }
       return(1);
@@ -1020,6 +1030,7 @@ struct option *get_optlist()
       {"export",  1, NULL, 'e'},
       {"execute", 1, NULL, 'E'},
       {"group",   1, NULL, 'g'},
+      {"rdonly",  0, NULL, 'r'},
       {0, 0, 0, 0}
     };
   return(opt);
@@ -1070,6 +1081,7 @@ void mtnd_startmsg()
   mtnlogger(mtn, 0, "size : %6llu [MB]\n", (dsize + ctx->free_limit) / 1024 / 1024);
   mtnlogger(mtn, 0, "free : %6llu [MB]\n", (dfree + ctx->free_limit) / 1024 / 1024);
   mtnlogger(mtn, 0, "limit: %6llu [MB]\n", ctx->free_limit / 1024 / 1024);
+  mtnlogger(mtn, 0, "mode : %s\n", ctx->rdonly ? "RDONLY" : "RDWR");
   }
 }
 
@@ -1159,7 +1171,7 @@ void parse(int argc, char *argv[])
     usage();
     exit(0);
   }
-  while((r = getopt_long(argc, argv, "hvng:E:e:l:m:p:P:D:", get_optlist(), NULL)) != -1){
+  while((r = getopt_long(argc, argv, "hvng:E:e:l:m:p:P:D:r", get_optlist(), NULL)) != -1){
     switch(r){
       case 'h':
         usage();
@@ -1217,6 +1229,10 @@ void parse(int argc, char *argv[])
         }else{
           sprintf(ctx->pid, "%s/%s", ctx->cwd, optarg);
         }
+        break;
+
+      case 'r':
+        ctx->rdonly = 1;
         break;
 
       case '?':

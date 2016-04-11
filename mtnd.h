@@ -28,6 +28,7 @@ typedef struct mtnd_context{
   int  signal;
   int  export;
   int  execute;
+  int  rdonly;
   int  fsig[2];
 } MTND;
 

@@ -69,6 +69,7 @@ char *mtncmdstr[]={
   "STDIN",
   "STDOUT",
   "STDERR",
+  "RDONLY",
 };
 
 static void clrcount(int id)
@@ -3050,6 +3051,59 @@ int mtn_put(MTN *mtn, int f, char *path)
     mtn_chmod(mtn, file, st.stat.st_mode);
     mtn_chown(mtn, file, st.stat.st_uid, st.stat.st_gid);
     mtn_utime(mtn, file, st.stat.st_atime, st.stat.st_mtime);
+  }
+  return(0);
+}
+
+int mtn_rdonly(MTN *mtn, const char *host, int flag)
+{
+  int s;
+  MTNINIT mi;
+  MTNSVR *members;
+  MTNSVR *p;
+  MTNSVR *svr;
+  MTNDATA sd;
+  MTNDATA rd;
+
+  if(!host || !host[0]){
+    mtnlogger(mtn, 0, "[error]: host is null\n");
+    return(-1);
+  }
+  svr = NULL;
+  members = mtn_info(mtn);
+  for(p=members;p;p=p->next){
+    if(!strcmp(p->host, host)){
+      svr = cpsvr(p);
+      break;
+    }
+  }
+  clrsvr(members);
+  if(!svr){
+    mtnlogger(mtn, 0, "[error]: host not found %s\n", host);
+    return(-1);
+  }
+  mi.uid  = getuid();
+  mi.gid  = getgid();
+  mi.use  = 0;
+  mi.mode = MTNMODE_EXPORT;
+  s = mtn_connect(mtn, svr, &mi);
+  if(s == -1){
+    mtnlogger(mtn, 0, "[error] %s: can't connect: %s %s\n", __func__, strerror(errno), v4apstr(&(svr->addr)));
+    clrsvr(svr);
+    return(-1);
+  }
+  clrsvr(svr);
+  sd.head.ver  = PROTOCOL_VERSION;
+  sd.head.size = 0;
+  sd.head.flag = 0;
+  sd.head.type = MTNCMD_RDONLY;
+  mtndata_set_int(&flag, &sd, sizeof(flag));
+  if(send_recv_stream(mtn, s, &sd, &rd) == -1){
+    return(-1);
+  }
+  if(rd.head.type == MTNCMD_ERROR){
+    mtndata_get_int(&errno, &rd, sizeof(errno));
+    return(-1);
   }
   return(0);
 }
