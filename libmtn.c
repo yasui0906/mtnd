@@ -3538,7 +3538,7 @@ STR modstr(STR str, char *n)
 {
   STR nstr;
   if(!n){
-    xfree(str);
+    clrstr(str);
     return(NULL);
   }
   
@@ -3555,7 +3555,12 @@ STR catstr(STR str1, STR str2)
   int len = 1;
   len += str1 ? strlen(str1) : 0;
   len += str2 ? strlen(str2) : 0;
-  str1 = str1 ? xrealloc(str1, len) : xcalloc(len);
+  if(str1){
+    str1 = xrealloc(str1, len);
+  }else{
+    str1 = xcalloc(len);
+    inccount(MTNCOUNT_STR);
+  }
   if(str2){
     strcat(str1, str2);
   }
