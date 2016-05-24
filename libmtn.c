@@ -3607,8 +3607,9 @@ ARG splitstr(STR str, STR delim)
   char *save = NULL;
   STR ptr = NULL;
   STR buf = newstr(str);
-  ARG arg = newarg(0);
+  ARG arg = NULL;
   if(buf){
+    arg = newarg(0);
     ptr = strtok_r(buf, delim, &save);
     while(ptr){
       arg = addarg(arg, ptr);
