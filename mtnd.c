@@ -657,28 +657,74 @@ static void mtnd_utime_process(MTNTASK *kt)
   mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
+static ssize_t recv_stream_nb(MTN *mtn, int s, void *buff, size_t size)
+{
+  ssize_t r;
+  size_t done = 0;
+  while(done < size){
+    if(!is_loop){
+      return(-1);
+    }
+    r = read(s, buff, size);
+    if(r == -1){
+      if(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR){
+        break;
+      }
+      mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+      return(-1);
+    }
+    if(r == 0){
+      break;
+    }
+    buff += r;
+    done += r;
+  }
+  return(ssize_t)done;
+}
+
+static ssize_t recv_data_stream_nb(MTN *mtn, int s, MTNDATA *kd, size_t nrecv)
+{
+  ssize_t r;
+  if(nrecv < sizeof(kd->head)){
+    r = recv_stream_nb(mtn, s, ((char *)&kd->head) + nrecv, sizeof(kd->head) - nrecv);
+    if(r > 0 && nrecv + r >= sizeof(kd->head)){
+      if(kd->head.size > MTN_MAX_DATASIZE){
+        mtnlogger(mtn, 0, "[error] %s: data length too long size=%d\n", __func__, kd->head.size);
+        return(-1);
+      } 
+    }
+    return(r);
+  }
+  nrecv -= sizeof(kd->head);
+  return(recv_stream_nb(mtn, s, ((char *)&kd->data) + nrecv, kd->head.size - nrecv));
+}
+
 int mtnd_cld_process(int s)
 {
-  int r;
+  ssize_t r;
   MTNTASK *n;
-  MTNDATA data;
-  memset(&data, 0, sizeof(data));
+  MTNDATA *data;
   for(n=ctx->cldtask;n;n=n->next){
     if(s == n->rpp){
-      r = recv_data_stream(mtn, s, &data);
+      data = &(n->recv);
+      r = recv_data_stream_nb(mtn, s, data, n->nrecv);
       if(r == -1){
         mtnlogger(mtn, 0, "[error] %s: %s\n", __func__, strerror(errno));
+        return(-1);
       }
-      if(r == 0){
-        switch(data.head.type){
+      n->nrecv += r;
+      if(n->nrecv >= sizeof(data->head) && n->nrecv == data->head.size + sizeof(data->head)){
+        switch(data->head.type){
           case MTNCMD_OPEN:
-            mtndata_get_int(&(n->init.use), &data, sizeof(n->init.use));
-            mtndata_get_string(n->path, &data);
+            mtndata_get_int(&(n->init.use), data, sizeof(n->init.use));
+            mtndata_get_string(n->path, data);
             break;
           case MTNCMD_RDONLY:
-            mtndata_get_int(&(ctx->rdonly), &data, sizeof(ctx->rdonly));
+            mtndata_get_int(&(ctx->rdonly), data, sizeof(ctx->rdonly));
             break;
         }
+        memset(data, 0, sizeof(MTNDATA));
+        n->nrecv = 0;
       }
       return(1);
     }
