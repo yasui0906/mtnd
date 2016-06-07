@@ -126,6 +126,7 @@ typedef struct mtntask
   MTNDATA recv;
   MTNDATA keep;
   MTNSTAT *kst;
+  size_t nrecv;
   struct mtntask *prev;
   struct mtntask *next;
   char  path[PATH_MAX];
