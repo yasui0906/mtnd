@@ -1804,14 +1804,19 @@ static int mtn_process_hello(MTN *mtn, int s, MTNDATA *sdata, MTNDATA *rdata, MT
 static int mtn_process_member(MTN *mtn, int s, MTNSVR *members, MTNDATA *sdata, MTNDATA *rdata, MTNADDR *saddr, MTNADDR *raddr, MTNPROCFUNC mtnproc)
 {
   int r = 1;
-  MTNSVR *mb;
-  members = addsvr(members, raddr, NULL);
+  MTNSVR *mb, *sv = NULL;
   mb = getsvr(members, raddr);
+  if(!mb){
+    mb = (sv = addsvr(NULL, raddr, NULL));
+  }
   mtnproc(mtn, mb, sdata, rdata, raddr);
   if(rdata->head.fin){
     mb->mark = 1;
     for(mb=members;mb && mb->mark;mb=mb->next);
     r = (mb == NULL) ? 0 : 1;
+  }
+  if(sv){
+    clrsvr(sv);
   }
   return(r);
 }
