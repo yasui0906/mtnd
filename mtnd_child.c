@@ -115,9 +115,6 @@ static void mtnd_child_open(MTNTASK *kt)
   mtnlogger(mtn, 7, "[debug] %s: IN\n", __func__);
   mtndata_get_string(kt->path, &(kt->recv));
   mtndata_get_int(&flags, &(kt->recv), sizeof(flags));
-  if(ctx->ioprio){
-    flags |= O_SYNC;
-  }
   mtndata_get_int(&mode,  &(kt->recv), sizeof(mode));
   mtnd_fix_path(kt->path, NULL);
   dirbase(kt->path, d, f);
@@ -128,7 +125,11 @@ static void mtnd_child_open(MTNTASK *kt)
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }
-  kt->fd = open(kt->path, flags, mode);
+  if(ctx->ioprio){
+    kt->fd = open(kt->path, flags | O_SYNC, mode);
+  }else{
+    kt->fd = open(kt->path, flags, mode);
+  }
   if(kt->fd == -1){
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
