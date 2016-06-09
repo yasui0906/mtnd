@@ -55,6 +55,7 @@ void usage()
   printf("   -l size          # limit size (MB)\n");
   printf("   --pid=path       # pid file(ex: /var/run/mtnfs.pid)\n");
   printf("   --rdonly         # read only\n");
+  printf("   --low-priority   # low IO priority\n");
   printf("\n");
 }
 
@@ -849,6 +850,11 @@ MTNTASK *mtnd_accept_process(int l)
   fcntl(kt->con, F_SETFD, FD_CLOEXEC);
   fcntl(kt->rpp, F_SETFD, FD_CLOEXEC);
   fcntl(kt->wpp, F_SETFD, FD_CLOEXEC);
+  if(ctx->ioprio){
+    if(ioprio_set(IOPRIO_WHO_PROCESS, getpid(), ctx->ioprio) == -1){
+      mtnlogger(mtn, 0, "[error] %s: ioprio_set: %s\n", __func__, strerror(errno));
+    }
+  }
   mtnd_child(kt);
   close(kt->con);
   close(kt->rpp);
@@ -1070,13 +1076,14 @@ int mtnd_main()
 struct option *get_optlist()
 {
   static struct option opt[]={
-      {"pid",     1, NULL, 'P'},
-      {"help",    0, NULL, 'h'},
-      {"version", 0, NULL, 'v'},
-      {"export",  1, NULL, 'e'},
-      {"execute", 1, NULL, 'E'},
-      {"group",   1, NULL, 'g'},
-      {"rdonly",  0, NULL, 'r'},
+      {"pid",          1, NULL, 'P'},
+      {"help",         0, NULL, 'h'},
+      {"version",      0, NULL, 'v'},
+      {"export",       1, NULL, 'e'},
+      {"execute",      1, NULL, 'E'},
+      {"group",        1, NULL, 'g'},
+      {"rdonly",       0, NULL, 'r'},
+      {"low-priority", 0, NULL, 'L'},
       {0, 0, 0, 0}
     };
   return(opt);
@@ -1279,6 +1286,10 @@ void parse(int argc, char *argv[])
 
       case 'r':
         ctx->rdonly = 1;
+        break;
+
+      case 'L':
+        ctx->ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 7);
         break;
 
       case '?':

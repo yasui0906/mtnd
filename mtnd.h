@@ -6,6 +6,7 @@
 #include "mtn.h"
 #include "libmtn.h"
 #include "common.h"
+#include "ioprio.h"
 
 #define MTND_EXPORT_RETURN               \
   if(!ctx->export){                      \
@@ -29,6 +30,7 @@ typedef struct mtnd_context{
   int  export;
   int  execute;
   int  rdonly;
+  int  ioprio;
   int  fsig[2];
 } MTND;
 

@@ -125,7 +125,11 @@ static void mtnd_child_open(MTNTASK *kt)
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
   }
-  kt->fd = open(kt->path, flags, mode);
+  if(ctx->ioprio){
+    kt->fd = open(kt->path, flags | O_SYNC, mode);
+  }else{
+    kt->fd = open(kt->path, flags, mode);
+  }
   if(kt->fd == -1){
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
