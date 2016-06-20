@@ -142,7 +142,7 @@ uint64_t get_datasize(char *path)
   struct stat st;
 
   while((ent = readdir(d))){
-    if(ent->d_name[0] == '.'){
+    if(strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0){
       continue;
     }
     sprintf(full, "%s/%s", path, ent->d_name);
@@ -351,7 +351,7 @@ int mtnd_list_dir(MTNTASK *kt)
   struct  dirent *ent;
   char full[PATH_MAX];
   while((ent = readdir(kt->dir))){
-    if(ent->d_name[0] == '.'){
+    if(strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0){
       continue;
     }
     sprintf(full, "%s/%s", kt->path, ent->d_name);
