@@ -140,6 +140,14 @@ int is_execute(MTNSVR *svr)
   return(svr->flags & MTNMODE_EXECUTE);
 }
 
+int is_rdonly(MTNSVR *svr)
+{
+  if(!svr){
+    return(0);
+  }
+  return(svr->flags & MTNMODE_RDONLY);
+}
+
 int is_grpsvr(MTNSVR *svr, ARG grp)
 {
   int i;
@@ -1535,6 +1543,22 @@ static MTNSVR *filtersvr_memfree(MTNSVR *svr)
   return(r);
 }
 
+static MTNSVR *filtersvr_rdonly(MTNSVR *svr)
+{
+  MTNSVR *s = NULL;
+  MTNSVR *r = NULL;
+  if(!svr){
+    return(NULL);
+  }
+  for(s=svr;s;s=s->next){
+    if(!is_rdonly(s)){
+      r = pushsvr(r, s);
+    }
+  }
+  clrsvr(svr);
+  return(r);
+}
+
 MTNSVR *filtersvr_diskfree(MTNSVR *svr)
 {
   int count = 0;
@@ -1633,6 +1657,7 @@ MTNSVR *filtersvr(MTNSVR *s, int mode)
       s = filtersvr_order(s);    // 応答速度が一番速いノードを選択する
       break;
     case 1:
+      s = filtersvr_rdonly(s);   // 読み込み専用モードのノードを除外する
       s = filtersvr_cnt_job(s);  // 忙しいノードを除外
       s = filtersvr_diskfree(s); // ディスクの空き容量が多いノードを抽出
       s = filtersvr_order(s);    // 応答速度が一番速いノードを選択する
