@@ -118,12 +118,22 @@ static void mtnd_child_open(MTNTASK *kt)
   mtndata_get_int(&mode,  &(kt->recv), sizeof(mode));
   mtnd_fix_path(kt->path, NULL);
   dirbase(kt->path, d, f);
-  if(mkdir_ex(d) == -1){
-    mtnlogger(mtn, 0,"[error] %s: mkdir error %s %s\n", __func__, strerror(errno), d);
+  if(ctx->rdonly && (flags & (O_CREAT | O_WRONLY | O_RDWR))){
+    errno = EROFS;
     kt->fin = 1;
     kt->send.head.fin = 1;
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+    mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+    goto ERROR;
+  }
+  if(mkdir_ex(d) == -1){
+    kt->fin = 1;
+    kt->send.head.fin = 1;
+    kt->send.head.type = MTNCMD_ERROR;
+    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+    mtnlogger(mtn, 0,"[error] %s: mkdir error %s %s\n", __func__, strerror(errno), d);
+    goto ERROR;
   }
   if(ctx->ioprio){
     kt->fd = open(kt->path, flags | O_SYNC, mode);
@@ -131,21 +141,24 @@ static void mtnd_child_open(MTNTASK *kt)
     kt->fd = open(kt->path, flags, mode);
   }
   if(kt->fd == -1){
+    kt->fin = 1;
+    kt->send.head.fin = 1;
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s, path=%s create=%d mode=%o\n", __func__, strerror(errno), kt->path, ((flags & O_CREAT) != 0), mode);
-  }else{
-    fstat(kt->fd, &(kt->stat));
-    memset(&data, 0, sizeof(data));
-    data.head.ver  = PROTOCOL_VERSION;
-    data.head.type = MTNCMD_OPEN;
-    data.head.size = 0;
-    mtndata_set_int(&(kt->init.use), &data, sizeof(kt->init.use));
-    mtndata_set_string(kt->path, &data);
-    if(send_data_stream(mtn, kt->wpp, &data) == -1){
-      mtnlogger(mtn, 0, "[error]  %s: %s\n", __func__, strerror(errno));
-    }
+    goto ERROR;
   }
+  fstat(kt->fd, &(kt->stat));
+  memset(&data, 0, sizeof(data));
+  data.head.ver  = PROTOCOL_VERSION;
+  data.head.type = MTNCMD_OPEN;
+  data.head.size = 0;
+  mtndata_set_int(&(kt->init.use), &data, sizeof(kt->init.use));
+  mtndata_set_string(kt->path, &data);
+  if(send_data_stream(mtn, kt->wpp, &data) == -1){
+    mtnlogger(mtn, 0, "[error]  %s: %s\n", __func__, strerror(errno));
+  }
+ERROR:
   mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
