@@ -456,20 +456,21 @@ static void mtnd_truncate_process(MTNTASK *kt)
   if(ctx->rdonly){
     if(lstat(kt->path, &(kt->stat)) != -1){
       errno = EROFS;
-      kt->send.head.type = MTNCMD_ERROR;
-      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      mtnlogger(mtn, 0, "[error] %s: %s path=%s offset=%llu\n", __func__, strerror(errno), kt->path, offset);
     }
-    goto ERROR;
-  }
-  if(truncate(kt->path, offset) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s path=%s offset=%llu\n", __func__, strerror(errno), kt->path, offset);
     }
+  }else{
+    if(truncate(kt->path, offset) == -1){
+      if(errno != ENOENT){
+        kt->send.head.type = MTNCMD_ERROR;
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+        mtnlogger(mtn, 0, "[error] %s: %s path=%s offset=%llu\n", __func__, strerror(errno), kt->path, offset);
+      }
+    }
   }
-ERROR:
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -493,16 +494,14 @@ static void mtnd_mkdir_process(MTNTASK *kt)
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
-    goto ERROR;
+  }else{
+    if(mkdir_ex(kt->path) == -1){
+      kt->send.head.type = MTNCMD_ERROR;
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+    }
+    chown(kt->path, uid, gid);
   }
-  if(mkdir_ex(kt->path) == -1){
-    kt->send.head.type = MTNCMD_ERROR;
-    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-    mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
-    goto ERROR;
-  }
-  chown(kt->path, uid, gid);
-ERROR:
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -517,29 +516,38 @@ static void mtnd_rm_process(MTNTASK *kt)
   mtndata_get_string(buff, &(kt->recv));
   mtnd_fix_path(buff, kt->path);
   kt->send.head.type = MTNCMD_SUCCESS;
-  if(lstat(kt->path, &(kt->stat)) != -1){
-    if(ctx->rdonly){
+  if(ctx->rdonly){
+    if(lstat(kt->path, &(kt->stat)) != -1){
       errno = EROFS;
+    }
+    if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
-      goto ERROR;
     }
-    if(S_ISDIR(kt->stat.st_mode)){
-      if(rmdir(kt->path) == -1){
+  }else{
+    if(lstat(kt->path, &(kt->stat)) == -1){
+      if(errno != ENOENT){
         kt->send.head.type = MTNCMD_ERROR;
         mtndata_set_int(&errno, &(kt->send), sizeof(errno));
         mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
       }
     }else{
-      if(unlink(kt->path) == -1){
-        kt->send.head.type = MTNCMD_ERROR;
-        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+      if(S_ISDIR(kt->stat.st_mode)){
+        if(rmdir(kt->path) == -1){
+          kt->send.head.type = MTNCMD_ERROR;
+          mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+          mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+        }
+      }else{
+        if(unlink(kt->path) == -1){
+          kt->send.head.type = MTNCMD_ERROR;
+          mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+          mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+        }
       }
     }
   }
-ERROR:
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -560,20 +568,21 @@ static void mtnd_rename_process(MTNTASK *kt)
   if(ctx->rdonly){
     if(lstat(kt->path, &(kt->stat)) != -1){
       errno = EROFS;
-      kt->send.head.type = MTNCMD_ERROR;
-      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
     }
-    goto ERROR;
-  }
-  if(rename(kt->path, nbuff) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
     }
+  }else{
+    if(rename(kt->path, nbuff) == -1){
+      if(errno != ENOENT){
+        kt->send.head.type = MTNCMD_ERROR;
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+        mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
+      }
+    }
   }
-ERROR:
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -595,14 +604,13 @@ static void mtnd_symlink_process(MTNTASK *kt)
     kt->send.head.type = MTNCMD_ERROR;
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
-    goto ERROR;
+  }else{
+    if(symlink(oldpath, newpath) == -1){
+      kt->send.head.type = MTNCMD_ERROR;
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+      mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
+    }
   }
-  if(symlink(oldpath, newpath) == -1){
-    kt->send.head.type = MTNCMD_ERROR;
-    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-    mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
-  }
-ERROR:
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
 
@@ -645,22 +653,23 @@ static void mtnd_chmod_process(MTNTASK *kt)
   mtnd_fix_path(path, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(ctx->rdonly){
-    if(lstat(path, &(kt->stat)) != -1){
+    if(lstat(kt->path, &(kt->stat)) != -1){
       errno = EROFS;
-      kt->send.head.type = MTNCMD_ERROR;
-      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
     }
-    goto ERROR;
-  }
-  if(chmod(path, mode) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
     }
+  }else{
+    if(chmod(path, mode) == -1){
+      if(errno != ENOENT){
+        kt->send.head.type = MTNCMD_ERROR;
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+      }
+    }
   }
-ERROR:
   mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
@@ -680,22 +689,23 @@ static void mtnd_chown_process(MTNTASK *kt)
   mtnd_fix_path(path, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(ctx->rdonly){
-    if(lstat(path, &(kt->stat)) != -1){
+    if(lstat(kt->path, &(kt->stat)) != -1){
       errno = EROFS;
-      kt->send.head.type = MTNCMD_ERROR;
-      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
     }
-    goto ERROR;
-  }
-  if(chown(path, uid, gid) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
     }
+  }else{
+    if(chown(path, uid, gid) == -1){
+      if(errno != ENOENT){
+        kt->send.head.type = MTNCMD_ERROR;
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+      }
+    }
   }
-ERROR:
   mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
@@ -714,22 +724,23 @@ static void mtnd_utime_process(MTNTASK *kt)
   mtnd_fix_path(path, NULL);
   kt->send.head.type = MTNCMD_SUCCESS;
   if(ctx->rdonly){
-    if(lstat(path, &(kt->stat)) != -1){
+    if(lstat(kt->path, &(kt->stat)) != -1){
       errno = EROFS;
-      kt->send.head.type = MTNCMD_ERROR;
-      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
     }
-    goto ERROR;
-  }
-  if(utime(path, &ut) == -1){
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
     }
+  }else{
+    if(utime(path, &ut) == -1){
+      if(errno != ENOENT){
+        kt->send.head.type = MTNCMD_ERROR;
+        mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+      }
+    }
   }
-ERROR:
   mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
