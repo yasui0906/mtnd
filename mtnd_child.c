@@ -118,23 +118,37 @@ static void mtnd_child_open(MTNTASK *kt)
   mtndata_get_int(&mode,  &(kt->recv), sizeof(mode));
   mtnd_fix_path(kt->path, NULL);
   dirbase(kt->path, d, f);
-  if(mkdir_ex(d) == -1){
-    mtnlogger(mtn, 0,"[error] %s: mkdir error %s %s\n", __func__, strerror(errno), d);
-    kt->fin = 1;
-    kt->send.head.fin = 1;
-    kt->send.head.type = MTNCMD_ERROR;
-    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-  }
-  if(ctx->ioprio){
-    kt->fd = open(kt->path, flags | O_SYNC, mode);
-  }else{
-    kt->fd = open(kt->path, flags, mode);
-  }
-  if(kt->fd == -1){
-    kt->send.head.type = MTNCMD_ERROR;
-    mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-    mtnlogger(mtn, 0, "[error] %s: %s, path=%s create=%d mode=%o\n", __func__, strerror(errno), kt->path, ((flags & O_CREAT) != 0), mode);
-  }else{
+  do{
+    if(ctx->rdonly && (flags & (O_CREAT | O_WRONLY | O_RDWR))){
+      errno = EROFS;
+      kt->fin = 1;
+      kt->send.head.fin = 1;
+      kt->send.head.type = MTNCMD_ERROR;
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+      mtnlogger(mtn, 0,"[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
+      break;
+    }
+    if(mkdir_ex(d) == -1){
+      kt->fin = 1;
+      kt->send.head.fin = 1;
+      kt->send.head.type = MTNCMD_ERROR;
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+      mtnlogger(mtn, 0,"[error] %s: mkdir error %s %s\n", __func__, strerror(errno), d);
+      break;
+    }
+    if(ctx->ioprio){
+      kt->fd = open(kt->path, flags | O_SYNC, mode);
+    }else{
+      kt->fd = open(kt->path, flags, mode);
+    }
+    if(kt->fd == -1){
+      kt->fin = 1;
+      kt->send.head.fin = 1;
+      kt->send.head.type = MTNCMD_ERROR;
+      mtndata_set_int(&errno, &(kt->send), sizeof(errno));
+      mtnlogger(mtn, 0, "[error] %s: %s, path=%s create=%d mode=%o\n", __func__, strerror(errno), kt->path, ((flags & O_CREAT) != 0), mode);
+      break;
+    }
     fstat(kt->fd, &(kt->stat));
     memset(&data, 0, sizeof(data));
     data.head.ver  = PROTOCOL_VERSION;
@@ -145,7 +159,7 @@ static void mtnd_child_open(MTNTASK *kt)
     if(send_data_stream(mtn, kt->wpp, &data) == -1){
       mtnlogger(mtn, 0, "[error]  %s: %s\n", __func__, strerror(errno));
     }
-  }
+  }while(0);
   mtnlogger(mtn, 7, "[debug] %s: OUT\n", __func__);
 }
 
