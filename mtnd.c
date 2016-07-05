@@ -463,7 +463,9 @@ static void mtnd_truncate_process(MTNTASK *kt)
       mtnlogger(mtn, 0, "[error] %s: %s path=%s offset=%llu\n", __func__, strerror(errno), kt->path, offset);
     }
   }else{
-    if(truncate(kt->path, offset) == -1){
+    if(truncate(kt->path, offset) != -1){
+      mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path=%s offset=%llu\n", __func__, "truncate", kt->path, offset);
+    }else{
       if(errno != ENOENT){
         kt->send.head.type = MTNCMD_ERROR;
         mtndata_set_int(&errno, &(kt->send), sizeof(errno));
@@ -495,12 +497,18 @@ static void mtnd_mkdir_process(MTNTASK *kt)
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
   }else{
-    if(mkdir_ex(kt->path) == -1){
+    if(mkdir_ex(kt->path) != -1){
+      mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path=%s uid=%d gid=%d\n", __func__, "mkdir", kt->path, (int)uid, (int)gid);
+    }else{
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
     }
-    chown(kt->path, uid, gid);
+    if(chown(kt->path, uid, gid) != -1){
+      mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path=%s uid=%d gid=%d\n", __func__, "chown", kt->path, (int)uid, (int)gid);
+    }else{
+      mtnlogger(mtn, 0, "[error] %s: chown %s %s\n", __func__, strerror(errno), kt->path);
+    }
   }
   mtnlogger(mtn, 9, "[debug] %s: OUT\n", __func__);
 }
@@ -534,13 +542,17 @@ static void mtnd_rm_process(MTNTASK *kt)
       }
     }else{
       if(S_ISDIR(kt->stat.st_mode)){
-        if(rmdir(kt->path) == -1){
+        if(rmdir(kt->path) != -1){
+          mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path=%s\n", __func__, "rmdir", kt->path);
+        }else{
           kt->send.head.type = MTNCMD_ERROR;
           mtndata_set_int(&errno, &(kt->send), sizeof(errno));
           mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
         }
       }else{
-        if(unlink(kt->path) == -1){
+        if(unlink(kt->path) != -1){
+          mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path=%s\n", __func__, "unlink", kt->path);
+        }else{
           kt->send.head.type = MTNCMD_ERROR;
           mtndata_set_int(&errno, &(kt->send), sizeof(errno));
           mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), kt->path);
@@ -575,7 +587,9 @@ static void mtnd_rename_process(MTNTASK *kt)
       mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), obuff, nbuff);
     }
   }else{
-    if(rename(kt->path, nbuff) == -1){
+    if(rename(kt->path, nbuff) != -1){
+      mtnlogger(mtn, 2, "[winfo] %s: cmd=%s old=%s new=%s\n", __func__, "rename", obuff, nbuff);
+    }else{
       if(errno != ENOENT){
         kt->send.head.type = MTNCMD_ERROR;
         mtndata_set_int(&errno, &(kt->send), sizeof(errno));
@@ -605,7 +619,9 @@ static void mtnd_symlink_process(MTNTASK *kt)
     mtndata_set_int(&errno, &(kt->send), sizeof(errno));
     mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
   }else{
-    if(symlink(oldpath, newpath) == -1){
+    if(symlink(oldpath, newpath) != -1){
+      mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path1=%s path2=%s\n", __func__, "symlink", oldpath, newpath);
+    }else{
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
       mtnlogger(mtn, 0, "[error] %s: %s %s -> %s\n", __func__, strerror(errno), oldpath, newpath);
@@ -659,14 +675,16 @@ static void mtnd_chmod_process(MTNTASK *kt)
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+      mtnlogger(mtn, 0, "[error] %s: %s path=%s\n", __func__, strerror(errno), path);
     }
   }else{
-    if(chmod(path, mode) == -1){
+    if(chmod(path, mode) != -1){
+      mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path=%s\n", __func__, "chmod", path);
+    }else{
       if(errno != ENOENT){
         kt->send.head.type = MTNCMD_ERROR;
         mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+        mtnlogger(mtn, 0, "[error] %s: %s path=%s\n", __func__, strerror(errno), path);
       }
     }
   }
@@ -695,14 +713,16 @@ static void mtnd_chown_process(MTNTASK *kt)
     if(errno != ENOENT){
       kt->send.head.type = MTNCMD_ERROR;
       mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-      mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+      mtnlogger(mtn, 0, "[error] %s: %s path=%s\n", __func__, strerror(errno), path);
     }
   }else{
-    if(chown(path, uid, gid) == -1){
+    if(chown(path, uid, gid) != -1){
+      mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path=%s uid=%d gid=%d\n", __func__, "chown", path, (int)uid, (int)gid);
+    }else{
       if(errno != ENOENT){
         kt->send.head.type = MTNCMD_ERROR;
         mtndata_set_int(&errno, &(kt->send), sizeof(errno));
-        mtnlogger(mtn, 0, "[error] %s: %s %s\n", __func__, strerror(errno), path);
+        mtnlogger(mtn, 0, "[error] %s: %s path=%s uid=%d gid=%d\n", __func__, strerror(errno), path, (int)uid, (int)gid);
       }
     }
   }

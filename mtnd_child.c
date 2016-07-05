@@ -149,6 +149,9 @@ static void mtnd_child_open(MTNTASK *kt)
       mtnlogger(mtn, 0, "[error] %s: %s, path=%s create=%d mode=%o\n", __func__, strerror(errno), kt->path, ((flags & O_CREAT) != 0), mode);
       break;
     }
+    if(flags & (O_CREAT | O_WRONLY | O_RDWR)){
+      mtnlogger(mtn, 2, "[winfo] %s: cmd=%s path=%s create=%d mode=%o\n", __func__, "open", kt->path, ((flags & O_CREAT) != 0), mode);
+    }
     fstat(kt->fd, &(kt->stat));
     memset(&data, 0, sizeof(data));
     data.head.ver  = PROTOCOL_VERSION;
