@@ -973,11 +973,12 @@ MTNTASK *mtnd_accept_process(int l)
  *   0: チェックしてすぐ抜ける
  *   1: 全プロセスが終了するまで待つ
  */
-void mtnd_waitpid(int mode)
+void mtnd_waitpid(int e, int mode)
 {
   int    opt;
   pid_t  pid;
   MTNTASK *t;
+  struct epoll_event ev;
 
   opt = mode ? 0 : WNOHANG;
   if(mode && ctx->signal){
@@ -1006,6 +1007,11 @@ void mtnd_waitpid(int mode)
       }else{
         break;
       }
+    }
+    ev.data.fd = t->rpp;
+    ev.events  = EPOLLIN;
+    if(epoll_ctl(e, EPOLL_CTL_DEL, t->rpp, &ev) == -1) {
+      mtnlogger(mtn, 0, "[warn] %s: epoll_ctl: %s\n", __func__, strerror(errno));
     }
     close(t->rpp);
     close(t->wpp);
@@ -1069,7 +1075,7 @@ void mtnd_loop(int e, int l)
 
   /*===== Main Loop =====*/
   while(is_loop){
-    mtnd_waitpid(0);
+    mtnd_waitpid(e, 0);
     r = epoll_wait(e, ev, 8, 1000);
     gettimeofday(&tv,NULL);
     mtnd_loop_startup(&tv);
@@ -1102,7 +1108,7 @@ void mtnd_loop(int e, int l)
         continue;
       }
       if(ev[r].data.fd == ctx->fsig[0]){
-        mtnd_waitpid(0);
+        mtnd_waitpid(e, 0);
         read(ctx->fsig[0], &d, 1);
         continue;
       }
@@ -1172,7 +1178,7 @@ int mtnd_main()
   mtn_startup(mtn, 0);
   mtnd_loop(e, l);
   mtn_shutdown(mtn);
-  mtnd_waitpid(1);
+  mtnd_waitpid(e, 1);
   close(e);
   close(m);
   close(l);
