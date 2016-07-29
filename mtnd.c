@@ -180,6 +180,7 @@ MTNTASK *mtnd_task_create(MTNDATA *data, MTNADDR *addr)
   memcpy(&(kt->addr), addr, sizeof(MTNADDR));
   memcpy(&(kt->recv), data, sizeof(MTNDATA));
   kt->type = data->head.type;
+  kt->send.head.sqno = data->head.sqno;
   mtnlogger(mtn,8, "[debug] %s: CMD=%s SEQ=%d\n", __func__, mtncmdstr[kt->type], data->head.sqno);
   if(tasklist){
     tasklist->prev = kt;

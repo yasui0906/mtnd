@@ -1854,6 +1854,9 @@ static int mtn_process_recv(MTN *mtn, int s, MTNSVR *members, MTNDATA *sdata, MT
   memset(&raddr, 0, sizeof(raddr));
   raddr.len = sizeof(raddr.addr);
   while(recv_dgram(mtn, s, &rdata, &(raddr.addr.addr), &(raddr.len)) == 0){
+    if(rdata.head.sqno != sdata->head.sqno) {
+      continue;
+    }
     if(members == NULL){
       r = mtn_process_hello(mtn, s, sdata, &rdata, saddr, &raddr, mtnproc);
     }else{
