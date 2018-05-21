@@ -183,7 +183,7 @@ STR mtnfile_list_format_string(MTNSTAT *kst)
     s = MAX(l, s);
     kst = kst->next;
   }
-  sprintf(buff, "%%-%ds: %%s %%-%ds %%-%ds %%-%dd ", h, u, g, s);
+  sprintf(buff, "%%-%ds: %%s %%-%ds %%-%ds %%-%dlu ", h, u, g, s);
   return(newstr(buff));
 }
 
