@@ -5,17 +5,20 @@
 /*                                           Copyright (C) 2012 KLab Inc. */
 /**************************************************************************/
 
-
 【はじめに】
-  mtndは「もったいないでー」と読みます。mtndを複数台のサーバで
+  mtndは「もったいないでえ」と読みます。mtndを複数台のサーバで起動しておく
+  と、mtnfsとmtnexecのサーバとして動作します。
   
   mtnfs)
-    複数台のノードのハードディスクの空き領域をひとつのボリュームとして取り
-    扱うことができます。
+    mtndが起動しているサーバのストレージをひとつのボリュームとして取り扱う
+    ことができます。
+
+  mtnfile)
+    mtnfsを使わずにmtnfsと同じようなファイル操作ができます。
 
   mtnexec)
-    比較的暇そうなノードを選択してシェルコマンドを実行させることができます。
-    同じコマンドを全ノードで実行することができます。
+    比較的暇そうなサーバを選択してシェルコマンドを実行させることができます。
+    同じコマンドを全サーバで実行することもできます。
  
 【インストール方法】
   $ ./configure
@@ -30,9 +33,10 @@
   $ sudo make install
 
 【ファイル構成】
-  /usr/local/sbin/mtnd    # もったいないでー本体
-  /usr/local/sbin/mtnfs   # クライアント用デーモン
-  /usr/local/bin/mtnexec  # クライアント用コマンドラインツール
+  /usr/local/sbin/mtnd    # もったいないでえ本体
+  /usr/local/sbin/mtnfs   # もったいないFS
+  /usr/local/bin/mtnfile  # ファイル操作用コマンドラインツール
+  /usr/local/bin/mtnexec  # リモートシェル用コマンドラインツール
 
 【mtnfsの使用方法】
 
@@ -69,10 +73,8 @@
   node0:# mtnfs /mnt/mtnfs
 
 
-
-
 【mtnexecの使用方法】
-  各ノードでmtndを立ち上げます
+  各サーバでmtndを立ち上げます
 
   node1:# mkdir /var/tmp/mtnexec
   node1:# mtnd -E /var/tmp/mtnexec
@@ -80,6 +82,18 @@
   node2:# mkdir /var/tmp/mtnexec
   node2:# mtnd -E /var/tmp/mtnexec
 
-  mtnexecとmtnfsを併用する場合は -e と -E を両方指定します
-  node1:# mtnd -e /mtnexport -E /var/tmp/mtnexec
+  Rオプションをつけてコマンドを指定すると、
+  どれか1台のサーバ上でコマンドが実行されます
+  node0:# mtnexec -R hostname
+  node1
+
+  Aオプションをつけてコマンドを指定すると、
+  全サーバでコマンドが実行されます
+  node0:# mtnexec -A hostname
+  node1
+  node2
+
+mtnexecとmtnfsを併用する場合は -e と -E を両方指定します
+node1:# mtnd -e /mtnexport -E /var/tmp/mtnexec
+
 
